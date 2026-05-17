@@ -5,7 +5,6 @@ import {
   addChatMember,
   answerAsk,
   directChatId,
-  discoverableGroupsFor,
   ensureChat,
   getAsk,
   getChat,
@@ -13,20 +12,17 @@ import {
   groupChatId,
   insertAsk,
   insertMessage,
-  listAnsweredAsksFrom,
   listChatMembers,
   listInstances,
   listMessages,
   markChatRead,
   touchInstance,
-  unreadSummary,
 } from "./db.ts";
 import {
-  fmtAsk,
   fmtChat,
   fmtInstance,
   fmtMessage,
-  fmtUnread,
+  renderInbox,
 } from "./format.ts";
 import { displayName, registerNicknameTools } from "./nickname.ts";
 
@@ -57,6 +53,7 @@ function postAndRead(
   return recent;
 }
 
+
 export function registerTools(server: McpServer, me: Identity): void {
   // ---------- whoami ----------
   server.registerTool(
@@ -74,7 +71,7 @@ export function registerTools(server: McpServer, me: Identity): void {
         [
           `You are: ${me.pseudonym}`,
           `Folder:  ${me.path}`,
-          `(pseudonym is a deterministic SHA-256 hash of the folder path)`,
+          "(pseudonym is a deterministic SHA-256 hash of the folder path)",
         ].join("\n"),
       );
     },
@@ -180,7 +177,7 @@ export function registerTools(server: McpServer, me: Identity): void {
       if (!target) {
         return error(
           `Unknown pseudonym '${to}'. Use 'discover' to see who's online. ` +
-            `Note: the recipient must have connected to ClaudeTalk at least once.`,
+            "Note: the recipient must have connected to ClaudeTalk at least once.",
         );
       }
       const ask = insertAsk(me.pseudonym, to, question);
@@ -293,7 +290,7 @@ export function registerTools(server: McpServer, me: Identity): void {
       const recent = postAndRead(chatId, me.pseudonym, message, history ?? 20);
       const lines = [
         `chat_id=${chatId}  (direct with ${other})`,
-        message !== undefined ? `Sent your message.` : "",
+        message !== undefined ? "Sent your message." : "",
         recent.length === 0 ? "No messages yet." : `Recent (${recent.length}):`,
         ...recent.map((m) => fmtMessage(m, me.pseudonym)),
       ].filter(Boolean);
@@ -438,33 +435,9 @@ export function registerTools(server: McpServer, me: Identity): void {
     },
     async ({ include_my_answered_asks_since_id }) => {
       touchInstance(me.pseudonym);
-      const u = unreadSummary(me.pseudonym);
-      const answered = listAnsweredAsksFrom(me.pseudonym, include_my_answered_asks_since_id ?? 0);
-      // Discoverable groups: group chats with recent activity that you're
-      // not a member of yet. Surfaced so you can join with
-      // `groupchat slug=...` instead of relying on direct invitations.
-      const discoverable = discoverableGroupsFor(me.pseudonym, 24 * 60 * 60_000, 10);
-      const parts: string[] = [];
-      parts.push(`Inbox for ${me.pseudonym}:`);
-      parts.push(fmtUnread(u, me.pseudonym));
-      if (answered.length > 0) {
-        parts.push("");
-        parts.push(`Answers to asks you sent (${answered.length}):`);
-        for (const a of answered) parts.push(fmtAsk(a, me.pseudonym));
-      }
-      if (discoverable.length > 0) {
-        parts.push("");
-        parts.push(`Discoverable group chats (${discoverable.length}, you're not a member):`);
-        for (const g of discoverable) {
-          const title = g.chat.title ? ` "${g.chat.title}"` : "";
-          const slug = g.chat.id.replace(/^group:/, "");
-          parts.push(
-            `  - ${slug}${title}  members=${g.member_count}  last_post: ${g.latest_from} (${Math.floor((Date.now() - g.latest_at) / 1000)}s ago)`,
-          );
-          parts.push(`      → join via: mcp__claudetalk__groupchat slug=${slug}`);
-        }
-      }
-      return text(parts.join("\n"));
+      return text(
+        renderInbox(me.pseudonym, include_my_answered_asks_since_id ?? 0),
+      );
     },
   );
 

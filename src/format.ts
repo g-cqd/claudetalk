@@ -1,4 +1,14 @@
-import type { AskRow, ChatRow, InstanceRow, MessageRow, Unread } from "./db.ts";
+import {
+  type AskRow,
+  type ChatRow,
+  type InstanceRow,
+  listAnsweredAsksFrom,
+  listChatsFor,
+  type MessageRow,
+  type Unread,
+  unreadSummary,
+} from "./db.ts";
+import { discoverableGroupsFor } from "./notifications.ts";
 import { displayBoth, displayName } from "./nickname.ts";
 
 export function fmtAgo(ts: number): string {
@@ -42,6 +52,67 @@ export function fmtChat(c: ChatRow): string {
 export function fmtMessage(m: MessageRow, viewer?: string): string {
   const author = viewer ? displayName(viewer, m.from_pseudonym, m.chat_id) : m.from_pseudonym;
   return `[${m.id}] ${author} (${fmtAgo(m.created_at)}): ${m.body}`;
+}
+
+function directPeer(chatId: string, me: string): string {
+  return chatId.replace(/^direct:/, "").split("|").find((p) => p !== me) ?? "?";
+}
+
+/** Render the full inbox: pending asks → your chats (always listed, caught-up
+ *  or not) → recent answers → discoverable groups. */
+export function renderInbox(me: string, answeredSinceId: number): string {
+  const u = unreadSummary(me);
+  const answered = listAnsweredAsksFrom(me, answeredSinceId);
+  const discoverable = discoverableGroupsFor(me, 24 * 60 * 60_000, 10);
+  const myChats = listChatsFor(me);
+  const unreadById = new Map(u.unreadChats.map((c) => [c.chat.id, c]));
+
+  const parts: string[] = [`Inbox for ${me}:`];
+
+  parts.push(
+    u.pendingAsks.length > 0
+      ? `Pending asks for you (${u.pendingAsks.length}):`
+      : "No pending asks.",
+  );
+  for (const a of u.pendingAsks) parts.push(fmtAsk(a, me), "");
+
+  parts.push("");
+  if (myChats.length === 0) {
+    parts.push("No chats yet. Use 'chat' or 'groupchat' to start one.");
+  } else {
+    parts.push(`Your chats (${myChats.length}):`);
+    for (const { chat } of myChats) {
+      const unread = unreadById.get(chat.id);
+      const label = chat.kind === "group"
+        ? fmtChat(chat)
+        : `direct with ${directPeer(chat.id, me)}  (id=${chat.id})`;
+      if (unread && unread.unreadCount > 0) {
+        parts.push(`  - ${label}  unread=${unread.unreadCount}  last_read_id=${unread.lastReadId}`);
+        if (unread.latest) parts.push(`      latest: ${fmtMessage(unread.latest, me)}`);
+      } else {
+        parts.push(`  - ${label}  (all caught up)`);
+      }
+    }
+  }
+
+  if (answered.length > 0) {
+    parts.push("", `Answers to asks you sent (${answered.length}):`);
+    for (const a of answered) parts.push(fmtAsk(a, me));
+  }
+
+  if (discoverable.length > 0) {
+    parts.push("", `Discoverable group chats (${discoverable.length}, you're not a member):`);
+    for (const g of discoverable) {
+      const title = g.chat.title ? ` "${g.chat.title}"` : "";
+      const slug = g.chat.id.replace(/^group:/, "");
+      const ago = Math.floor((Date.now() - g.latest_at) / 1000);
+      parts.push(
+        `  - ${slug}${title}  members=${g.member_count}  last_post: ${g.latest_from} (${ago}s ago)`,
+        `      → join via: mcp__claudetalk__groupchat slug=${slug}`,
+      );
+    }
+  }
+  return parts.join("\n");
 }
 
 export function fmtUnread(u: Unread, viewer?: string): string {

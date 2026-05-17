@@ -50,7 +50,7 @@ export function snapshot(
 
   const chatRows = d
     .query<ChatRow, []>(
-      `SELECT id, kind, title, created_at FROM chats ORDER BY created_at DESC`,
+      "SELECT id, kind, title, created_at FROM chats ORDER BY created_at DESC",
     )
     .all();
 

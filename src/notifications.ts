@@ -25,7 +25,7 @@ export function notificationDeltaFor(pseudonym: string): NotificationDelta {
   const d = db();
   const me = d
     .query<{ last_notified_ask_id: number }, [string]>(
-      `SELECT last_notified_ask_id FROM instances WHERE pseudonym = ?`,
+      "SELECT last_notified_ask_id FROM instances WHERE pseudonym = ?",
     )
     .get(pseudonym);
   const askCursor = me?.last_notified_ask_id ?? 0;

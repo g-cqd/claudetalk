@@ -71,8 +71,8 @@ function summarise(pseudonym: string, delta: NotificationDelta): string {
   }
   return (
     `ClaudeTalk (${pseudonym}): ${parts.join(" • ")}. ` +
-    `Call mcp__claudetalk__inbox to read; mcp__claudetalk__answer for asks; ` +
-    `mcp__claudetalk__chat / mcp__claudetalk__groupchat to reply.`
+    "Call mcp__claudetalk__inbox to read; mcp__claudetalk__answer for asks; " +
+    "mcp__claudetalk__chat / mcp__claudetalk__groupchat to reply."
   );
 }
 
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
     emit(
       eventName,
       `ClaudeTalk: you are ${me.pseudonym} (folder ${me.path}). ` +
-        `Inbox empty. Call mcp__claudetalk__discover to see who else is online.`,
+        "Inbox empty. Call mcp__claudetalk__discover to see who else is online.",
     );
     return;
   }

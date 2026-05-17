@@ -81,7 +81,7 @@ export function setPersonalNickname(viewer: string, target: string, nickname: st
 
 function clearPersonalNickname(viewer: string, target: string): boolean {
   const res = db().run(
-    `DELETE FROM personal_nicknames WHERE viewer = ? AND target = ?`,
+    "DELETE FROM personal_nicknames WHERE viewer = ? AND target = ?",
     [viewer, target],
   );
   return res.changes > 0;
@@ -90,7 +90,7 @@ function clearPersonalNickname(viewer: string, target: string): boolean {
 function getPersonalNickname(viewer: string, target: string): string | null {
   const row = db()
     .query<{ nickname: string }, [string, string]>(
-      `SELECT nickname FROM personal_nicknames WHERE viewer = ? AND target = ?`,
+      "SELECT nickname FROM personal_nicknames WHERE viewer = ? AND target = ?",
     )
     .get(viewer, target);
   return row?.nickname ?? null;

@@ -188,7 +188,7 @@ function installUser(withHooks: boolean, opts: InstallOptions): void {
     console.log(
       `About to modify ${USER_MCP_JSON} (your main Claude Code config) ` +
         `and ${USER_SETTINGS}. A timestamped .bak copy will be written next to each file. ` +
-        `Run with --dry-run first to see the unified diff.`,
+        "Run with --dry-run first to see the unified diff.",
     );
     if (!confirm("Proceed?")) {
       console.log("Aborted (no files changed). Use --dry-run to preview, --yes to skip this prompt.");

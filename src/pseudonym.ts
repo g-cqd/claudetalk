@@ -29,8 +29,8 @@ export interface Identity {
 /** Stable per-folder identity. SHA-256 of the absolute path drives the pick. */
 export function pseudonymFor(absPath: string): Identity {
   const hash = createHash("sha256").update(absPath).digest("hex");
-  const adjIdx = parseInt(hash.slice(0, 8), 16) % ADJECTIVES.length;
-  const aniIdx = parseInt(hash.slice(8, 16), 16) % ANIMALS.length;
+  const adjIdx = Number.parseInt(hash.slice(0, 8), 16) % ADJECTIVES.length;
+  const aniIdx = Number.parseInt(hash.slice(8, 16), 16) % ANIMALS.length;
   const suffix = hash.slice(16, 19);
   return {
     pseudonym: `${ADJECTIVES[adjIdx]}${ANIMALS[aniIdx]}-${suffix}`,

@@ -192,17 +192,17 @@ function migrate(d: Database): void {
   };
   addColumnIfMissing(`ALTER TABLE tool_calls ADD COLUMN kind TEXT NOT NULL DEFAULT 'tool';`);
   addColumnIfMissing(`ALTER TABLE tool_calls ADD COLUMN direction TEXT NOT NULL DEFAULT 'in';`);
-  addColumnIfMissing(`ALTER TABLE tool_calls ADD COLUMN jrpc_id INTEGER;`);
+  addColumnIfMissing("ALTER TABLE tool_calls ADD COLUMN jrpc_id INTEGER;");
 
   // Hook dedup cursors. The hook re-fires per-event and would otherwise
   // re-emit the same message body indefinitely (real bug reported by Luce
   // / OnyxKraken-7ba). Track per-(viewer, chat) and per-viewer ask cursors
   // so the hook only surfaces strictly-new content.
   addColumnIfMissing(
-    `ALTER TABLE chat_members ADD COLUMN last_notified_message_id INTEGER NOT NULL DEFAULT 0;`,
+    "ALTER TABLE chat_members ADD COLUMN last_notified_message_id INTEGER NOT NULL DEFAULT 0;",
   );
   addColumnIfMissing(
-    `ALTER TABLE instances ADD COLUMN last_notified_ask_id INTEGER NOT NULL DEFAULT 0;`,
+    "ALTER TABLE instances ADD COLUMN last_notified_ask_id INTEGER NOT NULL DEFAULT 0;",
   );
 }
 
@@ -241,7 +241,7 @@ export function upsertInstance(pseudonym: string, path: string, pid: number): vo
 }
 
 export function touchInstance(pseudonym: string): void {
-  db().run(`UPDATE instances SET last_seen = ? WHERE pseudonym = ?`, [now(), pseudonym]);
+  db().run("UPDATE instances SET last_seen = ? WHERE pseudonym = ?", [now(), pseudonym]);
 }
 
 export function listInstances(activeWithinMs: number): InstanceRow[] {
@@ -258,7 +258,7 @@ export function getInstance(pseudonym: string): InstanceRow | null {
   return (
     db()
       .query<InstanceRow, [string]>(
-        `SELECT pseudonym, path, first_seen, last_seen, pid FROM instances WHERE pseudonym = ?`,
+        "SELECT pseudonym, path, first_seen, last_seen, pid FROM instances WHERE pseudonym = ?",
       )
       .get(pseudonym) ?? null
   );
@@ -278,7 +278,7 @@ export function ensureChat(id: string, kind: "direct" | "group", title: string |
 export function getChat(id: string): ChatRow | null {
   return (
     db()
-      .query<ChatRow, [string]>(`SELECT id, kind, title, created_at FROM chats WHERE id = ?`)
+      .query<ChatRow, [string]>("SELECT id, kind, title, created_at FROM chats WHERE id = ?")
       .get(id) ?? null
   );
 }
@@ -329,7 +329,7 @@ export function listChatsFor(pseudonym: string): { chat: ChatRow; member: ChatMe
 export function insertMessage(chatId: string, from: string, body: string): MessageRow {
   const t = now();
   const res = db().run(
-    `INSERT INTO messages (chat_id, from_pseudonym, body, created_at) VALUES (?, ?, ?, ?)`,
+    "INSERT INTO messages (chat_id, from_pseudonym, body, created_at) VALUES (?, ?, ?, ?)",
     [chatId, from, body, t],
   );
   return {
@@ -364,7 +364,7 @@ export function markChatRead(chatId: string, pseudonym: string, upToId: number):
 export function insertAsk(from: string, to: string, body: string): AskRow {
   const t = now();
   const res = db().run(
-    `INSERT INTO asks (from_pseudonym, to_pseudonym, body, created_at) VALUES (?, ?, ?, ?)`,
+    "INSERT INTO asks (from_pseudonym, to_pseudonym, body, created_at) VALUES (?, ?, ?, ?)",
     [from, to, body, t],
   );
   return {
@@ -394,7 +394,7 @@ export function answerAsk(id: number, answerer: string, answer: string): AskRow 
   if (!ask) return null;
   if (ask.to_pseudonym !== answerer) return null;
   if (ask.answered_at !== null) return ask;
-  db().run(`UPDATE asks SET answered_at = ?, answer_body = ? WHERE id = ?`, [now(), answer, id]);
+  db().run("UPDATE asks SET answered_at = ?, answer_body = ? WHERE id = ?", [now(), answer, id]);
   return getAsk(id);
 }
 
