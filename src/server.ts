@@ -11,6 +11,35 @@ import { flushNow, instrumentServer, instrumentTransport } from "./audit-log.ts"
 // stdio MCP: all logging MUST go to stderr.
 const log = (...args: unknown[]) => console.error("[claudetalk]", ...args);
 
+// Crash forensics: when the server dies unexpectedly, append a stack trace
+// to ~/.claudetalk/crash.log BEFORE the process exits. Claude Code does not
+// auto-reconnect stdio MCP servers, so a silent death stalls the asking
+// Claude indefinitely — this log gives us the smoking gun for next time.
+function installCrashHandlers(pseudonym: string): void {
+  const writeCrash = (kind: string, err: unknown) => {
+    try {
+      const home = process.env.CLAUDETALK_HOME ?? `${process.env.HOME}/.claudetalk`;
+      const path = `${home}/crash.log`;
+      const stack =
+        err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
+      const line = `${new Date().toISOString()}  ${pseudonym}  pid=${process.pid}  ${kind}\n${stack}\n---\n`;
+      require("node:fs").appendFileSync(path, line, { mode: 0o644 });
+    } catch {
+      // We're dying anyway; best-effort.
+    }
+  };
+  process.on("uncaughtException", (err) => {
+    writeCrash("uncaughtException", err);
+    log("uncaughtException — exiting", err);
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (err) => {
+    writeCrash("unhandledRejection", err);
+    log("unhandledRejection — exiting", err);
+    process.exit(1);
+  });
+}
+
 const HEARTBEAT_MS = 30_000;
 const POLL_MS = 2_000;
 
@@ -35,6 +64,7 @@ async function main(): Promise<void> {
   ensureRootDir();
   const projectDir = resolveProjectDir();
   const me = pseudonymFor(projectDir);
+  installCrashHandlers(me.pseudonym);
   db(); // open + migrate
   upsertInstance(me.pseudonym, me.path, process.pid);
   log(`identity: ${me.pseudonym}  folder=${me.path}`);

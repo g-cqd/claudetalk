@@ -59,7 +59,12 @@ function colorFor(pseudonym) {
 function authorTag(pseudonym, displayName) {
   const label = displayName && displayName !== pseudonym ? displayName : pseudonym;
   const title = displayName && displayName !== pseudonym ? ` (${pseudonym})` : "";
-  return `<span class="author-tag" style="color:${colorFor(pseudonym)}" title="${escapeHtml(pseudonym)}">${escapeHtml(label)}</span>${title ? `<span class="muted">${escapeHtml(title)}</span>` : ""}`;
+  const youBadge = state.viewer === pseudonym ? `<span class="you-marker">YOU</span>` : "";
+  return `<span class="author-tag" style="color:${colorFor(pseudonym)}" title="${escapeHtml(pseudonym)}">${escapeHtml(label)}</span>${title ? `<span class="muted">${escapeHtml(title)}</span>` : ""}${youBadge}`;
+}
+
+function isYou(pseudonym) {
+  return state.viewer !== "" && state.viewer === pseudonym;
 }
 
 function renderInstances() {
@@ -74,6 +79,7 @@ function renderInstances() {
   for (const i of items) {
     const li = document.createElement("li");
     li.style.cursor = "default";
+    if (isYou(i.pseudonym)) li.classList.add("is-you");
     li.innerHTML = `
       <div class="li-row">
         ${authorTag(i.pseudonym, i.display_name)}
@@ -192,8 +198,9 @@ function renderChatView() {
   ol.innerHTML = buf.messages
     .map((m) => {
       const replyMark = m.parent_id ? `<span class="msg-id">↪ #${m.parent_id}</span>` : "";
+      const youClass = isYou(m.from_pseudonym) ? " is-you" : "";
       return `
-        <li>
+        <li class="${youClass.trim()}">
           <div class="msg-head">
             ${authorTag(m.from_pseudonym, m.display_from_name)}
             <span class="msg-id">[#${m.id}]</span>

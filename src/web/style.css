@@ -189,6 +189,28 @@ aside li.action { color: var(--accent); }
   background: var(--panel-soft);
 }
 
+/* "Viewing as" affordances: highlight the viewer wherever they appear. */
+.you-marker {
+  font-size: 10px;
+  color: var(--green);
+  font-weight: 700;
+  margin-left: 6px;
+  letter-spacing: 0.5px;
+}
+.is-you {
+  outline: 1px solid rgba(63, 185, 80, 0.4);
+  background: rgba(63, 185, 80, 0.04);
+}
+#messages li.is-you { padding-left: 12px; }
+aside li.is-you { background: rgba(63, 185, 80, 0.08); }
+.viewer-hint {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 8px 14px;
+  background: var(--panel-soft);
+  border-bottom: 1px solid var(--border);
+}
+
 #messages, #ask-list, #calls-list {
   list-style: none;
   margin: 0;

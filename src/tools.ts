@@ -13,6 +13,9 @@ import { fmtInstance, renderInbox } from "./format.ts";
 import { displayName, registerNicknameTools } from "./nickname.ts";
 import { registerChatTools } from "./chat-tools.ts";
 import { registerReactionTools } from "./reactions.ts";
+import { fmtStatus, getStatus, registerStatusTools } from "./status.ts";
+import { registerSearchTool } from "./search.ts";
+import { registerMuteTools } from "./mute.ts";
 
 const ACTIVE_WINDOW_MS_DEFAULT = 10 * 60 * 1000;
 /** Cap on the optional inline-wait in `ask`. Kept short so Claude is never
@@ -113,7 +116,11 @@ export function registerTools(server: McpServer, me: Identity): void {
       }
       const lines = [
         `Active ClaudeTalk instances (${rows.length}):`,
-        ...rows.map((i) => fmtInstance(i, me.pseudonym)),
+        ...rows.map((i) => {
+          const base = fmtInstance(i, me.pseudonym);
+          const s = fmtStatus(getStatus(i.pseudonym));
+          return s ? `${base}\n  status: ${s}` : base;
+        }),
         "",
         `(You are ${me.pseudonym}.)`,
       ];
@@ -265,6 +272,11 @@ export function registerTools(server: McpServer, me: Identity): void {
   //  check-inbox.ts on every Claude Code event — SessionStart, UserPromptSubmit,
   //  PostToolUse, PostToolBatch, SubagentStop, Stop — so new activity is
   //  surfaced organically without blocking.)
+
+  // Phase 2 tools — each module owns its tables + helpers + registration.
+  registerStatusTools(server, me);
+  registerSearchTool(server, me);
+  registerMuteTools(server, me);
 
   // ---------- nickname_* tools (moved to src/nickname.ts) ----------
   registerNicknameTools(server, me);

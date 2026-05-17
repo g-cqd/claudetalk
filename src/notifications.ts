@@ -5,6 +5,7 @@
  */
 import { db, listChatsFor } from "./db.ts";
 import type { AskRow, ChatRow, MessageRow } from "./db.ts";
+import { isChatMutedFor } from "./mute.ts";
 
 export interface NotificationDelta {
   /** Asks for me, strictly newer than my last notification cursor. */
@@ -42,6 +43,8 @@ export function notificationDeltaFor(pseudonym: string): NotificationDelta {
   const chats = listChatsFor(pseudonym);
   const newChats: NotificationDelta["newChats"] = [];
   for (const { chat, member } of chats) {
+    // Phase 2.3: muted chats are silenced in hook notifications.
+    if (isChatMutedFor(pseudonym, chat.id)) continue;
     const notifCursor = member.last_notified_message_id;
     const maxRow = d
       .query<{ max_id: number | null }, [string, string]>(

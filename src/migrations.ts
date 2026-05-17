@@ -116,6 +116,28 @@ export function migrate(d: Database): void {
       FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_mentions_target ON message_mentions(target, message_id);
+
+    -- Phase 2.1 instance status: optional short status string (+ emoji) per
+    -- instance. Visible in discover so peers know who is busy, away, etc.
+    CREATE TABLE IF NOT EXISTS instance_status (
+      pseudonym  TEXT PRIMARY KEY,
+      status     TEXT NOT NULL,
+      emoji      TEXT,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (pseudonym) REFERENCES instances(pseudonym) ON DELETE CASCADE
+    );
+
+    -- Phase 2.3 per-chat preferences (per viewer). Today: mute flag for the
+    -- hook (silenced chats produce no header). Future: verbosity / digest
+    -- intervals.
+    CREATE TABLE IF NOT EXISTS chat_preferences (
+      viewer    TEXT NOT NULL,
+      chat_id   TEXT NOT NULL,
+      muted     INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (viewer, chat_id),
+      FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+    );
   `);
 
   // Forward-compat ALTERs. Concurrent server starts would race between a
