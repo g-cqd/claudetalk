@@ -9,6 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Identity } from "./pseudonym.ts";
 import { _now, db, getChat, touchInstance } from "./db.ts";
+import { ErrorCode, toolError, toolText } from "./errors.ts";
 
 export function isChatMutedFor(viewer: string, chatId: string): boolean {
   const row = db()
@@ -38,12 +39,9 @@ export function listMutedChatsFor(viewer: string): string[] {
     .map((r) => r.chat_id);
 }
 
-function text(s: string) {
-  return { content: [{ type: "text" as const, text: s }] };
-}
-function error(s: string) {
-  return { content: [{ type: "text" as const, text: s }], isError: true };
-}
+// text/error helpers come from src/errors.ts (Phase 5.4 — codes).
+const text = (s: string) => toolText(s);
+const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
 export function registerMuteTools(server: McpServer, me: Identity): void {
   server.registerTool(

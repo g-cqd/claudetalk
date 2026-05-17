@@ -16,19 +16,18 @@ import { registerReactionTools } from "./reactions.ts";
 import { fmtStatus, getStatus, registerStatusTools } from "./status.ts";
 import { registerSearchTool } from "./search.ts";
 import { registerMuteTools } from "./mute.ts";
+import { ErrorCode, toolError, toolText } from "./errors.ts";
+import { resetNotificationCursors } from "./notifications.ts";
+import { getChat } from "./db.ts";
 
 const ACTIVE_WINDOW_MS_DEFAULT = 10 * 60 * 1000;
 /** Cap on the optional inline-wait in `ask`. Kept short so Claude is never
  *  blocked for long when it explicitly opts into a synchronous answer. */
 const ASK_WAIT_MAX_SECONDS = 10;
 
-function text(s: string) {
-  return { content: [{ type: "text" as const, text: s }] };
-}
-
-function error(s: string) {
-  return { content: [{ type: "text" as const, text: s }], isError: true };
-}
+// text/error helpers come from src/errors.ts (Phase 5.4 — codes).
+const text = (s: string) => toolText(s);
+const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
 
 
@@ -277,6 +276,42 @@ export function registerTools(server: McpServer, me: Identity): void {
   registerStatusTools(server, me);
   registerSearchTool(server, me);
   registerMuteTools(server, me);
+
+  // Phase 5.3 — notifications_reset
+  server.registerTool(
+    "notifications_reset",
+    {
+      title: "Rewind your notification cursors so the hook re-surfaces content",
+      description:
+        "Resets your `last_notified_message_id` (for the given chat, or every chat you're in) " +
+        "AND your `last_notified_ask_id` (when no chat_id is given). The hook will then re-emit a " +
+        "header on its next fire if there are messages from others past the (now-zero) cursor. " +
+        "Useful when you accidentally advanced the cursor past content you wanted to read.",
+      inputSchema: {
+        chat_id: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional chat id (e.g. 'group:design'). Omit to reset ALL your cursors."),
+      },
+    },
+    async ({ chat_id }) => {
+      touchInstance(me.pseudonym);
+      if (chat_id !== undefined) {
+        if (!getChat(chat_id)) return error(`Unknown chat_id '${chat_id}'.`, ErrorCode.UNKNOWN_CHAT);
+        const n = resetNotificationCursors(me.pseudonym, chat_id);
+        return text(
+          n > 0
+            ? `Reset notification cursor for ${chat_id}.`
+            : `No cursor to reset for ${chat_id} (already at 0 or you're not a member).`,
+        );
+      }
+      const n = resetNotificationCursors(me.pseudonym, null);
+      return text(
+        `Reset ${n} notification cursor(s). The hook's next fire will re-surface unread content.`,
+      );
+    },
+  );
 
   // ---------- nickname_* tools (moved to src/nickname.ts) ----------
   registerNicknameTools(server, me);

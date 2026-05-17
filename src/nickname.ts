@@ -21,6 +21,7 @@ import {
   listChatMembers,
   listChatsFor,
 } from "./db.ts";
+import { ErrorCode, toolError, toolText } from "./errors.ts";
 
 // ---------------- validation ----------------
 
@@ -180,12 +181,9 @@ export function displayBoth(
 
 // ---------------- MCP tool registrations ----------------
 
-function text(s: string) {
-  return { content: [{ type: "text" as const, text: s }] };
-}
-function error(s: string) {
-  return { content: [{ type: "text" as const, text: s }], isError: true };
-}
+// text/error helpers come from src/errors.ts (Phase 5.4 — codes).
+const text = (s: string) => toolText(s);
+const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
 export function registerNicknameTools(server: McpServer, me: Identity): void {
   server.registerTool(

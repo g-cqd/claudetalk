@@ -8,6 +8,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Identity } from "./pseudonym.ts";
 import { _now, db, getMessage, listChatMembers, touchInstance } from "./db.ts";
+import { ErrorCode, toolError, toolText } from "./errors.ts";
 
 const REACTION_MAX_LEN = 32;
 /** Allowed reaction characters: Unicode letters/digits, underscore, dash,
@@ -69,12 +70,9 @@ export function summariseReactions(messageId: number): string {
   return `  · ${parts.join(" · ")}`;
 }
 
-function text(s: string) {
-  return { content: [{ type: "text" as const, text: s }] };
-}
-function error(s: string) {
-  return { content: [{ type: "text" as const, text: s }], isError: true };
-}
+// text/error helpers come from src/errors.ts (Phase 5.4 — codes).
+const text = (s: string) => toolText(s);
+const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
 export function registerReactionTools(server: McpServer, me: Identity): void {
   server.registerTool(

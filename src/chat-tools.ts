@@ -24,13 +24,11 @@ import {
 } from "./db.ts";
 import { fmtChat, fmtMessage } from "./format.ts";
 import { recordMessageMentions } from "./mentions.ts";
+import { ErrorCode, toolError, toolText } from "./errors.ts";
 
-function text(s: string) {
-  return { content: [{ type: "text" as const, text: s }] };
-}
-function error(s: string) {
-  return { content: [{ type: "text" as const, text: s }], isError: true };
-}
+// text/error helpers come from src/errors.ts (Phase 5.4 — codes).
+const text = (s: string) => toolText(s);
+const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
 /** Post a message (if any) into the chat, parse out @-mentions, mark recent
  *  as read for `me`, and return the recent slice. Shared by chat / groupchat. */

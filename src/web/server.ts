@@ -5,7 +5,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getChat, listMessages } from "../db.ts";
+import { checkpointWal, getChat, listMessages } from "../db.ts";
 import { listToolCalls } from "../audit-log.ts";
 import { displayName } from "../nickname.ts";
 import { snapshot } from "./snapshot.ts";
@@ -209,7 +209,11 @@ if (import.meta.main) {
   const d = serveDashboard({ port });
   // eslint-disable-next-line no-console
   console.log(`ClaudeTalk dashboard: ${d.url}`);
+  // Phase 5.1: drain the WAL every 5 min so the dashboard process holds
+  // the periodic checkpoint duty; MCP servers stay focused on tool latency.
+  const checkpoint = setInterval(checkpointWal, 5 * 60 * 1000);
   const stop = async () => {
+    clearInterval(checkpoint);
     await d.stop();
     process.exit(0);
   };

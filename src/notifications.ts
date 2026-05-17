@@ -102,6 +102,35 @@ export function advanceNotificationCursors(
   }
 }
 
+/** Phase 5.3: rewind notification cursors so the hook will re-surface
+ *  recent content. If `chatId` is given, only that chat's cursor is reset;
+ *  otherwise resets the ask cursor + every chat the viewer is a member of.
+ *  Returns the count of cursors actually reset (rows where the value > 0). */
+export function resetNotificationCursors(
+  pseudonym: string,
+  chatId: string | null,
+): number {
+  const d = db();
+  let resetCount = 0;
+  if (chatId !== null) {
+    const res = d.run(
+      "UPDATE chat_members SET last_notified_message_id = 0 WHERE pseudonym = ? AND chat_id = ? AND last_notified_message_id > 0",
+      [pseudonym, chatId],
+    );
+    resetCount += res.changes;
+    return resetCount;
+  }
+  const r1 = d.run(
+    "UPDATE chat_members SET last_notified_message_id = 0 WHERE pseudonym = ? AND last_notified_message_id > 0",
+    [pseudonym],
+  );
+  const r2 = d.run(
+    "UPDATE instances SET last_notified_ask_id = 0 WHERE pseudonym = ? AND last_notified_ask_id > 0",
+    [pseudonym],
+  );
+  return r1.changes + r2.changes;
+}
+
 /** Group chats with recent activity that `pseudonym` is NOT a member of —
  *  surface them in inbox so the user knows to call `groupchat slug=X` to
  *  join. Returns at most `limit` rows. */

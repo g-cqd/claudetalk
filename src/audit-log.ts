@@ -19,6 +19,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { db } from "./db.ts";
+import { ErrorCode, toolError } from "./errors.ts";
+import { acquire } from "./rate-limit.ts";
 
 const ARGS_MAX = 1_000;
 const RESULT_MAX = 2_000;
@@ -118,6 +120,21 @@ export function flushNow(): void {
 function enqueue(row: ToolCallInsert): void {
   queue.push(row);
   ensureFlusher();
+}
+
+/** Enqueue with the new defaults (kind=tool, direction=in) — used by the
+ *  rate-limit short-circuit + handler-wrap defer path. */
+function enqueueRow(row: {
+  pseudonym: string;
+  tool: string;
+  args_json: string | null;
+  result_summary: string | null;
+  is_error: boolean;
+  error: string | null;
+  started_at: number;
+  duration_ms: number;
+}): void {
+  enqueue({ ...row, kind: "tool", direction: "in", jrpc_id: null });
 }
 
 /** Test helper: drop the timer + any pending rows so suites stay hermetic. */
@@ -228,6 +245,28 @@ export function instrumentServer(server: McpServer, pseudonym: string): McpServe
       const started_at = Date.now();
       const j = safeStringify(args);
       const args_json = j === null ? null : truncate(j, ARGS_MAX);
+
+      // Phase 5.2: per-(pseudonym, tool) token bucket. If this caller is
+      // hammering the same tool in a tight loop, drop it with a structured
+      // RATE_LIMITED error instead of letting it overwhelm SQLite.
+      const decision = acquire(pseudonym, name);
+      if (!decision.ok) {
+        const result = toolError(
+          `Rate limit exceeded for tool '${name}' (30 calls per 10s). Retry in ~${decision.retry_after_seconds}s.`,
+          ErrorCode.RATE_LIMITED,
+        );
+        enqueueRow({
+          pseudonym,
+          tool: name,
+          args_json,
+          result_summary: `[${ErrorCode.RATE_LIMITED}] retry in ${decision.retry_after_seconds}s`,
+          is_error: true,
+          error: ErrorCode.RATE_LIMITED,
+          started_at,
+          duration_ms: Date.now() - started_at,
+        });
+        return result;
+      }
       try {
         const result = await handler(args, extra);
         enqueue({

@@ -56,6 +56,17 @@ export function resetDb(): void {
   }
 }
 
+/** Force a TRUNCATE-mode checkpoint to reclaim WAL space. Used by long-lived
+ *  processes (dashboard, MCP server) on a timer to keep db.sqlite-wal small.
+ *  Safe to call any time; busy-tolerant — failures are swallowed. */
+export function checkpointWal(): void {
+  try {
+    db().exec("PRAGMA wal_checkpoint(TRUNCATE);");
+  } catch {
+    // Another writer may hold the lock briefly; harmless to skip.
+  }
+}
+
 export function db(): Database {
   if (_db) return _db;
   ensureRootDir();
@@ -69,6 +80,11 @@ export function db(): Database {
   retryBusy(() => d.exec("PRAGMA journal_mode = WAL;"));
   d.exec("PRAGMA synchronous = NORMAL;");
   d.exec("PRAGMA foreign_keys = ON;");
+  // Phase 5.1: more aggressive auto-checkpoint than SQLite's default 1000
+  // pages. Our access pattern (many short writes from concurrent processes)
+  // grew the WAL to ~1 MB while the main DB was only ~250 KB. 256 pages ≈
+  // 1 MB cap → checkpoint kicks in well before the file balloons.
+  d.exec("PRAGMA wal_autocheckpoint = 256;");
   retryBusy(() => migrate(d));
   _db = d;
   return d;
