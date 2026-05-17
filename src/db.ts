@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { migrate } from "./migrations.ts";
 import { dbPath, ensureRootDir } from "./paths.ts";
 
 export interface InstanceRow {
@@ -15,6 +16,7 @@ export interface MessageRow {
   from_pseudonym: string;
   body: string;
   created_at: number;
+  parent_id: number | null;
 }
 
 export interface AskRow {
@@ -88,123 +90,7 @@ function retryBusy(fn: () => void, attempts = 30, sleepMs = 100): void {
   fn(); // final attempt, throws if still locked
 }
 
-function migrate(d: Database): void {
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS instances (
-      pseudonym   TEXT PRIMARY KEY,
-      path        TEXT NOT NULL,
-      first_seen  INTEGER NOT NULL,
-      last_seen   INTEGER NOT NULL,
-      pid         INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS chats (
-      id          TEXT PRIMARY KEY,
-      kind        TEXT NOT NULL CHECK (kind IN ('direct','group')),
-      title       TEXT,
-      created_at  INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS chat_members (
-      chat_id              TEXT NOT NULL,
-      pseudonym            TEXT NOT NULL,
-      joined_at            INTEGER NOT NULL,
-      last_read_message_id INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (chat_id, pseudonym),
-      FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS messages (
-      id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      chat_id         TEXT NOT NULL,
-      from_pseudonym  TEXT NOT NULL,
-      body            TEXT NOT NULL,
-      created_at      INTEGER NOT NULL,
-      FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id, id);
-
-    CREATE TABLE IF NOT EXISTS asks (
-      id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      from_pseudonym  TEXT NOT NULL,
-      to_pseudonym    TEXT NOT NULL,
-      body            TEXT NOT NULL,
-      created_at      INTEGER NOT NULL,
-      answered_at     INTEGER,
-      answer_body     TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_asks_to_pending ON asks(to_pseudonym, answered_at);
-    CREATE INDEX IF NOT EXISTS idx_asks_from ON asks(from_pseudonym, answered_at);
-
-    -- Nicknames I (viewer) assign to other instances. Unilateral, immediate.
-    CREATE TABLE IF NOT EXISTS personal_nicknames (
-      viewer    TEXT NOT NULL,
-      target    TEXT NOT NULL,
-      nickname  TEXT NOT NULL,
-      set_at    INTEGER NOT NULL,
-      PRIMARY KEY (viewer, target)
-    );
-
-    -- Per-(chat, target, voter) vote for what to call target in that chat.
-    -- Only one vote per voter; re-voting replaces. A group nickname is
-    -- "active" when at least 2 voters (including target) agree on the same
-    -- nickname. Derived at query time — no separate activation row.
-    CREATE TABLE IF NOT EXISTS group_nickname_votes (
-      chat_id   TEXT NOT NULL,
-      target    TEXT NOT NULL,
-      voter     TEXT NOT NULL,
-      nickname  TEXT NOT NULL,
-      voted_at  INTEGER NOT NULL,
-      PRIMARY KEY (chat_id, target, voter),
-      FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_gnv_target ON group_nickname_votes(chat_id, target);
-
-    -- Audit log of every MCP tool call across all instances. Args & result
-    -- are JSON snippets, truncated. Useful for live debugging and the
-    -- dashboard's activity feed.
-    CREATE TABLE IF NOT EXISTS tool_calls (
-      id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      pseudonym       TEXT NOT NULL,
-      tool            TEXT NOT NULL,
-      args_json       TEXT,
-      result_summary  TEXT,
-      is_error        INTEGER NOT NULL DEFAULT 0,
-      error           TEXT,
-      started_at      INTEGER NOT NULL,
-      duration_ms     INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_tool_calls_time ON tool_calls(started_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_tool_calls_pseudonym ON tool_calls(pseudonym, started_at DESC);
-  `);
-
-  // tool_calls v2: add `kind` (tool|request|response|notification) and
-  // `direction` (in|out) so we can log JSON-RPC protocol traffic alongside
-  // tool calls. Use try/catch instead of pragma-introspect: concurrent
-  // server startups would otherwise race between "check" and "alter".
-  const addColumnIfMissing = (sql: string) => {
-    try {
-      d.exec(sql);
-    } catch (e: any) {
-      const msg = String(e?.message ?? e ?? "");
-      if (!/duplicate column name/i.test(msg)) throw e;
-    }
-  };
-  addColumnIfMissing(`ALTER TABLE tool_calls ADD COLUMN kind TEXT NOT NULL DEFAULT 'tool';`);
-  addColumnIfMissing(`ALTER TABLE tool_calls ADD COLUMN direction TEXT NOT NULL DEFAULT 'in';`);
-  addColumnIfMissing("ALTER TABLE tool_calls ADD COLUMN jrpc_id INTEGER;");
-
-  // Hook dedup cursors. The hook re-fires per-event and would otherwise
-  // re-emit the same message body indefinitely (real bug reported by Luce
-  // / OnyxKraken-7ba). Track per-(viewer, chat) and per-viewer ask cursors
-  // so the hook only surfaces strictly-new content.
-  addColumnIfMissing(
-    "ALTER TABLE chat_members ADD COLUMN last_notified_message_id INTEGER NOT NULL DEFAULT 0;",
-  );
-  addColumnIfMissing(
-    "ALTER TABLE instances ADD COLUMN last_notified_ask_id INTEGER NOT NULL DEFAULT 0;",
-  );
-}
+// Schema migration lives in src/migrations.ts.
 
 // Tool-call audit log helpers live in src/audit-log.ts (the migration above
 // owns the `tool_calls` table). Keeping the helpers next to the wrapper that
@@ -326,11 +212,16 @@ export function listChatsFor(pseudonym: string): { chat: ChatRow; member: ChatMe
   }));
 }
 
-export function insertMessage(chatId: string, from: string, body: string): MessageRow {
+export function insertMessage(
+  chatId: string,
+  from: string,
+  body: string,
+  parentId: number | null = null,
+): MessageRow {
   const t = now();
   const res = db().run(
-    "INSERT INTO messages (chat_id, from_pseudonym, body, created_at) VALUES (?, ?, ?, ?)",
-    [chatId, from, body, t],
+    "INSERT INTO messages (chat_id, from_pseudonym, body, created_at, parent_id) VALUES (?, ?, ?, ?, ?)",
+    [chatId, from, body, t, parentId],
   );
   return {
     id: Number(res.lastInsertRowid),
@@ -338,17 +229,29 @@ export function insertMessage(chatId: string, from: string, body: string): Messa
     from_pseudonym: from,
     body,
     created_at: t,
+    parent_id: parentId,
   };
 }
 
 export function listMessages(chatId: string, sinceId: number, limit: number): MessageRow[] {
   return db()
     .query<MessageRow, [string, number, number]>(
-      `SELECT id, chat_id, from_pseudonym, body, created_at
+      `SELECT id, chat_id, from_pseudonym, body, created_at, parent_id
        FROM messages WHERE chat_id = ? AND id > ?
        ORDER BY id ASC LIMIT ?`,
     )
     .all(chatId, sinceId, limit);
+}
+
+export function getMessage(id: number): MessageRow | null {
+  return (
+    db()
+      .query<MessageRow, [number]>(
+        `SELECT id, chat_id, from_pseudonym, body, created_at, parent_id
+         FROM messages WHERE id = ?`,
+      )
+      .get(id) ?? null
+  );
 }
 
 export function markChatRead(chatId: string, pseudonym: string, upToId: number): void {
@@ -465,7 +368,7 @@ export function unreadSummary(pseudonym: string): Unread {
         .get(chat.id, member.last_read_message_id, pseudonym);
       const latest = db()
         .query<MessageRow, [string]>(
-          `SELECT id, chat_id, from_pseudonym, body, created_at
+          `SELECT id, chat_id, from_pseudonym, body, created_at, parent_id
            FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1`,
         )
         .get(chat.id) ?? null;

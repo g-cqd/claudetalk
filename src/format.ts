@@ -10,6 +10,7 @@ import {
 } from "./db.ts";
 import { discoverableGroupsFor } from "./notifications.ts";
 import { displayBoth, displayName } from "./nickname.ts";
+import { summariseReactions } from "./reactions.ts";
 
 export function fmtAgo(ts: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -51,7 +52,11 @@ export function fmtChat(c: ChatRow): string {
 
 export function fmtMessage(m: MessageRow, viewer?: string): string {
   const author = viewer ? displayName(viewer, m.from_pseudonym, m.chat_id) : m.from_pseudonym;
-  return `[${m.id}] ${author} (${fmtAgo(m.created_at)}): ${m.body}`;
+  const idTag = m.parent_id !== null && m.parent_id !== undefined
+    ? `[${m.id} ↪ ${m.parent_id}]`
+    : `[${m.id}]`;
+  const reactions = summariseReactions(m.id);
+  return `${idTag} ${author} (${fmtAgo(m.created_at)}): ${m.body}${reactions}`;
 }
 
 function directPeer(chatId: string, me: string): string {

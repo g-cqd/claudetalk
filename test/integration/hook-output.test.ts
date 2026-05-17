@@ -106,3 +106,107 @@ test("PostToolUse hook (empty inbox) emits NO output", async () => {
   const out = await runHook("PostToolUse", "/tmp/yet-another-fresh-dir");
   expect(out).toBeNull();
 });
+
+// ---------- Phase 1.4 smart hook suggestions ----------
+
+test("smart suggestion: ONE pending ask → suggests answer ask_id=N", async () => {
+  const { pseudonymFor } = await import("../../src/pseudonym.ts");
+  const dir = "/tmp/claudetalk-smart-1ask";
+  const me = pseudonymFor(dir);
+  const ask = insertAsk("PEER", me.pseudonym, "single ask test");
+  const out = await runHook("PostToolUse", dir);
+  expect(out).not.toBeNull();
+  const ctx = (out as any).hookSpecificOutput.additionalContext as string;
+  expect(ctx).toContain(`mcp__claudetalk__answer ask_id=${ask.id}`);
+  // Should NOT contain the generic line:
+  expect(ctx).not.toContain("mcp__claudetalk__chat /");
+});
+
+test("smart suggestion: ONE unread direct chat → suggests chat with=PEER", async () => {
+  const { pseudonymFor } = await import("../../src/pseudonym.ts");
+  const {
+    addChatMember,
+    directChatId,
+    ensureChat,
+    insertMessage,
+  } = await import("../../src/db.ts");
+  const dir = "/tmp/claudetalk-smart-1direct";
+  const me = pseudonymFor(dir);
+  const cid = directChatId(me.pseudonym, "PEER");
+  ensureChat(cid, "direct", null);
+  addChatMember(cid, me.pseudonym);
+  addChatMember(cid, "PEER");
+  insertMessage(cid, "PEER", "hey there");
+
+  const out = await runHook("PostToolUse", dir);
+  expect(out).not.toBeNull();
+  const ctx = (out as any).hookSpecificOutput.additionalContext as string;
+  expect(ctx).toContain(`mcp__claudetalk__chat with=PEER to read+reply`);
+  expect(ctx).not.toContain("answer ask_id");
+});
+
+test("smart suggestion: ONE unread group → suggests groupchat slug=X", async () => {
+  const { pseudonymFor } = await import("../../src/pseudonym.ts");
+  const {
+    addChatMember,
+    ensureChat,
+    groupChatId,
+    insertMessage,
+  } = await import("../../src/db.ts");
+  const dir = "/tmp/claudetalk-smart-1group";
+  const me = pseudonymFor(dir);
+  const cid = groupChatId("design");
+  ensureChat(cid, "group", "Design");
+  addChatMember(cid, me.pseudonym);
+  addChatMember(cid, "PEER");
+  insertMessage(cid, "PEER", "group post");
+
+  const out = await runHook("PostToolUse", dir);
+  expect(out).not.toBeNull();
+  const ctx = (out as any).hookSpecificOutput.additionalContext as string;
+  expect(ctx).toContain(`mcp__claudetalk__groupchat slug=design to read+reply`);
+});
+
+test("multiple items → falls back to generic footer", async () => {
+  const { pseudonymFor } = await import("../../src/pseudonym.ts");
+  const dir = "/tmp/claudetalk-smart-multi";
+  const me = pseudonymFor(dir);
+  insertAsk("PEER", me.pseudonym, "q1");
+  insertAsk("PEER", me.pseudonym, "q2");
+  const out = await runHook("PostToolUse", dir);
+  const ctx = (out as any).hookSpecificOutput.additionalContext as string;
+  expect(ctx).toContain("Call mcp__claudetalk__inbox to read");
+});
+
+// ---------- Phase 1.2 mention priority ----------
+
+test("mention prepends [!] and surfaces mentioned-by line", async () => {
+  const { pseudonymFor } = await import("../../src/pseudonym.ts");
+  const {
+    addChatMember,
+    ensureChat,
+    groupChatId,
+    insertMessage,
+    upsertInstance,
+  } = await import("../../src/db.ts");
+  const { recordMessageMentions } = await import("../../src/mentions.ts");
+  const dir = "/tmp/claudetalk-mention-test";
+  const me = pseudonymFor(dir);
+  // Register the target as an instance (recordMessageMentions only records
+  // mentions of known pseudonyms).
+  upsertInstance(me.pseudonym, dir, 1);
+  upsertInstance("PEER", "/peer", 2);
+
+  const cid = groupChatId("mention-test");
+  ensureChat(cid, "group", null);
+  addChatMember(cid, me.pseudonym);
+  addChatMember(cid, "PEER");
+  const msg = insertMessage(cid, "PEER", `@${me.pseudonym} look at this`);
+  recordMessageMentions(msg.id, msg.body, "PEER");
+
+  const out = await runHook("PostToolUse", dir);
+  expect(out).not.toBeNull();
+  const ctx = (out as any).hookSpecificOutput.additionalContext as string;
+  expect(ctx.startsWith("[!]")).toBe(true);
+  expect(ctx).toContain("mentioned by PEER");
+});

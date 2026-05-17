@@ -59,7 +59,7 @@ export function notificationDeltaFor(pseudonym: string): NotificationDelta {
       .get(chat.id, notifCursor, pseudonym);
     const latest = d
       .query<MessageRow, [string, string]>(
-        `SELECT id, chat_id, from_pseudonym, body, created_at
+        `SELECT id, chat_id, from_pseudonym, body, created_at, parent_id
          FROM messages WHERE chat_id = ? AND from_pseudonym != ?
          ORDER BY id DESC LIMIT 1`,
       )
