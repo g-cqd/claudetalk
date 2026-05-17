@@ -4,19 +4,26 @@ import { existsSync, readSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { pseudonymFor } from "../src/pseudonym.ts";
-import { db, listInstances } from "../src/db.ts";
+import { db } from "../src/db.ts";
 import { listToolCalls, type ToolCallRow } from "../src/audit-log.ts";
-import { fmtInstance } from "../src/format.ts";
-import {
-  readJson,
-  safeWriteJson,
-  type WriteOptions,
-  type WriteResult,
-} from "../src/safe-write.ts";
+import { readJson, type WriteResult } from "../src/safe-write.ts";
 import { serveDashboard } from "../src/web/server.ts";
-
-type JsonObj = Record<string, any>;
-const readObj = (path: string): JsonObj => readJson(path) as JsonObj;
+import {
+  buildDoctorReport,
+  buildMetrics,
+  exportChat,
+  formatDoctorReport,
+  formatMetrics,
+  runGc,
+} from "../src/cli-commands.ts";
+import {
+  type InstallContext,
+  type InstallOptions,
+  type InstallSummary,
+  installProject as installProjectFn,
+  installUser as installUserFn,
+  uninstall as uninstallFn,
+} from "../src/installer.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(HERE, "..");
@@ -59,14 +66,29 @@ COMMANDS
       handler invocation, JSON-RPC request, response or notification.
       Filter --kind tool|request|response|notification. With --follow, tail
       new entries as they arrive (Ctrl-C to stop). Default --limit 50.
+  gc [--older-than-days N] [--vacuum]
+      Prune audit-log rows older than N days (default 30). With --vacuum,
+      also reclaim file space.
+  export <chat_id> [--format md|json]
+      Dump a chat's full history to stdout. Default format: md.
+  metrics [--window-hours N]
+      Per-tool p50/p95/p99 latency, per-pseudonym call counts, hook dedup
+      ratio, rate-limit events over the last N hours (default 24).
   help
       Show this help.
 `);
 }
 
-interface InstallOptions extends WriteOptions {
-  promptIfRisky: boolean;
-}
+type JsonObj = Record<string, any>;
+const readObj = (path: string): JsonObj => readJson(path) as JsonObj;
+
+const INSTALL_CTX: InstallContext = {
+  bunBin: BUN_BIN,
+  serverEntry: SERVER_ENTRY,
+  hookEntry: HOOK_ENTRY,
+  userMcpJson: USER_MCP_JSON,
+  userSettings: USER_SETTINGS,
+};
 
 /** Prompt y/N from a TTY. Returns true on 'y' / 'yes'. */
 function confirm(question: string): boolean {
@@ -83,104 +105,14 @@ function confirm(question: string): boolean {
   return ans === "y" || ans === "yes";
 }
 
-function serverEntry() {
-  return {
-    type: "stdio" as const,
-    command: BUN_BIN,
-    args: ["run", SERVER_ENTRY],
-  };
-}
-
-function ensureHooks(cfg: any): { added: number; existed: number; removed: number } {
-  cfg.hooks ??= {};
-  const hookCmd = `${BUN_BIN} run ${HOOK_ENTRY}`;
-  let added = 0;
-  let existed = 0;
-  let removed = 0;
-
-  /** Drop our hook command from any block that matches (eventName, matcher).
-   *  Foreign commands in the same block are preserved. */
-  const dropOurs = (eventName: string, matcher: string | null) => {
-    const blocks = cfg.hooks[eventName];
-    if (!Array.isArray(blocks)) return;
-    for (const block of blocks) {
-      const matcherEq = matcher === null ? block.matcher == null : block.matcher === matcher;
-      if (!matcherEq || !Array.isArray(block.hooks)) continue;
-      const before = block.hooks.length;
-      block.hooks = block.hooks.filter(
-        (h: any) => !(h.type === "command" && h.command === hookCmd),
-      );
-      removed += before - block.hooks.length;
-    }
-    cfg.hooks[eventName] = blocks.filter(
-      (b: any) => Array.isArray(b.hooks) && b.hooks.length > 0,
-    );
-    if (cfg.hooks[eventName].length === 0) delete cfg.hooks[eventName];
-  };
-
-  const upsert = (eventName: string, matcher: string | null) => {
-    cfg.hooks[eventName] ??= [];
-    const block = cfg.hooks[eventName].find(
-      (b: any) =>
-        (matcher === null ? b.matcher == null : b.matcher === matcher) &&
-        Array.isArray(b.hooks),
-    );
-    const target = block ?? { matcher: matcher ?? undefined, hooks: [] };
-    if (!block) cfg.hooks[eventName].push(target);
-    const present = target.hooks.some(
-      (h: any) => h.type === "command" && h.command === hookCmd,
-    );
-    if (present) existed++;
-    else {
-      target.hooks.push({ type: "command", command: hookCmd });
-      added++;
-    }
-  };
-
-  // PostToolUse no-matcher was too aggressive — it fires 10–30x per turn per
-  // Claude session, causing SQLite write-lock contention with MCP tool calls
-  // and the dashboard. Reverting to claudetalk-only matcher; the other
-  // expanded events (UserPromptSubmit, PostToolBatch, SubagentStop) still
-  // give Claude many opportunities to see new messages without the per-tool
-  // spam.
-  dropOurs("PostToolUse", null);
-
-  upsert("SessionStart", null);
-  upsert("UserPromptSubmit", null);
-  upsert("PostToolUse", "mcp__claudetalk__.*");
-  upsert("PostToolBatch", null);
-  upsert("SubagentStop", null);
-  upsert("Stop", null);
-
-  return { added, existed, removed };
-}
-
-function removeHooks(cfg: any): number {
-  if (!cfg.hooks) return 0;
-  const hookCmd = `${BUN_BIN} run ${HOOK_ENTRY}`;
-  let removed = 0;
-  for (const ev of Object.keys(cfg.hooks)) {
-    const blocks = cfg.hooks[ev];
-    if (!Array.isArray(blocks)) continue;
-    for (const block of blocks) {
-      if (!Array.isArray(block.hooks)) continue;
-      const before = block.hooks.length;
-      block.hooks = block.hooks.filter(
-        (h: any) => !(h.type === "command" && h.command === hookCmd),
-      );
-      removed += before - block.hooks.length;
-    }
-    cfg.hooks[ev] = blocks.filter((b: any) => Array.isArray(b.hooks) && b.hooks.length > 0);
-    if (cfg.hooks[ev].length === 0) delete cfg.hooks[ev];
-  }
-  if (Object.keys(cfg.hooks).length === 0) delete cfg.hooks;
-  return removed;
-}
-
 function describeChange(path: string, result: WriteResult, summary: string): void {
   const verb =
     result === "wrote" ? "✔ wrote" : result === "skipped" ? "› would change" : "= unchanged";
   console.log(`${verb}  ${path}   ${summary}`);
+}
+
+function reportInstall(results: InstallSummary[]): void {
+  for (const r of results) describeChange(r.path, r.result, r.summary);
 }
 
 function installUser(withHooks: boolean, opts: InstallOptions): void {
@@ -195,20 +127,7 @@ function installUser(withHooks: boolean, opts: InstallOptions): void {
       return;
     }
   }
-
-  const mcp = readObj(USER_MCP_JSON);
-  mcp.mcpServers ??= {};
-  mcp.mcpServers.claudetalk = serverEntry();
-  const mcpResult = safeWriteJson(USER_MCP_JSON, mcp, opts);
-  describeChange(USER_MCP_JSON, mcpResult, `claudetalk → ${BUN_BIN} run ${SERVER_ENTRY}`);
-
-  if (withHooks) {
-    const settings = readObj(USER_SETTINGS);
-    const { added, existed, removed } = ensureHooks(settings);
-    const sResult = safeWriteJson(USER_SETTINGS, settings, opts);
-    describeChange(USER_SETTINGS, sResult, `hooks added=${added}, already-present=${existed}, migrated=${removed}`);
-  }
-
+  reportInstall(installUserFn(INSTALL_CTX, withHooks, opts));
   if (opts.dryRun) {
     console.log("\nNothing was written (--dry-run). Re-run without --dry-run to apply.");
   } else {
@@ -217,22 +136,7 @@ function installUser(withHooks: boolean, opts: InstallOptions): void {
 }
 
 function installProject(withHooks: boolean, opts: InstallOptions): void {
-  const here = process.cwd();
-  const mcpPath = join(here, ".mcp.json");
-  const mcp = readObj(mcpPath);
-  mcp.mcpServers ??= {};
-  mcp.mcpServers.claudetalk = serverEntry();
-  const mcpResult = safeWriteJson(mcpPath, mcp, opts);
-  describeChange(mcpPath, mcpResult, `claudetalk → ${BUN_BIN} run ${SERVER_ENTRY}`);
-
-  if (withHooks) {
-    const projectSettings = join(here, ".claude", "settings.json");
-    const settings = readObj(projectSettings);
-    const { added, existed, removed } = ensureHooks(settings);
-    const sResult = safeWriteJson(projectSettings, settings, opts);
-    describeChange(projectSettings, sResult, `hooks added=${added}, already-present=${existed}, migrated=${removed}`);
-  }
-
+  reportInstall(installProjectFn(INSTALL_CTX, withHooks, opts));
   if (opts.dryRun) {
     console.log("\nNothing was written (--dry-run). Re-run without --dry-run to apply.");
   } else {
@@ -243,30 +147,7 @@ function installProject(withHooks: boolean, opts: InstallOptions): void {
 }
 
 function uninstall(scope: "user" | "project", opts: InstallOptions): void {
-  const mcpPath = scope === "user" ? USER_MCP_JSON : join(process.cwd(), ".mcp.json");
-  const settingsPath =
-    scope === "user" ? USER_SETTINGS : join(process.cwd(), ".claude", "settings.json");
-
-  if (existsSync(mcpPath)) {
-    const mcp = readObj(mcpPath);
-    if (mcp.mcpServers?.claudetalk) {
-      delete mcp.mcpServers.claudetalk;
-      if (Object.keys(mcp.mcpServers).length === 0) delete mcp.mcpServers;
-      const r = safeWriteJson(mcpPath, mcp, opts);
-      describeChange(mcpPath, r, "removed claudetalk MCP entry");
-    } else {
-      console.log(`(no claudetalk entry in ${mcpPath})`);
-    }
-  } else {
-    console.log(`(no ${mcpPath})`);
-  }
-
-  if (existsSync(settingsPath)) {
-    const s = readObj(settingsPath);
-    const removed = removeHooks(s);
-    const r = safeWriteJson(settingsPath, s, opts);
-    describeChange(settingsPath, r, `removed ${removed} hook entries`);
-  }
+  reportInstall(uninstallFn(INSTALL_CTX, scope, opts));
 }
 
 function whoami(path: string): void {
@@ -277,41 +158,22 @@ function whoami(path: string): void {
 }
 
 function doctor(): void {
-  console.log("ClaudeTalk doctor");
-  console.log(`  bun:    ${BUN_BIN}`);
-  console.log(`  server: ${SERVER_ENTRY}`);
-  console.log(`  hook:   ${HOOK_ENTRY}`);
-  console.log();
-
-  for (const [label, path] of [
-    ["user .claude.json", USER_MCP_JSON],
-    ["user settings.json", USER_SETTINGS],
-    ["project .mcp.json", join(process.cwd(), ".mcp.json")],
-    ["project settings.json", join(process.cwd(), ".claude", "settings.json")],
-  ] as const) {
-    const exists = existsSync(path);
-    const j = exists ? readObj(path) : null;
-    const hasServer = j?.mcpServers?.claudetalk ? "✔ MCP" : "  ";
-    const hookCmd = `${BUN_BIN} run ${HOOK_ENTRY}`;
-    let hookCount = 0;
-    if (j?.hooks) {
-      for (const ev of Object.keys(j.hooks)) {
-        for (const block of j.hooks[ev] ?? []) {
-          for (const h of block.hooks ?? []) {
-            if (h.command === hookCmd) hookCount++;
-          }
-        }
-      }
-    }
-    const hookMark = hookCount > 0 ? `✔ ${hookCount} hooks` : "";
-    console.log(`  [${exists ? "x" : " "}] ${label.padEnd(22)} ${path}   ${hasServer} ${hookMark}`);
-  }
-  console.log();
-
-  db(); // open + migrate
-  const active = listInstances(60 * 60 * 1000);
-  console.log(`Active instances in last hour (${active.length}):`);
-  for (const i of active) console.log("  " + fmtInstance(i));
+  db(); // open + migrate first so schema_version is populated
+  const installPaths = [
+    { label: "user .claude.json", path: USER_MCP_JSON },
+    { label: "user settings.json", path: USER_SETTINGS },
+    { label: "project .mcp.json", path: join(process.cwd(), ".mcp.json") },
+    { label: "project settings.json", path: join(process.cwd(), ".claude", "settings.json") },
+  ];
+  const report = buildDoctorReport(
+    BUN_BIN,
+    SERVER_ENTRY,
+    HOOK_ENTRY,
+    installPaths,
+    (p) => readObj(p),
+    (p) => existsSync(p),
+  );
+  console.log(formatDoctorReport(report));
 }
 
 async function web(port: number, host: string, openInBrowser: boolean): Promise<void> {
@@ -479,6 +341,43 @@ switch (cmd) {
       kind: getArg("kind"),
       limit: Number(getArg("limit", "50")),
     });
+    break;
+  }
+  case "gc": {
+    db();
+    const r = runGc({
+      olderThanDays: Number(getArg("older-than-days", "30")),
+      vacuum: hasFlag("vacuum"),
+    });
+    console.log(
+      `✓ pruned ${r.pruned_tool_calls} audit rows, ${r.retained_tool_calls} retained${r.vacuumed ? " (vacuumed)" : ""}.`,
+    );
+    break;
+  }
+  case "export": {
+    db();
+    const chatId = process.argv[3];
+    if (!chatId) {
+      console.error("Usage: claudetalk export <chat_id> [--format md|json]");
+      process.exit(2);
+    }
+    const fmt = (getArg("format", "md") as "md" | "json") ?? "md";
+    if (fmt !== "md" && fmt !== "json") {
+      console.error(`Unknown --format '${fmt}'. Use md or json.`);
+      process.exit(2);
+    }
+    const r = exportChat(chatId, fmt);
+    if (!r.ok) {
+      console.error(r.output);
+      process.exit(1);
+    }
+    console.log(r.output);
+    break;
+  }
+  case "metrics": {
+    db();
+    const m = buildMetrics({ windowHours: Number(getArg("window-hours", "24")) });
+    console.log(formatMetrics(m));
     break;
   }
   case "help":
