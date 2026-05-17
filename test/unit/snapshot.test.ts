@@ -46,7 +46,9 @@ describe("snapshot", () => {
     expect(s.chats.length).toBe(1);
     const c = s.chats[0]!;
     expect(c.chat.title).toBe("Design Review");
-    expect(c.members.sort()).toEqual(["Alice", "Bob"]);
+    expect(c.members.map((m) => m.pseudonym).sort()).toEqual(["Alice", "Bob"]);
+    // display_name falls through to pseudonym when no viewer is set
+    expect(c.members.find((m) => m.pseudonym === "Alice")?.display_name).toBe("Alice");
     expect(c.unread_per_member.Bob).toBe(2);
     expect(c.unread_per_member.Alice).toBe(0); // Alice is the author
     expect(c.recent_messages.map((m) => m.body)).toEqual(["hi", "ping?"]);

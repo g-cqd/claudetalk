@@ -9,10 +9,18 @@
   <body>
     <header>
       <h1>ClaudeTalk</h1>
-      <div class="status">
-        <span id="status-dot" class="dot dot-disconnected"></span>
-        <span id="status-text">connecting…</span>
-        <span class="muted" id="status-when"></span>
+      <div class="header-controls">
+        <label class="viewer-select">
+          Viewing as
+          <select id="viewer-select">
+            <option value="">— operator (no nicknames) —</option>
+          </select>
+        </label>
+        <div class="status">
+          <span id="status-dot" class="dot dot-disconnected"></span>
+          <span id="status-text">connecting…</span>
+          <span class="muted" id="status-when"></span>
+        </div>
       </div>
     </header>
 
@@ -38,16 +46,18 @@
 
       <section id="view">
         <div id="placeholder" class="placeholder">
-          <p>Select a chat or ask on the left.</p>
+          <p>Select a chat, ask list, or tool log on the left.</p>
           <p class="muted">
             Updates stream live over SSE. Open this page in a second tab — both
-            stay in sync.
+            stay in sync. Pick a viewer above to render personal &amp; group
+            nicknames from that perspective.
           </p>
         </div>
         <div id="chat-view" class="hidden">
           <header class="view-header">
             <h2 id="chat-title">—</h2>
             <span class="muted" id="chat-meta"></span>
+            <button type="button" id="load-older" class="hidden">Load older</button>
           </header>
           <ol id="messages"></ol>
         </div>
@@ -61,7 +71,21 @@
         <div id="calls-view" class="hidden">
           <header class="view-header">
             <h2>Tool call log</h2>
-            <span class="muted">last 50 across all instances</span>
+            <div class="filter-bar">
+              <input type="search" id="filter-pseudonym" placeholder="pseudonym…" />
+              <input type="search" id="filter-tool" placeholder="tool…" />
+              <select id="filter-kind">
+                <option value="">all kinds</option>
+                <option value="tool">tool</option>
+                <option value="request">request</option>
+                <option value="response">response</option>
+                <option value="notification">notification</option>
+              </select>
+              <label class="toggle">
+                <input type="checkbox" id="filter-error" />
+                errors only
+              </label>
+            </div>
           </header>
           <ol id="calls-list"></ol>
         </div>

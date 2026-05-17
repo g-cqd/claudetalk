@@ -5,6 +5,9 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getChat, listMessages } from "../db.ts";
+import { listToolCalls } from "../audit-log.ts";
+import { displayName } from "../nickname.ts";
 import { snapshot } from "./snapshot.ts";
 
 type BunServer = ReturnType<typeof Bun.serve>;
@@ -51,7 +54,11 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
-function sseStream(pollMs: number, signal: AbortSignal): ReadableStream<Uint8Array> {
+function sseStream(
+  pollMs: number,
+  signal: AbortSignal,
+  viewer: string | null,
+): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
   return new ReadableStream({
     start(controller) {
@@ -67,11 +74,11 @@ function sseStream(pollMs: number, signal: AbortSignal): ReadableStream<Uint8Arr
         }
       };
       send("hello", { ok: true });
-      send("snapshot", snapshot());
+      send("snapshot", snapshot({ viewer }));
       const timer = setInterval(() => {
         if (closed) return;
         try {
-          send("snapshot", snapshot());
+          send("snapshot", snapshot({ viewer }));
         } catch {
           closed = true;
           clearInterval(timer);
@@ -87,6 +94,13 @@ function sseStream(pollMs: number, signal: AbortSignal): ReadableStream<Uint8Arr
       signal.addEventListener("abort", onAbort, { once: true });
     },
   });
+}
+
+/** Optional `viewer` query param. Returned verbatim from URL, no validation;
+ *  if an unknown pseudonym is passed, displayName just falls through to it. */
+function viewerFrom(url: URL): string | null {
+  const v = url.searchParams.get("viewer");
+  return v && v.length > 0 ? v : null;
 }
 
 export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
@@ -105,10 +119,12 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
       if (path === "/style.css") return staticFile("style.css");
       if (path === "/client.js") return staticFile("client.js");
 
-      if (path === "/api/snapshot") return jsonResponse(snapshot());
+      if (path === "/api/snapshot") {
+        return jsonResponse(snapshot({ viewer: viewerFrom(url) }));
+      }
 
       if (path === "/api/stream") {
-        return new Response(sseStream(pollMs, req.signal), {
+        return new Response(sseStream(pollMs, req.signal, viewerFrom(url)), {
           headers: {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache, no-transform",
@@ -116,6 +132,56 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
             "X-Accel-Buffering": "no",
           },
         });
+      }
+
+      // Phase 3.1 — paginated chat messages.
+      // GET /api/messages?chat_id=...&since_id=N&limit=M&viewer=X
+      // Returns { chat_id, messages: [{...,display_from_name}], has_more }
+      if (path === "/api/messages") {
+        const chatId = url.searchParams.get("chat_id");
+        if (!chatId) return jsonResponse({ error: "chat_id required" }, 400);
+        const chat = getChat(chatId);
+        if (!chat) return jsonResponse({ error: "unknown chat" }, 404);
+        const sinceId = Number(url.searchParams.get("since_id") ?? 0);
+        const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 100), 500));
+        const viewer = viewerFrom(url);
+        const rows = listMessages(chatId, sinceId, limit);
+        const messages = rows.map((m) => ({
+          ...m,
+          display_from_name:
+            viewer === null ? m.from_pseudonym : displayName(viewer, m.from_pseudonym, chatId),
+        }));
+        return jsonResponse({
+          chat_id: chatId,
+          messages,
+          has_more: messages.length === limit,
+        });
+      }
+
+      // Phase 3.3 — filtered tool call log.
+      // GET /api/calls?pseudonym=X&tool=Y&kind=Z&since_id=N&limit=M&error_only=1
+      if (path === "/api/calls") {
+        const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 100), 500));
+        const sinceId = url.searchParams.has("since_id")
+          ? Number(url.searchParams.get("since_id"))
+          : undefined;
+        let rows = listToolCalls({
+          pseudonym: url.searchParams.get("pseudonym") ?? undefined,
+          tool: url.searchParams.get("tool") ?? undefined,
+          kind: url.searchParams.get("kind") ?? undefined,
+          sinceId,
+          limit,
+        });
+        if (url.searchParams.get("error_only") === "1") {
+          rows = rows.filter((r) => r.is_error === 1);
+        }
+        const viewer = viewerFrom(url);
+        const calls = rows.map((c) => ({
+          ...c,
+          display_pseudonym_name:
+            viewer === null ? c.pseudonym : displayName(viewer, c.pseudonym, null),
+        }));
+        return jsonResponse({ calls });
       }
 
       if (path === "/healthz") return jsonResponse({ ok: true });
