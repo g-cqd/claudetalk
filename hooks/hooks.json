@@ -1,0 +1,47 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bun run ${CLAUDE_PLUGIN_ROOT}/hooks/check-inbox.ts" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bun run ${CLAUDE_PLUGIN_ROOT}/hooks/check-inbox.ts" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__claudetalk__.*",
+        "hooks": [
+          { "type": "command", "command": "bun run ${CLAUDE_PLUGIN_ROOT}/hooks/check-inbox.ts" }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bun run ${CLAUDE_PLUGIN_ROOT}/hooks/check-inbox.ts" }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bun run ${CLAUDE_PLUGIN_ROOT}/hooks/check-inbox.ts" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bun run ${CLAUDE_PLUGIN_ROOT}/hooks/check-inbox.ts" }
+        ]
+      }
+    ]
+  }
+}

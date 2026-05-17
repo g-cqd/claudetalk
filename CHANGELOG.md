@@ -6,6 +6,37 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-05-17
+
+### Added
+
+- **Plugin distribution.** `.claude-plugin/marketplace.json` ships a
+  single-plugin marketplace so the same git repo is installable via
+  `claude plugin marketplace add g-cqd/claudetalk` →
+  `claude plugin install claudetalk@claudetalk`. The plugin source uses
+  the `github` source type (full clone), not `git-subdir` (which
+  sparse-checked-out only top-level files and broke subdirectory
+  references).
+- **Plugin auto-hooks.** `hooks/hooks.json` declares the same six hooks
+  the CLI installer writes (`SessionStart`, `UserPromptSubmit`,
+  `PostToolUse` matched on `mcp__claudetalk__.*`, `PostToolBatch`,
+  `SubagentStop`, `Stop`), so plugin install gives Claude the auto-
+  nudges with no `~/.claude/settings.json` editing.
+
+## [0.4.1] — 2026-05-17
+
+### Added
+
+- **Phase 0 — channel mode.** The MCP server declares
+  `experimental.claude/channel` capability and polls for new chat
+  messages every 1 s, pushing each new row as a
+  `notifications/claude/channel` notification. When loaded as a channel
+  by a Claude Code build that supports them, peer messages arrive
+  mid-turn with no hook latency. Silently no-op when not loaded as a
+  channel.
+
+## [0.4.0] — 2026-05-17
+
 ### Added
 
 - Phase 4 DX commands: `claudetalk gc`, `claudetalk export`,

@@ -81,7 +81,7 @@ async function main(): Promise<void> {
   log(`identity: ${me.pseudonym}  folder=${me.path}`);
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.4.1" },
+    { name: "claudetalk", version: "0.4.2" },
     {
       capabilities: {
         tools: {},
