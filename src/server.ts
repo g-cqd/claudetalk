@@ -3,7 +3,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { pseudonymFor } from "./pseudonym.ts";
 import { resolveProjectDir, ensureRootDir } from "./paths.ts";
-import { db, touchInstance, unreadSummary, upsertInstance } from "./db.ts";
+import {
+  db,
+  listChatMembers,
+  listChatsFor,
+  touchInstance,
+  unreadSummary,
+  upsertInstance,
+} from "./db.ts";
 import { registerTools } from "./tools.ts";
 import { fmtUnread } from "./format.ts";
 import { flushNow, instrumentServer, instrumentTransport } from "./audit-log.ts";
@@ -42,6 +49,10 @@ function installCrashHandlers(pseudonym: string): void {
 
 const HEARTBEAT_MS = 30_000;
 const POLL_MS = 2_000;
+/** Phase 0 (channel mode): poll for new chat messages addressed at us and
+ *  push them through the channel API. Tight loop because the whole point is
+ *  real-time delivery; cost is one MAX(id) per chat membership per tick. */
+const CHANNEL_POLL_MS = 1_000;
 
 const INSTRUCTIONS = `\
 ClaudeTalk lets multiple Claude Code instances talk to each other across folders.
@@ -70,9 +81,18 @@ async function main(): Promise<void> {
   log(`identity: ${me.pseudonym}  folder=${me.path}`);
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.1.0" },
+    { name: "claudetalk", version: "0.4.1" },
     {
-      capabilities: { tools: {}, logging: {} },
+      capabilities: {
+        tools: {},
+        logging: {},
+        // Phase 0: opt into the claude/channel capability so sessions
+        // launched with `--channels file:/path/to/claudetalk` get real-time
+        // push of new messages instead of waiting for the next hook fire.
+        // When NOT loaded as a channel, the notifications are silently
+        // dropped by Claude Code — no-op cost.
+        experimental: { "claude/channel": {} },
+      },
       instructions: INSTRUCTIONS,
     },
   );
@@ -89,7 +109,9 @@ async function main(): Promise<void> {
   }, HEARTBEAT_MS);
 
   // Background poll: when new activity arrives, emit a logging notification.
-  // (Claude Code may not surface this; install hooks/check-inbox.ts for guaranteed nudging.)
+  // Claude Code itself doesn't surface logging notifications — the hook is
+  // the reliable nudge channel — but other MCP clients DO render them, so
+  // we still emit. Use the unread-summary timestamp to dedup.
   let lastNotifiedAt = 0;
   const poll = setInterval(async () => {
     try {
@@ -113,10 +135,82 @@ async function main(): Promise<void> {
     }
   }, POLL_MS);
 
+  // Phase 0 — channel push. Track the max message id we've already pushed
+  // per chat so we only push the delta. When Claude Code loads this server
+  // as a channel, these notifications arrive as <channel source="claudetalk"
+  // chat_id="..." sender="..." message_id="N"> events in the conversation
+  // mid-turn, with no hook involved.
+  const channelCursors = new Map<string, number>();
+  const channelPoll = setInterval(async () => {
+    try {
+      const myChats = listChatsFor(me.pseudonym);
+      for (const { chat } of myChats) {
+        const lastSeen = channelCursors.get(chat.id) ?? 0;
+        // Initialize the cursor to "current max" on first observation so
+        // we don't replay the whole history on startup.
+        if (lastSeen === 0) {
+          const maxRow = db()
+            .query<{ m: number | null }, [string]>(
+              "SELECT MAX(id) AS m FROM messages WHERE chat_id = ?",
+            )
+            .get(chat.id);
+          channelCursors.set(chat.id, maxRow?.m ?? 0);
+          continue;
+        }
+        const newRows = db()
+          .query<
+            { id: number; from_pseudonym: string; body: string; created_at: number },
+            [string, number, string]
+          >(
+            `SELECT id, from_pseudonym, body, created_at
+             FROM messages
+             WHERE chat_id = ? AND id > ? AND from_pseudonym != ?
+             ORDER BY id ASC LIMIT 20`,
+          )
+          .all(chat.id, lastSeen, me.pseudonym);
+        for (const row of newRows) {
+          try {
+            // Suppress the row's members lookup for direct chats (the other
+            // member IS the sender). For groups, members list is useful.
+            const isGroup = chat.kind === "group";
+            await server.server.notification({
+              method: "notifications/claude/channel",
+              params: {
+                content: `${row.from_pseudonym}: ${row.body}`,
+                meta: {
+                  chat_id: chat.id,
+                  sender: row.from_pseudonym,
+                  message_id: String(row.id),
+                  ts: String(row.created_at),
+                  kind: isGroup ? "group" : "direct",
+                  ...(isGroup && chat.title ? { title: chat.title } : {}),
+                  ...(isGroup
+                    ? {
+                        members: listChatMembers(chat.id)
+                          .map((m) => m.pseudonym)
+                          .join(","),
+                      }
+                    : {}),
+                },
+              },
+            });
+            channelCursors.set(chat.id, row.id);
+          } catch {
+            // Either we're not loaded as a channel (silently dropped), or
+            // the transport is closed. Move on.
+          }
+        }
+      }
+    } catch {
+      // DB unavailable or other transient — try again next tick.
+    }
+  }, CHANNEL_POLL_MS);
+
   const shutdown = (sig: string) => {
     log(`shutting down (${sig})`);
     clearInterval(heartbeat);
     clearInterval(poll);
+    clearInterval(channelPoll);
     try {
       flushNow();
     } catch {}
