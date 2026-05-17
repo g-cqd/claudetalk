@@ -6,6 +6,23 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-05-17
+
+### Added
+
+- **Phase 3.5 — WebSocket dashboard.** `GET /ws` upgrades to a
+  WebSocket and pushes `{ type: "snapshot", version, data }` envelopes.
+  Polling cost moved from "build the full snapshot every 500ms per
+  client" to "read one row by PK every 150ms shared across all
+  clients; only build a snapshot when the row bumps".
+- **`dashboard_version` trigger counter** (schema migration v2). A
+  single-row table maintained by `AFTER INSERT/UPDATE` triggers on
+  every "dashboard interesting" table (messages, asks, instances,
+  chats, chat_members, message_reactions, instance_status). Exposed
+  via `getDashboardVersion()`. SSE `/api/stream` is kept around for
+  back-compat; client falls back to it automatically when WebSocket
+  upgrade fails.
+
 ## [0.4.2] — 2026-05-17
 
 ### Added

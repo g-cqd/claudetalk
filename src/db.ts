@@ -67,6 +67,21 @@ export function checkpointWal(): void {
   }
 }
 
+/** Phase 3.5: monotonic counter bumped by AFTER INSERT/UPDATE triggers on
+ *  every "dashboard interesting" table (messages, asks, instances, chats,
+ *  chat_members, message_reactions, instance_status). Read by the dashboard
+ *  WebSocket loop to avoid rebuilding snapshots when nothing changed. */
+export function getDashboardVersion(): number {
+  try {
+    const row = db().query<{ v: number }, []>(
+      "SELECT v FROM dashboard_version WHERE id = 1",
+    ).get();
+    return row?.v ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function db(): Database {
   if (_db) return _db;
   ensureRootDir();

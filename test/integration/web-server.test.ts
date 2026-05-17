@@ -90,6 +90,33 @@ test("GET /api/stream is text/event-stream and emits a snapshot event quickly", 
   expect(sawSnapshot).toBe(true);
 });
 
+test("WS /ws delivers an initial snapshot, then pushes after a DB change", async () => {
+  const wsUrl = dash.url.replace(/^http/, "ws") + "ws";
+  const ws = new WebSocket(wsUrl);
+  const events: any[] = [];
+  const opened = new Promise<void>((r) => ws.addEventListener("open", () => r()));
+  ws.addEventListener("message", (ev) => {
+    events.push(JSON.parse(ev.data));
+  });
+  await opened;
+  // Initial snapshot pushed on open.
+  for (let i = 0; i < 50 && events.length < 1; i++) await Bun.sleep(20);
+  expect(events.length).toBeGreaterThanOrEqual(1);
+  expect(events[0].type).toBe("snapshot");
+  expect(events[0].data.instances.map((x: any) => x.pseudonym)).toContain("Alice");
+
+  // A trigger-tracked write should produce a new snapshot push.
+  insertMessage("group:integ", "Alice", "second");
+  for (let i = 0; i < 50 && events.length < 2; i++) await Bun.sleep(20);
+  expect(events.length).toBeGreaterThanOrEqual(2);
+  const last = events[events.length - 1];
+  expect(last.type).toBe("snapshot");
+  expect(last.data.chats[0].recent_messages.some((m: any) => m.body === "second")).toBe(true);
+
+  ws.close();
+  await Bun.sleep(50);
+});
+
 test("GET /healthz returns { ok: true }", async () => {
   const r = await fetch(`${dash.url}healthz`);
   expect(r.status).toBe(200);

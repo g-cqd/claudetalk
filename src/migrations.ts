@@ -166,7 +166,60 @@ const MIGRATIONS: Migration[] = [
       addCol("ALTER TABLE tool_calls ADD COLUMN jrpc_id INTEGER;");
     },
   },
-  // Future migrations: { version: 2, name: "...", up: (d) => { d.exec("ALTER TABLE ..."); } },
+  {
+    version: 2,
+    name: "dashboard_version counter + write triggers (Phase 3.5)",
+    up: (d) => {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS dashboard_version (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          v  INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT OR IGNORE INTO dashboard_version (id, v) VALUES (1, 0);
+
+        CREATE TRIGGER IF NOT EXISTS dv_messages_ins
+          AFTER INSERT ON messages BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_asks_ins
+          AFTER INSERT ON asks BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_asks_upd
+          AFTER UPDATE OF answered_at ON asks BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_instances_ins
+          AFTER INSERT ON instances BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_chat_members_ins
+          AFTER INSERT ON chat_members BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_reactions_ins
+          AFTER INSERT ON message_reactions BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_reactions_del
+          AFTER DELETE ON message_reactions BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_status_ins
+          AFTER INSERT ON instance_status BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_status_upd
+          AFTER UPDATE ON instance_status BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_chats_ins
+          AFTER INSERT ON chats BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+      `);
+    },
+  },
 ];
 
 export function currentSchemaVersion(d: Database): number {

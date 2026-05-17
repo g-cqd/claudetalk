@@ -5,12 +5,16 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkpointWal, getChat, listMessages } from "../db.ts";
+import { checkpointWal, getChat, getDashboardVersion, listMessages } from "../db.ts";
 import { listToolCalls } from "../audit-log.ts";
 import { displayName } from "../nickname.ts";
 import { snapshot } from "./snapshot.ts";
 
 type BunServer = ReturnType<typeof Bun.serve>;
+
+interface WsData {
+  viewer: string | null;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = HERE;
@@ -107,13 +111,59 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
   const port = opts.port ?? 4242;
   const hostname = opts.hostname ?? "127.0.0.1";
   const pollMs = opts.pollMs ?? 500;
+  // Phase 3.5: shared ticker drains the dashboard_version row and only
+  // builds a new snapshot when it bumped. Cheap (1 row by PK).
+  const VERSION_POLL_MS = 150;
 
-  const server = Bun.serve({
+  // viewer (or null = unbound) -> ref count. Drives which snapshots we have
+  // to build on a version bump.
+  const subscribers = new Map<string | null, number>();
+  let lastVersion = -1;
+  let versionTimer: ReturnType<typeof setInterval> | null = null;
+
+  const topicFor = (v: string | null) => `snap:${v ?? ""}`;
+
+  function startVersionTickerIfNeeded(srv: BunServer): void {
+    if (versionTimer !== null) return;
+    lastVersion = getDashboardVersion();
+    versionTimer = setInterval(() => {
+      if (subscribers.size === 0) return;
+      const v = getDashboardVersion();
+      if (v === lastVersion) return;
+      lastVersion = v;
+      for (const viewer of subscribers.keys()) {
+        const payload = JSON.stringify({
+          type: "snapshot",
+          version: v,
+          data: snapshot({ viewer }),
+        });
+        srv.publish(topicFor(viewer), payload);
+      }
+    }, VERSION_POLL_MS);
+    if (typeof versionTimer === "object" && "unref" in versionTimer) {
+      (versionTimer as { unref: () => void }).unref();
+    }
+  }
+
+  function stopVersionTicker(): void {
+    if (versionTimer !== null) {
+      clearInterval(versionTimer);
+      versionTimer = null;
+    }
+  }
+
+  const server = Bun.serve<WsData>({
     port,
     hostname,
-    async fetch(req) {
+    async fetch(req, srv) {
       const url = new URL(req.url);
       const path = url.pathname;
+
+      if (path === "/ws") {
+        const data: WsData = { viewer: viewerFrom(url) };
+        if (srv.upgrade(req, { data })) return undefined;
+        return new Response("upgrade failed", { status: 426 });
+      }
 
       if (path === "/" || path === "/index.html") return staticFile("index.html");
       if (path === "/style.css") return staticFile("style.css");
@@ -192,6 +242,38 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
       console.error("[claudetalk.web]", err);
       return new Response("Internal error", { status: 500 });
     },
+    websocket: {
+      open(ws) {
+        const v = ws.data.viewer;
+        const topic = topicFor(v);
+        ws.subscribe(topic);
+        subscribers.set(v, (subscribers.get(v) ?? 0) + 1);
+        startVersionTickerIfNeeded(server);
+        ws.send(
+          JSON.stringify({
+            type: "snapshot",
+            version: getDashboardVersion(),
+            data: snapshot({ viewer: v }),
+          }),
+        );
+      },
+      message(ws, raw) {
+        // Only one supported message: { type: "ping" } → respond { type: "pong" }.
+        try {
+          const parsed = typeof raw === "string" ? JSON.parse(raw) : null;
+          if (parsed?.type === "ping") ws.send(JSON.stringify({ type: "pong" }));
+        } catch {
+          // ignore malformed
+        }
+      },
+      close(ws) {
+        const v = ws.data.viewer;
+        const n = (subscribers.get(v) ?? 1) - 1;
+        if (n <= 0) subscribers.delete(v);
+        else subscribers.set(v, n);
+        if (subscribers.size === 0) stopVersionTicker();
+      },
+    },
   });
 
   const url = `http://${hostname}:${server.port}/`;
@@ -199,6 +281,7 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
     server,
     url,
     stop: async () => {
+      stopVersionTicker();
       await server.stop(true);
     },
   };

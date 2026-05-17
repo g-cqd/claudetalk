@@ -17,6 +17,7 @@ const state = {
   lastSnapshotAt: 0,
   viewer: "",
   eventSource: null,
+  ws: null,
   // Phase 3.1: messages currently shown in chat view, plus the oldest id we've
   // loaded so we can paginate older history on demand.
   chatBuffer: { chatId: null, messages: [], hasMore: true },
@@ -351,7 +352,51 @@ function render() {
   }
 }
 
-function connect() {
+function applySnapshot(data) {
+  state.snapshot = data;
+  state.lastSnapshotAt = Date.now();
+  setStatus(true);
+  render();
+}
+
+function connectWs() {
+  if (state.ws) {
+    try { state.ws.close(); } catch {}
+  }
+  const params = new URLSearchParams();
+  if (state.viewer) params.set("viewer", state.viewer);
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const url = `${proto}//${location.host}/ws${params.toString() ? `?${params}` : ""}`;
+  const ws = new WebSocket(url);
+  let opened = false;
+  ws.addEventListener("open", () => {
+    opened = true;
+    setStatus(true);
+  });
+  ws.addEventListener("message", (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === "snapshot") applySnapshot(msg.data);
+    } catch (e) {
+      console.error("bad ws message", e);
+    }
+  });
+  ws.addEventListener("close", () => {
+    setStatus(false);
+    // If we never managed to open, browser likely blocked the upgrade —
+    // fall back to SSE. Otherwise reconnect after 2 s.
+    if (!opened) {
+      console.warn("WebSocket failed; falling back to SSE");
+      connectSse();
+    } else {
+      setTimeout(connectWs, 2000);
+    }
+  });
+  ws.addEventListener("error", () => setStatus(false));
+  state.ws = ws;
+}
+
+function connectSse() {
   if (state.eventSource) state.eventSource.close();
   const params = new URLSearchParams();
   if (state.viewer) params.set("viewer", state.viewer);
@@ -361,15 +406,17 @@ function connect() {
   es.addEventListener("error", () => setStatus(false));
   es.addEventListener("snapshot", (ev) => {
     try {
-      state.snapshot = JSON.parse(ev.data);
-      state.lastSnapshotAt = Date.now();
-      setStatus(true);
-      render();
+      applySnapshot(JSON.parse(ev.data));
     } catch (e) {
       console.error("bad snapshot", e);
     }
   });
   state.eventSource = es;
+}
+
+function connect() {
+  if (typeof WebSocket !== "undefined") connectWs();
+  else connectSse();
 }
 
 // Wire up controls.
