@@ -2,6 +2,7 @@ import {
   type AskRow,
   type ChatRow,
   type InstanceRow,
+  db,
   listAnsweredAsksFrom,
   listChatsFor,
   type MessageRow,
@@ -52,11 +53,23 @@ export function fmtChat(c: ChatRow): string {
 
 export function fmtMessage(m: MessageRow, viewer?: string): string {
   const author = viewer ? displayName(viewer, m.from_pseudonym, m.chat_id) : m.from_pseudonym;
-  const idTag = m.parent_id !== null && m.parent_id !== undefined
-    ? `[${m.id} ↪ ${m.parent_id}]`
-    : `[${m.id}]`;
+  // Display seq as the human-visible "[N]" id. parent_id is a UUID; resolve
+  // to its seq via lookup so threading stays readable. Falls back to UUID
+  // if the parent was deleted (shouldn't happen with FK cascade, but defensive).
+  let idTag = `[${m.seq}]`;
+  if (m.parent_id !== null && m.parent_id !== undefined) {
+    const parent = lookupMessageSeq(m.parent_id);
+    idTag = `[${m.seq} ↪ ${parent ?? m.parent_id}]`;
+  }
   const reactions = summariseReactions(m.id);
   return `${idTag} ${author} (${fmtAgo(m.created_at)}): ${m.body}${reactions}`;
+}
+
+function lookupMessageSeq(uuid: string): number | null {
+  const row = db().query<{ seq: number }, [string]>(
+    "SELECT seq FROM messages WHERE id = ?",
+  ).get(uuid);
+  return row?.seq ?? null;
 }
 
 function directPeer(chatId: string, me: string): string {
@@ -92,7 +105,7 @@ export function renderInbox(me: string, answeredSinceId: number): string {
         ? fmtChat(chat)
         : `direct with ${directPeer(chat.id, me)}  (id=${chat.id})`;
       if (unread && unread.unreadCount > 0) {
-        parts.push(`  - ${label}  unread=${unread.unreadCount}  last_read_id=${unread.lastReadId}`);
+        parts.push(`  - ${label}  unread=${unread.unreadCount}  last_read_seq=${unread.lastReadSeq}`);
         if (unread.latest) parts.push(`      latest: ${fmtMessage(unread.latest, me)}`);
       } else {
         parts.push(`  - ${label}  (all caught up)`);
@@ -133,7 +146,7 @@ export function fmtUnread(u: Unread, viewer?: string): string {
     lines.push(`Unread chats (${u.unreadChats.length}):`);
     for (const c of u.unreadChats) {
       lines.push(
-        `- ${fmtChat(c.chat)}  unread=${c.unreadCount}  last_read_id=${c.lastReadId}`,
+        `- ${fmtChat(c.chat)}  unread=${c.unreadCount}  last_read_seq=${c.lastReadSeq}`,
       );
       if (c.latest) lines.push(`    latest: ${fmtMessage(c.latest, viewer)}`);
     }

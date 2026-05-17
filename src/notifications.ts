@@ -15,8 +15,8 @@ export interface NotificationDelta {
     chat: ChatRow;
     new_count: number;
     latest: MessageRow;
-    last_notified_id: number;
-    max_message_id: number;
+    last_notified_seq: number;
+    max_message_seq: number;
   }>;
   /** Cursor I should write back if I emit. */
   ask_cursor_target: number;
@@ -45,26 +45,26 @@ export function notificationDeltaFor(pseudonym: string): NotificationDelta {
   for (const { chat, member } of chats) {
     // Phase 2.3: muted chats are silenced in hook notifications.
     if (isChatMutedFor(pseudonym, chat.id)) continue;
-    const notifCursor = member.last_notified_message_id;
+    const notifCursor = member.last_notified_message_seq;
     const maxRow = d
-      .query<{ max_id: number | null }, [string, string]>(
-        `SELECT MAX(id) AS max_id FROM messages
+      .query<{ max_seq: number | null }, [string, string]>(
+        `SELECT MAX(seq) AS max_seq FROM messages
          WHERE chat_id = ? AND from_pseudonym != ?`,
       )
       .get(chat.id, pseudonym);
-    const maxId = maxRow?.max_id ?? 0;
-    if (maxId <= notifCursor) continue;
+    const maxSeq = maxRow?.max_seq ?? 0;
+    if (maxSeq <= notifCursor) continue;
     const countRow = d
       .query<{ c: number }, [string, number, string]>(
         `SELECT COUNT(*) AS c FROM messages
-         WHERE chat_id = ? AND id > ? AND from_pseudonym != ?`,
+         WHERE chat_id = ? AND seq > ? AND from_pseudonym != ?`,
       )
       .get(chat.id, notifCursor, pseudonym);
     const latest = d
       .query<MessageRow, [string, string]>(
-        `SELECT id, chat_id, from_pseudonym, body, created_at, parent_id
+        `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
          FROM messages WHERE chat_id = ? AND from_pseudonym != ?
-         ORDER BY id DESC LIMIT 1`,
+         ORDER BY seq DESC LIMIT 1`,
       )
       .get(chat.id, pseudonym);
     if (!latest) continue;
@@ -72,8 +72,8 @@ export function notificationDeltaFor(pseudonym: string): NotificationDelta {
       chat,
       new_count: countRow?.c ?? 1,
       latest,
-      last_notified_id: notifCursor,
-      max_message_id: maxId,
+      last_notified_seq: notifCursor,
+      max_message_seq: maxSeq,
     });
   }
   return { newAsks, newChats, ask_cursor_target };
@@ -95,9 +95,9 @@ export function advanceNotificationCursors(
   }
   for (const c of delta.newChats) {
     d.run(
-      `UPDATE chat_members SET last_notified_message_id = ?
-       WHERE chat_id = ? AND pseudonym = ? AND last_notified_message_id < ?`,
-      [c.max_message_id, c.chat.id, pseudonym, c.max_message_id],
+      `UPDATE chat_members SET last_notified_message_seq = ?
+       WHERE chat_id = ? AND pseudonym = ? AND last_notified_message_seq < ?`,
+      [c.max_message_seq, c.chat.id, pseudonym, c.max_message_seq],
     );
   }
 }
@@ -114,14 +114,14 @@ export function resetNotificationCursors(
   let resetCount = 0;
   if (chatId !== null) {
     const res = d.run(
-      "UPDATE chat_members SET last_notified_message_id = 0 WHERE pseudonym = ? AND chat_id = ? AND last_notified_message_id > 0",
+      "UPDATE chat_members SET last_notified_message_seq = 0 WHERE pseudonym = ? AND chat_id = ? AND last_notified_message_seq > 0",
       [pseudonym, chatId],
     );
     resetCount += res.changes;
     return resetCount;
   }
   const r1 = d.run(
-    "UPDATE chat_members SET last_notified_message_id = 0 WHERE pseudonym = ? AND last_notified_message_id > 0",
+    "UPDATE chat_members SET last_notified_message_seq = 0 WHERE pseudonym = ? AND last_notified_message_seq > 0",
     [pseudonym],
   );
   const r2 = d.run(
@@ -157,7 +157,7 @@ export function discoverableGroupsFor(
               (SELECT COUNT(*) FROM chat_members cm WHERE cm.chat_id = c.id) AS member_count,
               (SELECT MAX(m.created_at) FROM messages m WHERE m.chat_id = c.id) AS latest_at,
               (SELECT m.from_pseudonym FROM messages m WHERE m.chat_id = c.id
-                 ORDER BY m.id DESC LIMIT 1) AS latest_from
+                 ORDER BY m.seq DESC LIMIT 1) AS latest_from
        FROM chats c
        WHERE c.kind = 'group'
          AND NOT EXISTS (

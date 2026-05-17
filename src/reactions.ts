@@ -18,13 +18,14 @@ const REACTION_MAX_LEN = 32;
 const REACTION_RE = /^[\p{L}\p{N}\p{Emoji}\p{Extended_Pictographic}_+\-]{1,32}$/u;
 
 export interface ReactionRow {
-  message_id: number;
+  /** UUID of the reacted-to message (matches messages.id). */
+  message_id: string;
   reactor: string;
   reaction: string;
   created_at: number;
 }
 
-export function setReaction(messageId: number, reactor: string, reaction: string): void {
+export function setReaction(messageId: string, reactor: string, reaction: string): void {
   db().run(
     `INSERT INTO message_reactions (message_id, reactor, reaction, created_at)
      VALUES (?, ?, ?, ?)
@@ -35,7 +36,7 @@ export function setReaction(messageId: number, reactor: string, reaction: string
   );
 }
 
-export function clearReaction(messageId: number, reactor: string): boolean {
+export function clearReaction(messageId: string, reactor: string): boolean {
   const res = db().run(
     "DELETE FROM message_reactions WHERE message_id = ? AND reactor = ?",
     [messageId, reactor],
@@ -43,9 +44,9 @@ export function clearReaction(messageId: number, reactor: string): boolean {
   return res.changes > 0;
 }
 
-export function listReactionsFor(messageId: number): ReactionRow[] {
+export function listReactionsFor(messageId: string): ReactionRow[] {
   return db()
-    .query<ReactionRow, [number]>(
+    .query<ReactionRow, [string]>(
       `SELECT message_id, reactor, reaction, created_at
        FROM message_reactions WHERE message_id = ?
        ORDER BY created_at ASC`,
@@ -54,7 +55,7 @@ export function listReactionsFor(messageId: number): ReactionRow[] {
 }
 
 /** Render reactions as " · 👍 from A,B · ✓ from C", or empty string. */
-export function summariseReactions(messageId: number): string {
+export function summariseReactions(messageId: string): string {
   const rows = listReactionsFor(messageId);
   if (rows.length === 0) return "";
   const byReaction = new Map<string, string[]>();
@@ -84,11 +85,13 @@ export function registerReactionTools(server: McpServer, me: Identity): void {
         "to a message id. Re-reacting replaces your previous reaction on that message. Pass empty " +
         "reaction to remove. Reactions do NOT bump the chat dedup cursor — they're cheap, no hook fires.",
       inputSchema: {
-        message_id: z
+        message_seq: z
           .number()
           .int()
           .min(1)
-          .describe("The message id (visible as [N] in chat/groupchat/inbox output)."),
+          .describe(
+            "The message's seq number — the [N] label shown in chat/groupchat/inbox output.",
+          ),
         reaction: z
           .string()
           .describe(
@@ -97,21 +100,21 @@ export function registerReactionTools(server: McpServer, me: Identity): void {
           ),
       },
     },
-    async ({ message_id, reaction }) => {
+    async ({ message_seq, reaction }) => {
       touchInstance(me.pseudonym);
-      const msg = getMessage(message_id);
-      if (!msg) return error(`Unknown message_id ${message_id}.`);
+      const msg = getMessage(message_seq);
+      if (!msg) return error(`Unknown message_seq ${message_seq}.`);
       // Only chat members can react.
       const members = listChatMembers(msg.chat_id).map((m) => m.pseudonym);
       if (!members.includes(me.pseudonym)) {
         return error(`You're not a member of ${msg.chat_id}; cannot react.`);
       }
       if (reaction.trim().length === 0) {
-        const cleared = clearReaction(message_id, me.pseudonym);
+        const cleared = clearReaction(msg.id, me.pseudonym);
         return text(
           cleared
-            ? `Cleared your reaction on message ${message_id}.`
-            : `No reaction was set on message ${message_id}.`,
+            ? `Cleared your reaction on message ${message_seq}.`
+            : `No reaction was set on message ${message_seq}.`,
         );
       }
       const trimmed = reaction.trim();
@@ -120,8 +123,8 @@ export function registerReactionTools(server: McpServer, me: Identity): void {
           `Reaction '${trimmed}' invalid. Must be 1-${REACTION_MAX_LEN} chars, no whitespace, emoji or short token.`,
         );
       }
-      setReaction(message_id, me.pseudonym, trimmed);
-      return text(`Reacted to message ${message_id} with '${trimmed}'.`);
+      setReaction(msg.id, me.pseudonym, trimmed);
+      return text(`Reacted to message ${message_seq} with '${trimmed}'.`);
     },
   );
 }

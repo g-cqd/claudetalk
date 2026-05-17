@@ -4,7 +4,7 @@
 //
 // Phase 3 extensions:
 //   - viewer selector → ?viewer=X plumbed through SSE + /api/messages + /api/calls
-//   - full chat view paginates older messages via /api/messages?since_id=0
+//   - full chat view paginates older messages via /api/messages?since_seq=0
 //   - tool log has live filters (pseudonym/tool/kind/error_only)
 //   - per-pseudonym stable color via HSL(hash(pseudonym) % 360, 70%, 60%)
 
@@ -198,13 +198,13 @@ function renderChatView() {
   const nearBottom = ol.scrollTop + ol.clientHeight >= ol.scrollHeight - 32;
   ol.innerHTML = buf.messages
     .map((m) => {
-      const replyMark = m.parent_id ? `<span class="msg-id">↪ #${m.parent_id}</span>` : "";
+      const replyMark = m.parent_id ? `<span class="msg-id">↪</span>` : "";
       const youClass = isYou(m.from_pseudonym) ? " is-you" : "";
       return `
         <li class="${youClass.trim()}">
           <div class="msg-head">
             ${authorTag(m.from_pseudonym, m.display_from_name)}
-            <span class="msg-id">[#${m.id}]</span>
+            <span class="msg-id">[#${m.seq}]</span>
             ${replyMark}
             <span class="msg-ts">${relTime(m.created_at)}</span>
           </div>
@@ -218,14 +218,14 @@ function renderChatView() {
 async function loadOlderMessages() {
   const buf = state.chatBuffer;
   if (!buf.chatId || buf.messages.length === 0) return;
-  const oldestId = buf.messages[0].id;
-  // We want messages strictly OLDER than oldestId. The API only goes the
-  // other direction (since_id ascending), so fetch with since_id=0 limit=large
-  // and slice client-side. With recent_messages capped at 50 and typical chat
-  // sizes under 200, this stays small.
+  const oldestSeq = buf.messages[0].seq;
+  // We want messages strictly OLDER than oldestSeq. The API only goes the
+  // other direction (since_seq ascending), so fetch with since_seq=0
+  // limit=large and slice client-side. With recent_messages capped at 50
+  // and typical chat sizes under 200, this stays small.
   const params = new URLSearchParams({
     chat_id: buf.chatId,
-    since_id: "0",
+    since_seq: "0",
     limit: "500",
   });
   if (state.viewer) params.set("viewer", state.viewer);
@@ -233,7 +233,7 @@ async function loadOlderMessages() {
     const res = await fetch(`/api/messages?${params}`);
     if (!res.ok) return;
     const body = await res.json();
-    const allUpToOldest = body.messages.filter((m) => m.id < oldestId);
+    const allUpToOldest = body.messages.filter((m) => m.seq < oldestSeq);
     buf.messages = allUpToOldest.concat(buf.messages);
     buf.hasMore = allUpToOldest.length === 500 - 1; // heuristic
     renderChatView();
@@ -320,9 +320,9 @@ function renderSelection() {
         buf.messages = chat.recent_messages.slice();
         buf.hasMore = chat.recent_messages.length >= 50;
       } else {
-        // Merge new messages from snapshot that arrived after our newest id.
-        const newestId = buf.messages.length > 0 ? buf.messages[buf.messages.length - 1].id : 0;
-        const fresh = chat.recent_messages.filter((m) => m.id > newestId);
+        // Merge new messages from snapshot that arrived after our newest seq.
+        const newestSeq = buf.messages.length > 0 ? buf.messages[buf.messages.length - 1].seq : 0;
+        const fresh = chat.recent_messages.filter((m) => m.seq > newestSeq);
         if (fresh.length > 0) buf.messages.push(...fresh);
       }
     }

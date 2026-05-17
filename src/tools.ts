@@ -310,7 +310,7 @@ export function registerTools(server: McpServer, me: Identity): void {
     {
       title: "Rewind your notification cursors so the hook re-surfaces content",
       description:
-        "Resets your `last_notified_message_id` (for the given chat, or every chat you're in) " +
+        "Resets your `last_notified_message_seq` (for the given chat, or every chat you're in) " +
         "AND your `last_notified_ask_id` (when no chat_id is given). The hook will then re-emit a " +
         "header on its next fire if there are messages from others past the (now-zero) cursor. " +
         "Useful when you accidentally advanced the cursor past content you wanted to read.",

@@ -113,7 +113,8 @@ describe("mention cursor", () => {
     recordMessageMentions(m2.id, m2.body, "Alice");
 
     expect(mentionsForTargetSince("SwiftFox-a3f", 0).length).toBe(2);
-    expect(mentionsForTargetSince("SwiftFox-a3f", m1.id).length).toBe(1);
-    expect(mentionsForTargetSince("SwiftFox-a3f", m2.id).length).toBe(0);
+    // Cursor is seq-based now (UUIDs aren't orderable).
+    expect(mentionsForTargetSince("SwiftFox-a3f", m1.seq).length).toBe(1);
+    expect(mentionsForTargetSince("SwiftFox-a3f", m2.seq).length).toBe(0);
   });
 });

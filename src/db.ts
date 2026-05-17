@@ -8,15 +8,20 @@ export interface InstanceRow {
   first_seen: number;
   last_seen: number;
   pid: number | null;
+  machine_id: string | null;
 }
 
 export interface MessageRow {
-  id: number;
+  /** UUID — globally unique, cross-machine routable. */
+  id: string;
+  /** Per-DB monotonic sequence — used for cursors and the "[N]" user-facing label. */
+  seq: number;
   chat_id: string;
   from_pseudonym: string;
   body: string;
   created_at: number;
-  parent_id: number | null;
+  /** Parent message UUID for threading. */
+  parent_id: string | null;
 }
 
 export interface AskRow {
@@ -40,8 +45,8 @@ export interface ChatMemberRow {
   chat_id: string;
   pseudonym: string;
   joined_at: number;
-  last_read_message_id: number;
-  last_notified_message_id: number;
+  last_read_message_seq: number;
+  last_notified_message_seq: number;
 }
 
 let _db: Database | null = null;
@@ -144,16 +149,22 @@ export function groupChatId(slug: string): string {
 
 // ---------- presence ----------
 
-export function upsertInstance(pseudonym: string, path: string, pid: number): void {
+export function upsertInstance(
+  pseudonym: string,
+  path: string,
+  pid: number,
+  machineId: string | null = null,
+): void {
   const t = now();
   db().run(
-    `INSERT INTO instances (pseudonym, path, first_seen, last_seen, pid)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO instances (pseudonym, path, first_seen, last_seen, pid, machine_id)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(pseudonym) DO UPDATE SET
        path = excluded.path,
        last_seen = excluded.last_seen,
-       pid = excluded.pid`,
-    [pseudonym, path, t, t, pid],
+       pid = excluded.pid,
+       machine_id = COALESCE(excluded.machine_id, instances.machine_id)`,
+    [pseudonym, path, t, t, pid, machineId],
   );
 }
 
@@ -165,7 +176,7 @@ export function listInstances(activeWithinMs: number): InstanceRow[] {
   const cutoff = now() - activeWithinMs;
   return db()
     .query<InstanceRow, [number]>(
-      `SELECT pseudonym, path, first_seen, last_seen, pid
+      `SELECT pseudonym, path, first_seen, last_seen, pid, machine_id
        FROM instances WHERE last_seen >= ? ORDER BY pseudonym ASC`,
     )
     .all(cutoff);
@@ -175,7 +186,7 @@ export function getInstance(pseudonym: string): InstanceRow | null {
   return (
     db()
       .query<InstanceRow, [string]>(
-        "SELECT pseudonym, path, first_seen, last_seen, pid FROM instances WHERE pseudonym = ?",
+        "SELECT pseudonym, path, first_seen, last_seen, pid, machine_id FROM instances WHERE pseudonym = ?",
       )
       .get(pseudonym) ?? null
   );
@@ -202,7 +213,7 @@ export function getChat(id: string): ChatRow | null {
 
 export function addChatMember(chatId: string, pseudonym: string): void {
   db().run(
-    `INSERT INTO chat_members (chat_id, pseudonym, joined_at, last_read_message_id)
+    `INSERT INTO chat_members (chat_id, pseudonym, joined_at, last_read_message_seq)
      VALUES (?, ?, ?, 0)
      ON CONFLICT(chat_id, pseudonym) DO NOTHING`,
     [chatId, pseudonym, now()],
@@ -212,7 +223,7 @@ export function addChatMember(chatId: string, pseudonym: string): void {
 export function listChatMembers(chatId: string): ChatMemberRow[] {
   return db()
     .query<ChatMemberRow, [string]>(
-      `SELECT chat_id, pseudonym, joined_at, last_read_message_id, last_notified_message_id
+      `SELECT chat_id, pseudonym, joined_at, last_read_message_seq, last_notified_message_seq
        FROM chat_members WHERE chat_id = ? ORDER BY joined_at ASC`,
     )
     .all(chatId);
@@ -223,8 +234,8 @@ export function listChatsFor(pseudonym: string): { chat: ChatRow; member: ChatMe
     .query<ChatRow & ChatMemberRow, [string]>(
       `SELECT c.id AS id, c.kind AS kind, c.title AS title, c.created_at AS created_at,
               m.chat_id AS chat_id, m.pseudonym AS pseudonym, m.joined_at AS joined_at,
-              m.last_read_message_id AS last_read_message_id,
-              m.last_notified_message_id AS last_notified_message_id
+              m.last_read_message_seq AS last_read_message_seq,
+              m.last_notified_message_seq AS last_notified_message_seq
        FROM chats c
        INNER JOIN chat_members m ON m.chat_id = c.id
        WHERE m.pseudonym = ?
@@ -237,25 +248,40 @@ export function listChatsFor(pseudonym: string): { chat: ChatRow; member: ChatMe
       chat_id: r.chat_id,
       pseudonym: r.pseudonym,
       joined_at: r.joined_at,
-      last_read_message_id: r.last_read_message_id,
-      last_notified_message_id: r.last_notified_message_id,
+      last_read_message_seq: r.last_read_message_seq,
+      last_notified_message_seq: r.last_notified_message_seq,
     },
   }));
+}
+
+/** Atomic next-seq fetch: bumps the counter inside a transaction so concurrent
+ *  inserters can't collide. */
+function nextMessageSeq(): number {
+  return db().transaction(() => {
+    db().run("UPDATE message_seq SET next = next + 1 WHERE id = 1");
+    const r = db()
+      .query<{ next: number }, []>("SELECT next - 1 AS next FROM message_seq WHERE id = 1")
+      .get();
+    return r?.next ?? 1;
+  })();
 }
 
 export function insertMessage(
   chatId: string,
   from: string,
   body: string,
-  parentId: number | null = null,
+  parentId: string | null = null,
 ): MessageRow {
   const t = now();
-  const res = db().run(
-    "INSERT INTO messages (chat_id, from_pseudonym, body, created_at, parent_id) VALUES (?, ?, ?, ?, ?)",
-    [chatId, from, body, t, parentId],
+  const id = crypto.randomUUID();
+  const seq = nextMessageSeq();
+  db().run(
+    "INSERT INTO messages (id, seq, chat_id, from_pseudonym, body, created_at, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [id, seq, chatId, from, body, t, parentId],
   );
   return {
-    id: Number(res.lastInsertRowid),
+    id,
+    seq,
     chat_id: chatId,
     from_pseudonym: from,
     body,
@@ -264,32 +290,46 @@ export function insertMessage(
   };
 }
 
-export function listMessages(chatId: string, sinceId: number, limit: number): MessageRow[] {
+/** Page messages with seq > sinceSeq, ordered ascending. */
+export function listMessages(chatId: string, sinceSeq: number, limit: number): MessageRow[] {
   return db()
     .query<MessageRow, [string, number, number]>(
-      `SELECT id, chat_id, from_pseudonym, body, created_at, parent_id
-       FROM messages WHERE chat_id = ? AND id > ?
-       ORDER BY id ASC LIMIT ?`,
+      `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
+       FROM messages WHERE chat_id = ? AND seq > ?
+       ORDER BY seq ASC LIMIT ?`,
     )
-    .all(chatId, sinceId, limit);
+    .all(chatId, sinceSeq, limit);
 }
 
-export function getMessage(id: number): MessageRow | null {
+/** Look up a message by either its UUID id or its numeric seq. The tools
+ *  expose seq to users (the human-visible "[N]" label); cross-machine
+ *  routing uses id. */
+export function getMessage(idOrSeq: string | number): MessageRow | null {
+  if (typeof idOrSeq === "number") {
+    return (
+      db()
+        .query<MessageRow, [number]>(
+          `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
+           FROM messages WHERE seq = ?`,
+        )
+        .get(idOrSeq) ?? null
+    );
+  }
   return (
     db()
-      .query<MessageRow, [number]>(
-        `SELECT id, chat_id, from_pseudonym, body, created_at, parent_id
+      .query<MessageRow, [string]>(
+        `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
          FROM messages WHERE id = ?`,
       )
-      .get(id) ?? null
+      .get(idOrSeq) ?? null
   );
 }
 
-export function markChatRead(chatId: string, pseudonym: string, upToId: number): void {
+export function markChatRead(chatId: string, pseudonym: string, upToSeq: number): void {
   db().run(
-    `UPDATE chat_members SET last_read_message_id = ?
-     WHERE chat_id = ? AND pseudonym = ? AND last_read_message_id < ?`,
-    [upToId, chatId, pseudonym, upToId],
+    `UPDATE chat_members SET last_read_message_seq = ?
+     WHERE chat_id = ? AND pseudonym = ? AND last_read_message_seq < ?`,
+    [upToSeq, chatId, pseudonym, upToSeq],
   );
 }
 
@@ -382,7 +422,7 @@ export interface Unread {
     chat: ChatRow;
     unreadCount: number;
     latest: MessageRow | null;
-    lastReadId: number;
+    lastReadSeq: number;
   }>;
 }
 
@@ -394,17 +434,17 @@ export function unreadSummary(pseudonym: string): Unread {
       const row = db()
         .query<{ c: number }, [string, number, string]>(
           `SELECT COUNT(*) AS c FROM messages
-           WHERE chat_id = ? AND id > ? AND from_pseudonym != ?`,
+           WHERE chat_id = ? AND seq > ? AND from_pseudonym != ?`,
         )
-        .get(chat.id, member.last_read_message_id, pseudonym);
+        .get(chat.id, member.last_read_message_seq, pseudonym);
       const latest = db()
         .query<MessageRow, [string]>(
-          `SELECT id, chat_id, from_pseudonym, body, created_at, parent_id
-           FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1`,
+          `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
+           FROM messages WHERE chat_id = ? ORDER BY seq DESC LIMIT 1`,
         )
         .get(chat.id) ?? null;
       const c = row?.c ?? 0;
-      return { chat, unreadCount: c, latest, lastReadId: member.last_read_message_id };
+      return { chat, unreadCount: c, latest, lastReadSeq: member.last_read_message_seq };
     })
     .filter((x) => x.unreadCount > 0);
   return { pendingAsks, unreadChats };

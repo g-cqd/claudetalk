@@ -129,7 +129,7 @@ describe("chats + messages", () => {
     expect(getChat(cid)?.kind).toBe("direct");
   });
 
-  test("insertMessage + listMessages with since_id cursor", () => {
+  test("insertMessage + listMessages with since_seq cursor", () => {
     const cid = groupChatId("g1");
     ensureChat(cid, "group", null);
     addChatMember(cid, "A");
@@ -138,7 +138,10 @@ describe("chats + messages", () => {
     insertMessage(cid, "A", "third");
     const all = listMessages(cid, 0, 100);
     expect(all.length).toBe(3);
-    const tail = listMessages(cid, all[0]!.id, 100);
+    // Each row has a UUID id + numeric seq; cursors use seq.
+    expect(typeof all[0]!.id).toBe("string");
+    expect(typeof all[0]!.seq).toBe("number");
+    const tail = listMessages(cid, all[0]!.seq, 100);
     expect(tail.length).toBe(2);
   });
 
@@ -151,7 +154,7 @@ describe("chats + messages", () => {
     markChatRead(cid, "A", 5);
     markChatRead(cid, "A", 3); // should not regress
     const chats = listChatsFor("A");
-    expect(chats[0]!.member.last_read_message_id).toBe(5);
+    expect(chats[0]!.member.last_read_message_seq).toBe(5);
   });
 });
 

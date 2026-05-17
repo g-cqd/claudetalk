@@ -16,7 +16,10 @@ import { _now, db, getInstance } from "./db.ts";
 const MENTION_RE = /@([A-Z][a-z]+[A-Z][a-z]+-[0-9a-f]{3})/g;
 
 export interface MentionForTarget {
-  message_id: number;
+  /** UUID of the mentioning message. */
+  message_id: string;
+  /** Per-DB sequence — cursor unit. */
+  message_seq: number;
   chat_id: string;
   from_pseudonym: string;
 }
@@ -34,7 +37,7 @@ export function parseMentions(body: string): string[] {
 /** Insert mention rows for every pseudonym in `body` that's an actually-known
  *  instance. Self-mentions are skipped (you can't @ yourself meaningfully). */
 export function recordMessageMentions(
-  messageId: number,
+  messageId: string,
   body: string,
   authorPseudonym: string,
 ): void {
@@ -52,38 +55,39 @@ export function recordMessageMentions(
   void _now; // silence "unused" — kept available for future timestamping
 }
 
-/** Mentions of `target` strictly newer than `sinceId`, with the message
+/** Mentions of `target` strictly newer than `sinceSeq`, with the message
  *  chat + author resolved. Used by the hook to surface "@ you" priority
  *  signals independent of the chat dedup cursor. */
 export function mentionsForTargetSince(
   target: string,
-  sinceId: number,
+  sinceSeq: number,
 ): MentionForTarget[] {
   return db()
     .query<MentionForTarget, [string, number]>(
-      `SELECT mm.message_id AS message_id, m.chat_id AS chat_id, m.from_pseudonym AS from_pseudonym
+      `SELECT mm.message_id AS message_id, m.seq AS message_seq,
+              m.chat_id AS chat_id, m.from_pseudonym AS from_pseudonym
        FROM message_mentions mm
        JOIN messages m ON m.id = mm.message_id
-       WHERE mm.target = ? AND mm.message_id > ?
-       ORDER BY mm.message_id ASC`,
+       WHERE mm.target = ? AND m.seq > ?
+       ORDER BY m.seq ASC`,
     )
-    .all(target, sinceId);
+    .all(target, sinceSeq);
 }
 
 export function getMentionCursor(pseudonym: string): number {
   const row = db()
-    .query<{ last_notified_mention_id: number }, [string]>(
-      "SELECT last_notified_mention_id FROM instances WHERE pseudonym = ?",
+    .query<{ last_notified_mention_seq: number }, [string]>(
+      "SELECT last_notified_mention_seq FROM instances WHERE pseudonym = ?",
     )
     .get(pseudonym);
-  return row?.last_notified_mention_id ?? 0;
+  return row?.last_notified_mention_seq ?? 0;
 }
 
-export function advanceMentionCursor(pseudonym: string, maxId: number): void {
-  if (maxId <= 0) return;
+export function advanceMentionCursor(pseudonym: string, maxSeq: number): void {
+  if (maxSeq <= 0) return;
   db().run(
-    `UPDATE instances SET last_notified_mention_id = ?
-     WHERE pseudonym = ? AND last_notified_mention_id < ?`,
-    [maxId, pseudonym, maxId],
+    `UPDATE instances SET last_notified_mention_seq = ?
+     WHERE pseudonym = ? AND last_notified_mention_seq < ?`,
+    [maxSeq, pseudonym, maxSeq],
   );
 }

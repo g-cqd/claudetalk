@@ -185,17 +185,17 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
       }
 
       // Phase 3.1 — paginated chat messages.
-      // GET /api/messages?chat_id=...&since_id=N&limit=M&viewer=X
+      // GET /api/messages?chat_id=...&since_seq=N&limit=M&viewer=X
       // Returns { chat_id, messages: [{...,display_from_name}], has_more }
       if (path === "/api/messages") {
         const chatId = url.searchParams.get("chat_id");
         if (!chatId) return jsonResponse({ error: "chat_id required" }, 400);
         const chat = getChat(chatId);
         if (!chat) return jsonResponse({ error: "unknown chat" }, 404);
-        const sinceId = Number(url.searchParams.get("since_id") ?? 0);
+        const sinceSeq = Number(url.searchParams.get("since_seq") ?? 0);
         const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 100), 500));
         const viewer = viewerFrom(url);
-        const rows = listMessages(chatId, sinceId, limit);
+        const rows = listMessages(chatId, sinceSeq, limit);
         const messages = rows.map((m) => ({
           ...m,
           display_from_name:

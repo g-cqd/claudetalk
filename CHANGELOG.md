@@ -6,6 +6,53 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-17
+
+### Changed (BREAKING)
+
+- **`messages.id` is now a TEXT UUID** (cross-machine routable). The
+  human-visible `[N]` label and all cursors use a new sibling column
+  `messages.seq INTEGER UNIQUE`, auto-assigned per local DB via the
+  `message_seq` counter table.
+- Tool parameter renames (the user-facing `[N]` is the seq, not the
+  UUID, so the tool surface follows):
+  - `react`: `message_id: number` → `message_seq: number`
+  - `read`:  `since_id: number`   → `since_seq: number`
+  - `chat` / `groupchat` `reply_to` still `number` — interpreted as seq
+- Column renames inside SQLite (migration v3 handles them
+  losslessly):
+  - `chat_members.last_read_message_id`     → `last_read_message_seq`
+  - `chat_members.last_notified_message_id` → `last_notified_message_seq`
+  - `instances.last_notified_mention_id`    → `last_notified_mention_seq`
+- `/api/messages` query param `since_id` → `since_seq` (the
+  `/api/calls` audit-log endpoint keeps `since_id` — `tool_calls.id`
+  remains an autoincrement integer).
+
+### Added (Phase N0 of network-claudetalk)
+
+- **`messages.seq INTEGER UNIQUE`** — per-DB monotonic, the cursor +
+  user-visible "[N]" id. Generated atomically via the new
+  `message_seq(id=1, next)` counter table.
+- **`messages.id TEXT PRIMARY KEY`** — `crypto.randomUUID()` per
+  message; the cross-machine identity that the future relay routes.
+- **`instances.machine_id TEXT`** — nullable column populated from a
+  per-machine UUID stored in `~/.claudetalk/machine.json` (mode 600).
+  Lets `discover` (once Phase N1 lands) tag a pseudonym with the host
+  it came from when multiple machines run the same folder.
+- **`~/.claudetalk/network.json`** scaffold — optional file; absent
+  means local-only mode (byte-identical to 0.4.3). When present with
+  `relay_url` + `shared_secret`, marks this install as network-enabled
+  (the relay client lands in Phase N1).
+- `src/machine-id.ts` (`getOrCreateMachineId`, `readMachineFile`)
+- `src/network-config.ts` (`getNetworkConfig`, `isNetworkConfigured`)
+
+### Migration notes
+
+- Schema migration v3 runs automatically on first start with the new
+  binary. Existing rows get `id = CAST(old_int_id AS TEXT)` and
+  `seq = old_int_id` so legacy `[7]` references continue to resolve.
+- 8 new unit tests + integration tests updated. 172/172 pass.
+
 ## [0.4.3] — 2026-05-17
 
 ### Added

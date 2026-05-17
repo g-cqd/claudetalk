@@ -96,9 +96,9 @@ export function snapshot(
       const row = d
         .query<{ c: number }, [string, number, string]>(
           `SELECT COUNT(*) AS c FROM messages
-           WHERE chat_id = ? AND id > ? AND from_pseudonym != ?`,
+           WHERE chat_id = ? AND seq > ? AND from_pseudonym != ?`,
         )
-        .get(chat.id, m.last_read_message_id, m.pseudonym);
+        .get(chat.id, m.last_read_message_seq, m.pseudonym);
       unread_per_member[m.pseudonym] = row?.c ?? 0;
     }
     return {

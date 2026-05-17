@@ -3,6 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { pseudonymFor } from "./pseudonym.ts";
 import { resolveProjectDir, ensureRootDir } from "./paths.ts";
+import { getOrCreateMachineId } from "./machine-id.ts";
+import { isNetworkConfigured } from "./network-config.ts";
 import {
   db,
   listChatMembers,
@@ -77,11 +79,15 @@ async function main(): Promise<void> {
   const me = pseudonymFor(projectDir);
   installCrashHandlers(me.pseudonym);
   db(); // open + migrate
-  upsertInstance(me.pseudonym, me.path, process.pid);
-  log(`identity: ${me.pseudonym}  folder=${me.path}`);
+  const machineId = getOrCreateMachineId();
+  upsertInstance(me.pseudonym, me.path, process.pid, machineId);
+  log(`identity: ${me.pseudonym}  folder=${me.path}  machine=${machineId.slice(0, 8)}`);
+  if (isNetworkConfigured()) {
+    log("network: ~/.claudetalk/network.json present (Phase N1 relay not yet wired)");
+  }
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.4.3" },
+    { name: "claudetalk", version: "0.5.0" },
     {
       capabilities: {
         tools: {},

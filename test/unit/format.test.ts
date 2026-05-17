@@ -65,13 +65,15 @@ test("fmtChat distinguishes direct vs group and includes a title", () => {
   expect(fmtChat(group)).toContain('"Design"');
 });
 
-test("fmtMessage prefixes id, includes author and body", () => {
+test("fmtMessage prefixes seq, includes author and body", () => {
   const m: MessageRow = {
-    id: 7,
+    id: "550e8400-e29b-41d4-a716-446655440000",
+    seq: 7,
     chat_id: "group:x",
     from_pseudonym: "SwiftFox-a3f",
     body: "hello",
     created_at: NOW - 1_000,
+    parent_id: null,
   };
   expect(fmtMessage(m)).toBe("[7] SwiftFox-a3f (1s ago): hello");
 });
@@ -117,13 +119,15 @@ test("fmtUnread summarises pending asks AND unread chats", () => {
         chat: { id: "direct:Me|Alice", kind: "direct", title: null, created_at: NOW },
         unreadCount: 3,
         latest: {
-          id: 99,
+          id: "660e8400-e29b-41d4-a716-446655440099",
+          seq: 99,
           chat_id: "direct:Me|Alice",
           from_pseudonym: "Alice",
           body: "yo",
           created_at: NOW - 1000,
+          parent_id: null,
         },
-        lastReadId: 96,
+        lastReadSeq: 96,
       },
     ],
   };
@@ -131,5 +135,5 @@ test("fmtUnread summarises pending asks AND unread chats", () => {
   expect(out).toContain("Pending asks");
   expect(out).toContain("Unread chats");
   expect(out).toContain("unread=3");
-  expect(out).toContain("last_read_id=96");
+  expect(out).toContain("last_read_seq=96");
 });

@@ -26,7 +26,7 @@ afterEach(() => {
   home.cleanup();
 });
 
-function seedMessage(): { msgId: number; chatId: string } {
+function seedMessage(): { msgId: string; chatId: string } {
   upsertInstance("Alice", "/a", 1);
   upsertInstance("Bob", "/b", 2);
   const chatId = groupChatId("g");

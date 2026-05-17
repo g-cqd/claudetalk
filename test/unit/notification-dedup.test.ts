@@ -113,10 +113,10 @@ describe("notificationDeltaFor", () => {
     const fullDelta = notificationDeltaFor("ME");
     advanceNotificationCursors("ME", fullDelta);
 
-    // Synthetic stale delta with lower max_message_id should be a no-op.
+    // Synthetic stale delta with lower max_message_seq should be a no-op.
     const staleDelta = {
       ...fullDelta,
-      newChats: [{ ...fullDelta.newChats[0]!, max_message_id: 1 }],
+      newChats: [{ ...fullDelta.newChats[0]!, max_message_seq: 1 }],
     };
     advanceNotificationCursors("ME", staleDelta);
     const post = notificationDeltaFor("ME");

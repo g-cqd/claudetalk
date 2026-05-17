@@ -164,8 +164,8 @@ async function main(): Promise<void> {
   try {
     advanceNotificationCursors(me.pseudonym, delta);
     if (mentions.length > 0) {
-      const maxMentionId = Math.max(...mentions.map((m) => m.message_id));
-      advanceMentionCursor(me.pseudonym, maxMentionId);
+      const maxMentionSeq = Math.max(...mentions.map((m) => m.message_seq));
+      advanceMentionCursor(me.pseudonym, maxMentionSeq);
     }
   } catch {}
 }

@@ -10,7 +10,8 @@ import type { Identity } from "./pseudonym.ts";
 import { db, touchInstance } from "./db.ts";
 
 interface ChatHit {
-  message_id: number;
+  message_id: string;
+  message_seq: number;
   chat_id: string;
   from_pseudonym: string;
   body: string;
@@ -73,16 +74,16 @@ export function registerSearchTool(server: McpServer, me: Identity): void {
       if (which === "chats" || which === "all") {
         const hits = db()
           .query<ChatHit, [string, number]>(
-            `SELECT id AS message_id, chat_id, from_pseudonym, body, created_at
+            `SELECT id AS message_id, seq AS message_seq, chat_id, from_pseudonym, body, created_at
              FROM messages WHERE body LIKE ? COLLATE NOCASE
-             ORDER BY id DESC LIMIT ?`,
+             ORDER BY seq DESC LIMIT ?`,
           )
           .all(needle, lim);
         lines.push("", `Chat hits (${hits.length}):`);
         if (hits.length === 0) lines.push("  (none)");
         for (const h of hits) {
           lines.push(
-            `  [#${h.message_id}] ${h.chat_id} — ${h.from_pseudonym}: ${truncate(h.body)}`,
+            `  [#${h.message_seq}] ${h.chat_id} — ${h.from_pseudonym}: ${truncate(h.body)}`,
           );
         }
       }

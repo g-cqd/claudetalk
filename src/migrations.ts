@@ -220,6 +220,154 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 3,
+    name: "Phase N0: messages.id → TEXT UUID + seq sidecar + machine_id",
+    up: (d) => {
+      // SQLite can't ALTER a column's type. Rebuild every table that
+      // references messages.id (which is becoming TEXT). FK enforcement
+      // is ON (PRAGMA foreign_keys = ON in db.ts), so disable it for
+      // the duration of this migration — re-enabled at the bottom.
+      d.exec("PRAGMA foreign_keys = OFF;");
+
+      // 1. Sequence counter for messages.seq (per-DB monotonic; the unit
+      //    that cursors compare against, NOT a cross-machine identity).
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS message_seq (
+          id   INTEGER PRIMARY KEY CHECK (id = 1),
+          next INTEGER NOT NULL DEFAULT 1
+        );
+        INSERT OR IGNORE INTO message_seq (id, next) VALUES (1, 1);
+      `);
+
+      // Bootstrap the counter past any existing autoincrement ids so a
+      // new insert can't collide with a legacy row.
+      const maxOld = d
+        .query<{ m: number | null }, []>("SELECT MAX(id) AS m FROM messages")
+        .get();
+      const startNext = (maxOld?.m ?? 0) + 1;
+      d.run("UPDATE message_seq SET next = ? WHERE id = 1", [startNext]);
+
+      // 2. Rebuild messages with TEXT id (UUID) + INTEGER seq.
+      d.exec(`
+        CREATE TABLE messages_new (
+          id          TEXT PRIMARY KEY,
+          seq         INTEGER NOT NULL UNIQUE,
+          chat_id     TEXT NOT NULL,
+          from_pseudonym TEXT NOT NULL,
+          body        TEXT NOT NULL,
+          created_at  INTEGER NOT NULL,
+          parent_id   TEXT,
+          FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+        );
+        INSERT INTO messages_new (id, seq, chat_id, from_pseudonym, body, created_at, parent_id)
+          SELECT CAST(id AS TEXT), id, chat_id, from_pseudonym, body, created_at,
+                 CASE WHEN parent_id IS NOT NULL THEN CAST(parent_id AS TEXT) ELSE NULL END
+          FROM messages;
+        DROP TABLE messages;
+        ALTER TABLE messages_new RENAME TO messages;
+        CREATE INDEX idx_messages_chat_id ON messages(chat_id, seq);
+      `);
+
+      // 3. Rebuild message_reactions with TEXT message_id.
+      d.exec(`
+        CREATE TABLE message_reactions_new (
+          message_id TEXT NOT NULL,
+          reactor    TEXT NOT NULL,
+          reaction   TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (message_id, reactor),
+          FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+        );
+        INSERT INTO message_reactions_new (message_id, reactor, reaction, created_at)
+          SELECT CAST(message_id AS TEXT), reactor, reaction, created_at FROM message_reactions;
+        DROP TABLE message_reactions;
+        ALTER TABLE message_reactions_new RENAME TO message_reactions;
+        CREATE INDEX idx_reactions_msg ON message_reactions(message_id);
+      `);
+
+      // 4. Rebuild message_mentions with TEXT message_id.
+      d.exec(`
+        CREATE TABLE message_mentions_new (
+          message_id TEXT NOT NULL,
+          target     TEXT NOT NULL,
+          PRIMARY KEY (message_id, target),
+          FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+        );
+        INSERT INTO message_mentions_new (message_id, target)
+          SELECT CAST(message_id AS TEXT), target FROM message_mentions;
+        DROP TABLE message_mentions;
+        ALTER TABLE message_mentions_new RENAME TO message_mentions;
+        CREATE INDEX idx_mentions_target ON message_mentions(target, message_id);
+      `);
+
+      // 5. Rebuild chat_members with seq-based cursors. The old integer
+      //    *_message_id columns were storing what is now the seq value
+      //    (because pre-v3 id == seq for every row), so the rename is a
+      //    pure column-name swap with no value transformation needed.
+      d.exec(`
+        CREATE TABLE chat_members_new (
+          chat_id                   TEXT NOT NULL,
+          pseudonym                 TEXT NOT NULL,
+          joined_at                 INTEGER NOT NULL,
+          last_read_message_seq     INTEGER NOT NULL DEFAULT 0,
+          last_notified_message_seq INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (chat_id, pseudonym),
+          FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+        );
+        INSERT INTO chat_members_new
+          (chat_id, pseudonym, joined_at, last_read_message_seq, last_notified_message_seq)
+          SELECT chat_id, pseudonym, joined_at,
+                 last_read_message_id, last_notified_message_id
+            FROM chat_members;
+        DROP TABLE chat_members;
+        ALTER TABLE chat_members_new RENAME TO chat_members;
+      `);
+
+      // 6. Phase N0: machine_id on instances. Additive, nullable.
+      try {
+        d.exec("ALTER TABLE instances ADD COLUMN machine_id TEXT;");
+      } catch (e: any) {
+        if (!/duplicate column name/i.test(String(e?.message ?? e ?? ""))) throw e;
+      }
+
+      // 6b. Rename last_notified_mention_id → _seq. Mentions now reference
+      //     messages.seq (the cursor unit) since the actual messages.id is
+      //     a non-orderable UUID. Pre-v3 id == seq → value is compatible.
+      try {
+        d.exec(
+          "ALTER TABLE instances RENAME COLUMN last_notified_mention_id TO last_notified_mention_seq;",
+        );
+      } catch (e: any) {
+        if (!/no such column|duplicate column/i.test(String(e?.message ?? e ?? ""))) {
+          throw e;
+        }
+      }
+
+      // 7. Re-create the dashboard_version triggers — rebuilding the
+      //    messages / chat_members / message_reactions tables dropped them.
+      d.exec(`
+        CREATE TRIGGER IF NOT EXISTS dv_messages_ins
+          AFTER INSERT ON messages BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_chat_members_ins
+          AFTER INSERT ON chat_members BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_reactions_ins
+          AFTER INSERT ON message_reactions BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+        CREATE TRIGGER IF NOT EXISTS dv_reactions_del
+          AFTER DELETE ON message_reactions BEGIN
+            UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
+          END;
+      `);
+
+      d.exec("PRAGMA foreign_keys = ON;");
+    },
+  },
 ];
 
 export function currentSchemaVersion(d: Database): number {

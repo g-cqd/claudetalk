@@ -31,32 +31,35 @@ const text = (s: string) => toolText(s);
 const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
 /** Post a message (if any) into the chat, parse out @-mentions, mark recent
- *  as read for `me`, and return the recent slice. Shared by chat / groupchat. */
+ *  as read for `me`, and return the recent slice. Shared by chat / groupchat.
+ *  `replyToSeq` is the human-visible [N] sequence the user passed; we resolve
+ *  it to the parent's UUID before storing. */
 function postAndRead(
   chatId: string,
   me: string,
   message: string | undefined,
   historyLimit: number,
-  replyTo: number | null,
+  replyToSeq: number | null,
 ) {
   if (message !== undefined) {
-    const inserted = insertMessage(chatId, me, message, replyTo);
+    const parentUuid = replyToSeq === null ? null : (getMessage(replyToSeq)?.id ?? null);
+    const inserted = insertMessage(chatId, me, message, parentUuid);
     recordMessageMentions(inserted.id, message, me);
   }
   const recent = listMessages(chatId, 0, 10_000).slice(-historyLimit);
-  if (recent.length > 0) markChatRead(chatId, me, recent[recent.length - 1]!.id);
+  if (recent.length > 0) markChatRead(chatId, me, recent[recent.length - 1]!.seq);
   return recent;
 }
 
-/** Validate that `replyTo` (if provided) refers to a message that exists
+/** Validate that `replyToSeq` (if provided) refers to a message that exists
  *  AND lives in the same chat. Returns an error message string on failure,
- *  null on success or when `replyTo` is null/undefined. */
-function validateReplyTo(replyTo: number | null | undefined, chatId: string): string | null {
-  if (replyTo === null || replyTo === undefined) return null;
-  const parent = getMessage(replyTo);
-  if (!parent) return `reply_to=${replyTo} refers to an unknown message.`;
+ *  null on success or when `replyToSeq` is null/undefined. */
+function validateReplyTo(replyToSeq: number | null | undefined, chatId: string): string | null {
+  if (replyToSeq === null || replyToSeq === undefined) return null;
+  const parent = getMessage(replyToSeq);
+  if (!parent) return `reply_to=${replyToSeq} refers to an unknown message.`;
   if (parent.chat_id !== chatId) {
-    return `reply_to=${replyTo} belongs to ${parent.chat_id}, not ${chatId}.`;
+    return `reply_to=${replyToSeq} belongs to ${parent.chat_id}, not ${chatId}.`;
   }
   return null;
 }
@@ -81,7 +84,7 @@ export function registerChatTools(server: McpServer, me: Identity): void {
           .min(1)
           .optional()
           .describe(
-            "Optional message id to reply to. Renders as `[N ↪ parent_id]` in history and " +
+            "Optional [N] seq to reply to. Renders as `[N ↪ parent_seq]` in history and " +
               "lets the hook tell the parent's author 'replied to your [N]'. Must be in this same chat.",
           ),
         history: z
@@ -151,7 +154,7 @@ export function registerChatTools(server: McpServer, me: Identity): void {
           .min(1)
           .optional()
           .describe(
-            "Optional message id to reply to (must be in this same group). Renders threading in history.",
+            "Optional [N] seq to reply to (must be in this same group). Renders threading in history.",
           ),
         history: z
           .number()
@@ -216,11 +219,11 @@ export function registerChatTools(server: McpServer, me: Identity): void {
     {
       title: "Read messages from a chat",
       description:
-        "Fetch chat messages strictly newer than since_id. Marks them as read for you. " +
+        "Fetch chat messages strictly newer than since_seq. Marks them as read for you. " +
         "Use chat_id from 'chat' / 'groupchat' / 'inbox'.",
       inputSchema: {
         chat_id: z.string().min(1).describe("Chat id (e.g. 'group:design-review')."),
-        since_id: z.number().int().min(0).optional().describe("Cursor; default 0 (from start)."),
+        since_seq: z.number().int().min(0).optional().describe("Cursor (seq); default 0 (from start)."),
         limit: z
           .number()
           .int()
@@ -230,14 +233,14 @@ export function registerChatTools(server: McpServer, me: Identity): void {
           .describe("Max messages to return. Default: 100."),
       },
     },
-    async ({ chat_id, since_id, limit }) => {
+    async ({ chat_id, since_seq, limit }) => {
       touchInstance(me.pseudonym);
       const chat = getChat(chat_id);
       if (!chat) return error(`Unknown chat_id '${chat_id}'.`);
-      const rows = listMessages(chat_id, since_id ?? 0, limit ?? 100);
-      if (rows.length > 0) markChatRead(chat_id, me.pseudonym, rows[rows.length - 1]!.id);
+      const rows = listMessages(chat_id, since_seq ?? 0, limit ?? 100);
+      if (rows.length > 0) markChatRead(chat_id, me.pseudonym, rows[rows.length - 1]!.seq);
       const lines = [
-        `chat_id=${chat_id}  (${rows.length} messages since ${since_id ?? 0})`,
+        `chat_id=${chat_id}  (${rows.length} messages since ${since_seq ?? 0})`,
         ...rows.map((m) => fmtMessage(m, me.pseudonym)),
       ];
       return text(lines.join("\n"));
