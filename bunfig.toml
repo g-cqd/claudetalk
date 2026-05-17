@@ -1,0 +1,7 @@
+[test]
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
+coverageSkipTestFiles = true
+# Baseline (2026-05): set after the initial unit + integration suite landed.
+# Bump these once new tests stabilise; never lower without a written reason.
+coverageThreshold = { line = 0.70, function = 0.70 }

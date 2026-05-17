@@ -1,0 +1,26 @@
+node_modules/
+bun.lockb
+*.log
+.DS_Store
+dist/
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# Test + quality artifacts
+coverage/
+reports/
+test/.tmp-*
+.stryker-tmp/
+stryker.log
+
+# Local-only ClaudeTalk state (created by the server on first run)
+.claudetalk-local/
+.smoke-home/
+.proof-sandbox/
+
+# Safe-write backups of user config (never commit these — they contain personal data)
+*.bak.*

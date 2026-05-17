@@ -1,0 +1,19 @@
+{
+  "threshold": 6,
+  "minTokens": 50,
+  "minLines": 5,
+  "reporters": ["console", "json", "html"],
+  "output": "reports/jscpd",
+  "ignore": [
+    "**/node_modules/**",
+    "**/test/fixtures/**",
+    "**/coverage/**",
+    "**/reports/**",
+    "**/.stryker-tmp/**",
+    "**/.proof-sandbox/**",
+    "**/.smoke-home/**"
+  ],
+  "format": ["typescript"],
+  "gitignore": true,
+  "mode": "mild"
+}

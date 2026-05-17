@@ -1,0 +1,6 @@
+{
+  "max_lines": 500,
+  "soft_target": 350,
+  "_doc": "Source-file LOC ceiling. Hard fail above max_lines; warn above soft_target. Tools-heavy or CLI entrypoints earn their lines but should split when a logically separable concern (parsing, formatting, IO) emerges.",
+  "exempt": []
+}

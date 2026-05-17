@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ClaudeTalk dashboard</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>ClaudeTalk</h1>
+      <div class="status">
+        <span id="status-dot" class="dot dot-disconnected"></span>
+        <span id="status-text">connecting…</span>
+        <span class="muted" id="status-when"></span>
+      </div>
+    </header>
+
+    <main>
+      <aside id="sidebar">
+        <section>
+          <h2>Active instances <span class="count" id="count-instances">0</span></h2>
+          <ul id="instances"></ul>
+        </section>
+        <section>
+          <h2>Chats <span class="count" id="count-chats">0</span></h2>
+          <ul id="chats"></ul>
+        </section>
+        <section>
+          <h2>Asks <span class="count" id="count-asks">0</span></h2>
+          <ul id="asks-summary"></ul>
+        </section>
+        <section>
+          <h2>Tool log <span class="count" id="count-calls">0</span></h2>
+          <ul id="calls-summary"></ul>
+        </section>
+      </aside>
+
+      <section id="view">
+        <div id="placeholder" class="placeholder">
+          <p>Select a chat or ask on the left.</p>
+          <p class="muted">
+            Updates stream live over SSE. Open this page in a second tab — both
+            stay in sync.
+          </p>
+        </div>
+        <div id="chat-view" class="hidden">
+          <header class="view-header">
+            <h2 id="chat-title">—</h2>
+            <span class="muted" id="chat-meta"></span>
+          </header>
+          <ol id="messages"></ol>
+        </div>
+        <div id="ask-view" class="hidden">
+          <header class="view-header">
+            <h2>Asks</h2>
+            <span class="muted">most recent first</span>
+          </header>
+          <ol id="ask-list"></ol>
+        </div>
+        <div id="calls-view" class="hidden">
+          <header class="view-header">
+            <h2>Tool call log</h2>
+            <span class="muted">last 50 across all instances</span>
+          </header>
+          <ol id="calls-list"></ol>
+        </div>
+      </section>
+    </main>
+
+    <script src="/client.js"></script>
+  </body>
+</html>
