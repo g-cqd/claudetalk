@@ -10,6 +10,14 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`claudetalk replay --pseudonym P [--limit N] [--home DIR] [--keep]
+  [--verbose]`** (Phase 4.5). Spawns a fresh MCP server in a subprocess
+  with isolated `CLAUDETALK_HOME`, replays each recorded inbound
+  `tools/call` for that pseudonym, and diffs the new response against
+  the originally recorded `result_summary`. Useful for bug repros and
+  for spotting regressions across versions. Rows whose `args_json` was
+  truncated by the audit log are surfaced as `ERR` with a clear marker
+  rather than crashing on JSON parse.
 - **Plugin distribution.** `.claude-plugin/marketplace.json` ships a
   single-plugin marketplace so the same git repo is installable via
   `claude plugin marketplace add g-cqd/claudetalk` →

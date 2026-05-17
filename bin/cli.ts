@@ -16,6 +16,7 @@ import {
   formatMetrics,
   runGc,
 } from "../src/cli-commands.ts";
+import { formatReplayReport, runReplay } from "../src/replay.ts";
 import {
   type InstallContext,
   type InstallOptions,
@@ -74,6 +75,12 @@ COMMANDS
   metrics [--window-hours N]
       Per-tool p50/p95/p99 latency, per-pseudonym call counts, hook dedup
       ratio, rate-limit events over the last N hours (default 24).
+  replay --pseudonym P [--since-id N] [--until-id N] [--limit N]
+         [--home DIR] [--keep] [--verbose]
+      Re-run a recorded pseudonym's tool sequence against a fresh isolated
+      CLAUDETALK_HOME. Spawns its own MCP server in a subprocess; diffs
+      each new response against the recorded result_summary. Defaults:
+      limit=200, home=mktemp (deleted on exit unless --keep or --home).
   help
       Show this help.
 `);
@@ -378,6 +385,28 @@ switch (cmd) {
     db();
     const m = buildMetrics({ windowHours: Number(getArg("window-hours", "24")) });
     console.log(formatMetrics(m));
+    break;
+  }
+  case "replay": {
+    const pseudonym = getArg("pseudonym");
+    if (!pseudonym) {
+      console.error("Usage: claudetalk replay --pseudonym P [--since-id N] [--limit N]");
+      process.exit(2);
+    }
+    db();
+    const sinceArg = getArg("since-id");
+    const untilArg = getArg("until-id");
+    const homeArg = getArg("home");
+    const report = await runReplay({
+      pseudonym,
+      sinceId: sinceArg ? Number(sinceArg) : undefined,
+      untilId: untilArg ? Number(untilArg) : undefined,
+      limit: Number(getArg("limit", "200")),
+      home: homeArg ?? undefined,
+      keep: hasFlag("keep"),
+    });
+    console.log(formatReplayReport(report, hasFlag("verbose")));
+    if (report.errors > 0) process.exit(1);
     break;
   }
   case "help":

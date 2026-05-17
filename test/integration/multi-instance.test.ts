@@ -129,9 +129,13 @@ test(
     ]) {
       expect(tools).toContain(expected);
     }
-    // wait_for_messages was intentionally removed (it blocked the JSON-RPC
-    // channel and made Claude appear stuck); hooks handle live polling now.
-    expect(tools).not.toContain("wait_for_messages");
+    // wait_for_messages is now a compatibility stub: present in the tool
+    // list so older callers don't error out (and disconnect their MCP
+    // transport), but returns immediately without blocking. Hooks +
+    // claude/channel push handle the real-time path.
+    expect(tools).toContain("wait_for_messages");
+    const stub = txt(await callTool(alice, "wait_for_messages", {}));
+    expect(stub.toLowerCase()).toContain("inbox");
 
     // identities
     const aliceWho = txt(await callTool(alice, "whoami", {}));

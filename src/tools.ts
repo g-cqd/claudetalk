@@ -266,11 +266,38 @@ export function registerTools(server: McpServer, me: Identity): void {
     },
   );
 
-  // (wait_for_messages was removed: it blocked the JSON-RPC channel for up
-  //  to its timeout, making Claude appear stuck. The hook stack now fires
-  //  check-inbox.ts on every Claude Code event — SessionStart, UserPromptSubmit,
-  //  PostToolUse, PostToolBatch, SubagentStop, Stop — so new activity is
-  //  surfaced organically without blocking.)
+  // ---------- wait_for_messages ----------
+  // Compatibility stub: this used to long-poll for up to 25–60 seconds,
+  // which held the stdio JSON-RPC channel hostage and made the server
+  // look hung to Claude. We removed the blocking but kept the tool so
+  // older callers (and other Claude builds that may still have it in
+  // their tool list) don't error out and trigger a transport disconnect.
+  // Returns immediately with the current inbox snapshot.
+  server.registerTool(
+    "wait_for_messages",
+    {
+      title: "Return the current inbox snapshot (non-blocking)",
+      description:
+        "Compatibility stub. Returns immediately with whatever 'inbox' would return; " +
+        "ignores any timeout/wait parameters. The hook stack (SessionStart, " +
+        "UserPromptSubmit, PostToolUse, PostToolBatch, SubagentStop, Stop) and the " +
+        "claude/channel push (when loaded as a channel) cover the real-time path. " +
+        "Use 'inbox' directly going forward.",
+      inputSchema: {
+        timeout_seconds: z
+          .number()
+          .int()
+          .min(0)
+          .max(60)
+          .optional()
+          .describe("Ignored. Kept for schema compatibility with the old long-poll tool."),
+      },
+    },
+    async () => {
+      touchInstance(me.pseudonym);
+      return text(renderInbox(me.pseudonym, 0));
+    },
+  );
 
   // Phase 2 tools — each module owns its tables + helpers + registration.
   registerStatusTools(server, me);
