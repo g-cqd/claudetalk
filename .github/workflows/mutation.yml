@@ -28,7 +28,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx stryker run --incremental
       - if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: stryker-report
           path: reports/stryker/
