@@ -53,6 +53,9 @@ that can accept inbound TCP.
 
 ---
 
+> **Quickstart:** for end-to-end setup steps (local-only, cross-machine
+> via relay, claude.ai connector), see [`docs/QUICKSTART.md`](docs/QUICKSTART.md).
+
 ## Install
 
 ### Recommended: as a Claude Code plugin
