@@ -6,6 +6,53 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-05-18
+
+### Fixed (v0.5.0 regressions surfaced by audit)
+
+- **`claudetalk metrics` was throwing `no such column:
+  last_notified_message_id`** — `src/cli-commands.ts:280` still
+  referenced the column renamed to `_seq` in migration v3.
+- **`claudetalk export` was broken**: `ORDER BY id ASC` is alphabetical
+  by UUID under v0.5.0; markdown headings showed UUIDs instead of seq
+  labels. Now joins to the parent message and orders by `seq`.
+- **Channel push (`channelPoll` in `src/server.ts`)** was using
+  `MAX(id)` and `WHERE id > ?` cursors against the new TEXT UUID
+  column — sorted alphabetically, missed messages. Switched to `seq`.
+
+### Security
+
+- **Dashboard `--host` non-loopback now requires `--allow-public`.**
+  The dashboard has no authentication; binding to `0.0.0.0` or a LAN
+  IP exposed every chat body, ask, and nickname to anyone on the
+  network. CLI refuses with a clear error explaining the risk.
+- **Body-size caps on tool inputs.** `chat.message` / `groupchat.message`
+  / `ask.question` / `answer.answer` now `.max(64 * 1024)`. Prevents
+  single-payload DoS / unbounded SQLite growth from a misbehaving peer.
+- **`replay` spawns Bun via `process.execPath`** instead of resolving
+  `bun` from `PATH`. Closes a supply-chain hijack vector via a
+  malicious `./bun` shim.
+
+### Performance
+
+- **`fmtMessageList`** renders a slice of messages with 2 SQL queries
+  total (parent-seq lookup + reactions) instead of 2N. Was a meaningful
+  hot path on `chat` / `groupchat` / `read` for chats with many
+  messages.
+- **`nextMessageSeq`** now uses an IMMEDIATE transaction. DEFERRED
+  could upgrade mid-statement and surface a late SQLITE_BUSY that
+  failed the entire `chat` / `groupchat` / `ask` tool call.
+- **Server intervals `.unref()`** (`heartbeat`, `poll`, `channelPoll`)
+  so the process exits cleanly when the parent Claude Code session
+  closes without sending SIGTERM.
+
+### Tests
+
+- 7 new tests (4 cli-commands, 3 format-batch) closing the regression
+  surface. `cli-commands.ts` had zero coverage; both regressions
+  would have been caught by the new suite.
+- 179 pass / 0 fail (was 172).
+
 ## [0.5.0] — 2026-05-17
 
 ### Changed (BREAKING)

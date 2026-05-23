@@ -22,9 +22,16 @@ import {
   markChatRead,
   touchInstance,
 } from "./db.ts";
-import { fmtChat, fmtMessage } from "./format.ts";
+import { fmtChat, fmtMessageList } from "./format.ts";
 import { recordMessageMentions } from "./mentions.ts";
 import { ErrorCode, toolError, toolText } from "./errors.ts";
+
+/** Per-message body cap. 64 KiB is comfortably above any reasonable inline
+ *  Claude exchange while preventing single-payload DoS / unbounded SQLite
+ *  growth from a misbehaving peer. */
+const MAX_MESSAGE_BODY = 64 * 1024;
+/** Slug length cap; matches what Claude Code surfaces as a "channel name". */
+const MAX_SLUG = 128;
 
 // text/error helpers come from src/errors.ts (Phase 5.4 — codes).
 const text = (s: string) => toolText(s);
@@ -76,8 +83,13 @@ export function registerChatTools(server: McpServer, me: Identity): void {
         "Auto-creates the chat and adds both members on first use. " +
         "Returns chat_id; use 'read' for deeper paging.",
       inputSchema: {
-        with: z.string().min(1).describe("The other Claude's pseudonym."),
-        message: z.string().min(1).optional().describe("Optional message to send."),
+        with: z.string().min(1).max(64).describe("The other Claude's pseudonym."),
+        message: z
+          .string()
+          .min(1)
+          .max(MAX_MESSAGE_BODY)
+          .optional()
+          .describe(`Optional message to send (max ${MAX_MESSAGE_BODY} chars).`),
         reply_to: z
           .number()
           .int()
@@ -116,7 +128,7 @@ export function registerChatTools(server: McpServer, me: Identity): void {
         `chat_id=${chatId}  (direct with ${other})`,
         message !== undefined ? "Sent your message." : "",
         recent.length === 0 ? "No messages yet." : `Recent (${recent.length}):`,
-        ...recent.map((m) => fmtMessage(m, me.pseudonym)),
+        ...fmtMessageList(recent, me.pseudonym),
       ].filter(Boolean);
       return text(lines.join("\n"));
     },
@@ -134,15 +146,22 @@ export function registerChatTools(server: McpServer, me: Identity): void {
         "up in their inbox with unread messages, no opt-in dance required. Use 'discover' to " +
         "find pseudonyms to invite. If 'message' is given, posts it; always returns recent history.",
       inputSchema: {
-        slug: z.string().min(1).describe("Group identifier, e.g. 'design-review'."),
-        message: z.string().min(1).optional().describe("Optional message to post."),
+        slug: z.string().min(1).max(MAX_SLUG).describe("Group identifier, e.g. 'design-review'."),
+        message: z
+          .string()
+          .min(1)
+          .max(MAX_MESSAGE_BODY)
+          .optional()
+          .describe(`Optional message to post (max ${MAX_MESSAGE_BODY} chars).`),
         title: z
           .string()
           .min(1)
+          .max(256)
           .optional()
           .describe("Optional human-readable title (set on creation)."),
         invite: z
-          .array(z.string().min(1))
+          .array(z.string().min(1).max(64))
+          .max(64)
           .optional()
           .describe(
             "Pseudonyms to add as members. Each must have connected to ClaudeTalk at least once " +
@@ -208,7 +227,7 @@ export function registerChatTools(server: McpServer, me: Identity): void {
           lines.push(`Skipped (unknown pseudonyms — never connected): ${unknown.join(", ")}`);
       }
       lines.push(recent.length === 0 ? "No messages yet." : `Recent (${recent.length}):`);
-      lines.push(...recent.map((m) => fmtMessage(m, me.pseudonym)));
+      lines.push(...fmtMessageList(recent, me.pseudonym));
       return text(lines.filter(Boolean).join("\n"));
     },
   );
@@ -241,7 +260,7 @@ export function registerChatTools(server: McpServer, me: Identity): void {
       if (rows.length > 0) markChatRead(chat_id, me.pseudonym, rows[rows.length - 1]!.seq);
       const lines = [
         `chat_id=${chat_id}  (${rows.length} messages since ${since_seq ?? 0})`,
-        ...rows.map((m) => fmtMessage(m, me.pseudonym)),
+        ...fmtMessageList(rows, me.pseudonym),
       ];
       return text(lines.join("\n"));
     },

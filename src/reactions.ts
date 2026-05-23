@@ -57,6 +57,10 @@ export function listReactionsFor(messageId: string): ReactionRow[] {
 /** Render reactions as " · 👍 from A,B · ✓ from C", or empty string. */
 export function summariseReactions(messageId: string): string {
   const rows = listReactionsFor(messageId);
+  return summariseFromRows(rows);
+}
+
+function summariseFromRows(rows: ReactionRow[]): string {
   if (rows.length === 0) return "";
   const byReaction = new Map<string, string[]>();
   for (const r of rows) {
@@ -69,6 +73,34 @@ export function summariseReactions(messageId: string): string {
     parts.push(`${reaction} from ${reactors.join(",")}`);
   }
   return `  · ${parts.join(" · ")}`;
+}
+
+/** Phase v0.5.2 perf: one query for N message ids instead of N queries.
+ *  Returns a map from message UUID → pre-rendered summary string (empty
+ *  for ids with no reactions). Used by fmtMessageList to avoid the N+1
+ *  pattern when rendering a chat slice. */
+export function summariseReactionsBatch(messageIds: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  if (messageIds.length === 0) return out;
+  const placeholders = messageIds.map(() => "?").join(",");
+  const rows = db()
+    .query<ReactionRow, string[]>(
+      `SELECT message_id, reactor, reaction, created_at
+       FROM message_reactions WHERE message_id IN (${placeholders})
+       ORDER BY message_id ASC, created_at ASC`,
+    )
+    .all(...messageIds);
+  // Group by message_id.
+  const byMsg = new Map<string, ReactionRow[]>();
+  for (const r of rows) {
+    const list = byMsg.get(r.message_id) ?? [];
+    list.push(r);
+    byMsg.set(r.message_id, list);
+  }
+  for (const id of messageIds) {
+    out.set(id, summariseFromRows(byMsg.get(id) ?? []));
+  }
+  return out;
 }
 
 // text/error helpers come from src/errors.ts (Phase 5.4 — codes).

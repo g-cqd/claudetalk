@@ -89,8 +89,11 @@ function selectRows(opts: ReplayOptions): ToolCallRow[] {
 }
 
 async function spawnServer(home: string, projectDir: string): Promise<ServerHandle> {
+  // Use the current Bun's absolute path rather than resolving "bun" from
+  // PATH. Otherwise a malicious sibling tool that drops a ./bun shim into
+  // PATH executes with our privileges against our DB. (Security audit H3.)
   const proc = spawn({
-    cmd: ["bun", "run", SERVER_ENTRY],
+    cmd: [process.execPath, "run", SERVER_ENTRY],
     stdin: "pipe",
     stdout: "pipe",
     stderr: "inherit",

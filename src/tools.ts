@@ -24,6 +24,10 @@ const ACTIVE_WINDOW_MS_DEFAULT = 10 * 60 * 1000;
 /** Cap on the optional inline-wait in `ask`. Kept short so Claude is never
  *  blocked for long when it explicitly opts into a synchronous answer. */
 const ASK_WAIT_MAX_SECONDS = 10;
+/** Maximum length of an ask question / answer body, in characters. Matches
+ *  chat-tools.ts MAX_MESSAGE_BODY. 64 KiB is comfortably above any
+ *  reasonable inline Claude exchange. */
+const MAX_BODY_CHARS = 64 * 1024;
 
 // text/error helpers come from src/errors.ts (Phase 5.4 — codes).
 const text = (s: string) => toolText(s);
@@ -137,8 +141,12 @@ export function registerTools(server: McpServer, me: Identity): void {
         "Optionally block for up to wait_seconds to receive the answer; if the peer is offline or slow, " +
         "the ask is queued and you can poll later via 'inbox'. Returns ask_id for follow-up.",
       inputSchema: {
-        to: z.string().min(1).describe("Recipient pseudonym (e.g. 'SwiftFox-a3f')."),
-        question: z.string().min(1).describe("The question text."),
+        to: z.string().min(1).max(64).describe("Recipient pseudonym (e.g. 'SwiftFox-a3f')."),
+        question: z
+          .string()
+          .min(1)
+          .max(MAX_BODY_CHARS)
+          .describe(`The question text (max ${MAX_BODY_CHARS} chars).`),
         wait_seconds: z
           .number()
           .int()
@@ -210,7 +218,11 @@ export function registerTools(server: McpServer, me: Identity): void {
         "Find ask_id via 'inbox'. Once answered, the asker can collect the reply.",
       inputSchema: {
         ask_id: z.number().int().min(1).describe("The ask_id returned by 'inbox'."),
-        answer: z.string().min(1).describe("Your answer text."),
+        answer: z
+          .string()
+          .min(1)
+          .max(MAX_BODY_CHARS)
+          .describe(`Your answer text (max ${MAX_BODY_CHARS} chars).`),
       },
     },
     async ({ ask_id, answer }) => {

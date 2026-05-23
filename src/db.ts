@@ -254,16 +254,22 @@ export function listChatsFor(pseudonym: string): { chat: ChatRow; member: ChatMe
   }));
 }
 
-/** Atomic next-seq fetch: bumps the counter inside a transaction so concurrent
- *  inserters can't collide. */
+/** Atomic next-seq fetch: bumps the counter inside an IMMEDIATE transaction
+ *  so concurrent inserters can't collide. IMMEDIATE acquires the write lock
+ *  up-front, failing fast with SQLITE_BUSY if another writer holds it —
+ *  better than DEFERRED which can upgrade mid-transaction and surface a
+ *  late, opaque failure to the tool handler. busy_timeout=500ms (set in
+ *  db() init) gives short-lived contention a chance to clear. */
 function nextMessageSeq(): number {
-  return db().transaction(() => {
-    db().run("UPDATE message_seq SET next = next + 1 WHERE id = 1");
-    const r = db()
+  const d = db();
+  const txn = d.transaction(() => {
+    d.run("UPDATE message_seq SET next = next + 1 WHERE id = 1");
+    const r = d
       .query<{ next: number }, []>("SELECT next - 1 AS next FROM message_seq WHERE id = 1")
       .get();
     return r?.next ?? 1;
-  })();
+  });
+  return txn.immediate();
 }
 
 export function insertMessage(

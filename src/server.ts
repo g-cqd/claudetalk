@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   }
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.5.0" },
+    { name: "claudetalk", version: "0.5.2" },
     {
       capabilities: {
         tools: {},
@@ -113,6 +113,7 @@ async function main(): Promise<void> {
       log("heartbeat failed", e);
     }
   }, HEARTBEAT_MS);
+  heartbeat.unref?.();
 
   // Background poll: when new activity arrives, emit a logging notification.
   // Claude Code itself doesn't surface logging notifications — the hook is
@@ -140,24 +141,31 @@ async function main(): Promise<void> {
       // sendLoggingMessage throws if not connected yet; ignore.
     }
   }, POLL_MS);
+  poll.unref?.();
 
-  // Phase 0 — channel push. Track the max message id we've already pushed
+  // Phase 0 — channel push. Track the max message seq we've already pushed
   // per chat so we only push the delta. When Claude Code loads this server
   // as a channel, these notifications arrive as <channel source="claudetalk"
-  // chat_id="..." sender="..." message_id="N"> events in the conversation
-  // mid-turn, with no hook involved.
+  // chat_id="..." sender="..." message_id="<uuid>" seq="N"> events in the
+  // conversation mid-turn, with no hook involved.
+  //
+  // v0.5.0+ note: cursor is the integer `seq` (chronological), NOT the
+  // TEXT UUID `id` (which sorts alphabetically — wrong). The push payload
+  // still carries the UUID `id` as `message_id` because that's the
+  // cross-machine identity; `seq` is added as a sibling for the receiving
+  // Claude's "[N]" rendering.
   const channelCursors = new Map<string, number>();
   const channelPoll = setInterval(async () => {
     try {
       const myChats = listChatsFor(me.pseudonym);
       for (const { chat } of myChats) {
         const lastSeen = channelCursors.get(chat.id) ?? 0;
-        // Initialize the cursor to "current max" on first observation so
-        // we don't replay the whole history on startup.
+        // Initialize the cursor to "current max seq" on first observation
+        // so we don't replay the whole history on startup.
         if (lastSeen === 0) {
           const maxRow = db()
             .query<{ m: number | null }, [string]>(
-              "SELECT MAX(id) AS m FROM messages WHERE chat_id = ?",
+              "SELECT MAX(seq) AS m FROM messages WHERE chat_id = ?",
             )
             .get(chat.id);
           channelCursors.set(chat.id, maxRow?.m ?? 0);
@@ -165,13 +173,19 @@ async function main(): Promise<void> {
         }
         const newRows = db()
           .query<
-            { id: number; from_pseudonym: string; body: string; created_at: number },
+            {
+              id: string;
+              seq: number;
+              from_pseudonym: string;
+              body: string;
+              created_at: number;
+            },
             [string, number, string]
           >(
-            `SELECT id, from_pseudonym, body, created_at
+            `SELECT id, seq, from_pseudonym, body, created_at
              FROM messages
-             WHERE chat_id = ? AND id > ? AND from_pseudonym != ?
-             ORDER BY id ASC LIMIT 20`,
+             WHERE chat_id = ? AND seq > ? AND from_pseudonym != ?
+             ORDER BY seq ASC LIMIT 20`,
           )
           .all(chat.id, lastSeen, me.pseudonym);
         for (const row of newRows) {
@@ -186,7 +200,8 @@ async function main(): Promise<void> {
                 meta: {
                   chat_id: chat.id,
                   sender: row.from_pseudonym,
-                  message_id: String(row.id),
+                  message_id: row.id,
+                  seq: String(row.seq),
                   ts: String(row.created_at),
                   kind: isGroup ? "group" : "direct",
                   ...(isGroup && chat.title ? { title: chat.title } : {}),
@@ -200,7 +215,7 @@ async function main(): Promise<void> {
                 },
               },
             });
-            channelCursors.set(chat.id, row.id);
+            channelCursors.set(chat.id, row.seq);
           } catch {
             // Either we're not loaded as a channel (silently dropped), or
             // the transport is closed. Move on.
@@ -211,6 +226,7 @@ async function main(): Promise<void> {
       // DB unavailable or other transient — try again next tick.
     }
   }, CHANNEL_POLL_MS);
+  channelPoll.unref?.();
 
   const shutdown = (sig: string) => {
     log(`shutting down (${sig})`);

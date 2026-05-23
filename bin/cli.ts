@@ -336,6 +336,21 @@ switch (cmd) {
   case "web": {
     const port = Number(getArg("port", "4242"));
     const host = getArg("host", "127.0.0.1")!;
+    // The dashboard has NO auth — anyone reachable on the bind interface
+    // can query /api/snapshot and harvest pseudonyms / nicknames / chat
+    // bodies. Bind only to loopback by default; refuse any other host
+    // unless --allow-public is explicit. (Security audit H2.)
+    const isLoopback =
+      host === "127.0.0.1" || host === "localhost" || host === "::1";
+    if (!isLoopback && !hasFlag("allow-public")) {
+      console.error(
+        `Refusing to bind dashboard to non-loopback host '${host}' without --allow-public.\n` +
+          "The dashboard has no authentication; binding it to 0.0.0.0 / a LAN IP\n" +
+          "exposes every chat body, ask, and nickname to anyone on that network.\n" +
+          "If you really want this, pass --allow-public to acknowledge the risk.",
+      );
+      process.exit(2);
+    }
     const openInBrowser = hasFlag("open");
     await web(port, host, openInBrowser);
     break;

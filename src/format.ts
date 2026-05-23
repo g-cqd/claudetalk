@@ -11,7 +11,7 @@ import {
 } from "./db.ts";
 import { discoverableGroupsFor } from "./notifications.ts";
 import { displayBoth, displayName } from "./nickname.ts";
-import { summariseReactions } from "./reactions.ts";
+import { summariseReactions, summariseReactionsBatch } from "./reactions.ts";
 
 export function fmtAgo(ts: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -70,6 +70,33 @@ function lookupMessageSeq(uuid: string): number | null {
     "SELECT seq FROM messages WHERE id = ?",
   ).get(uuid);
   return row?.seq ?? null;
+}
+
+/** Phase v0.5.2 perf: render a list of messages in two SQL queries total
+ *  (parent-seq lookup + reactions) instead of 2N. Used by chat / groupchat
+ *  / read tool handlers when rendering the recent slice. */
+export function fmtMessageList(messages: MessageRow[], viewer?: string): string[] {
+  if (messages.length === 0) return [];
+  const parentIds = [...new Set(messages.map((m) => m.parent_id).filter((p): p is string => !!p))];
+  const parentSeqByUuid = new Map<string, number>();
+  if (parentIds.length > 0) {
+    const placeholders = parentIds.map(() => "?").join(",");
+    const rows = db().query<{ id: string; seq: number }, string[]>(
+      `SELECT id, seq FROM messages WHERE id IN (${placeholders})`,
+    ).all(...parentIds);
+    for (const r of rows) parentSeqByUuid.set(r.id, r.seq);
+  }
+  const reactionsByUuid = summariseReactionsBatch(messages.map((m) => m.id));
+  return messages.map((m) => {
+    const author = viewer ? displayName(viewer, m.from_pseudonym, m.chat_id) : m.from_pseudonym;
+    let idTag = `[${m.seq}]`;
+    if (m.parent_id !== null && m.parent_id !== undefined) {
+      const parentSeq = parentSeqByUuid.get(m.parent_id);
+      idTag = `[${m.seq} ↪ ${parentSeq ?? m.parent_id}]`;
+    }
+    const reactions = reactionsByUuid.get(m.id) ?? "";
+    return `${idTag} ${author} (${fmtAgo(m.created_at)}): ${m.body}${reactions}`;
+  });
 }
 
 function directPeer(chatId: string, me: string): string {

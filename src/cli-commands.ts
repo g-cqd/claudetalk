@@ -146,11 +146,13 @@ export function runGc(opts: { olderThanDays: number; vacuum: boolean }): GcResul
 // ---------------- export ----------------
 
 interface ExportMessage {
-  id: number;
+  id: string;
+  seq: number;
   from_pseudonym: string;
   body: string;
   created_at: number;
-  parent_id: number | null;
+  parent_id: string | null;
+  parent_seq: number | null;
 }
 
 export function exportChat(
@@ -164,10 +166,19 @@ export function exportChat(
     )
     .get(chatId);
   if (!chat) return { ok: false, output: `unknown chat_id ${chatId}` };
+  // Order + display by seq (chronological local order); UUID id is kept in
+  // the JSON form for cross-machine identity. Markdown shows the seq as the
+  // user-facing label and resolves parent_id → parent_seq via self-join.
   const msgs = d
     .query<ExportMessage, [string]>(
-      `SELECT id, from_pseudonym, body, created_at, parent_id
-       FROM messages WHERE chat_id = ? ORDER BY id ASC`,
+      `SELECT m.id AS id, m.seq AS seq, m.from_pseudonym AS from_pseudonym,
+              m.body AS body, m.created_at AS created_at,
+              m.parent_id AS parent_id,
+              p.seq AS parent_seq
+         FROM messages m
+         LEFT JOIN messages p ON p.id = m.parent_id
+        WHERE m.chat_id = ?
+        ORDER BY m.seq ASC`,
     )
     .all(chatId);
   if (format === "json") {
@@ -189,8 +200,8 @@ export function exportChat(
   );
   lines.push("");
   for (const m of msgs) {
-    const replyMark = m.parent_id ? ` _(replying to #${m.parent_id})_` : "";
-    lines.push(`## #${m.id} — ${m.from_pseudonym} · ${new Date(m.created_at).toISOString()}${replyMark}`);
+    const replyMark = m.parent_seq !== null ? ` _(replying to #${m.parent_seq})_` : "";
+    lines.push(`## #${m.seq} — ${m.from_pseudonym} · ${new Date(m.created_at).toISOString()}${replyMark}`);
     lines.push("");
     lines.push(m.body);
     lines.push("");
@@ -277,7 +288,7 @@ export function buildMetrics(opts: { windowHours: number }): MetricsReport {
     "SELECT COUNT(*) AS c FROM messages WHERE created_at >= ?",
   ).get(cutoff)?.c ?? 0;
   const notifiedRows = d.query<{ c: number }, []>(
-    "SELECT COUNT(*) AS c FROM chat_members WHERE last_notified_message_id > 0",
+    "SELECT COUNT(*) AS c FROM chat_members WHERE last_notified_message_seq > 0",
   ).get()?.c ?? 0;
   const suppressionRatio = totalMsgs > 0
     ? Math.max(0, 1 - notifiedRows / Math.max(1, totalMsgs))
