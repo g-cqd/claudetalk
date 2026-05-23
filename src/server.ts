@@ -180,7 +180,7 @@ async function main(): Promise<void> {
   }
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.8.1" },
+    { name: "claudetalk", version: "0.8.2" },
     {
       capabilities: {
         tools: {},
@@ -252,10 +252,13 @@ async function main(): Promise<void> {
     try {
       const myChats = listChatsFor(me.pseudonym);
       for (const { chat } of myChats) {
-        const lastSeen = channelCursors.get(chat.id) ?? 0;
         // Initialize the cursor to "current max seq" on first observation
-        // so we don't replay the whole history on startup.
-        if (lastSeen === 0) {
+        // so we don't replay the whole history on startup. Use Map.has()
+        // to distinguish "not initialised" from "initialised to 0"
+        // (which happens when we joined a chat with no messages yet) —
+        // before this fix, a chat that was empty at join time would
+        // re-enter the init branch every tick and never push.
+        if (!channelCursors.has(chat.id)) {
           const maxRow = db()
             .query<{ m: number | null }, [string]>(
               "SELECT MAX(seq) AS m FROM messages WHERE chat_id = ?",
@@ -264,6 +267,7 @@ async function main(): Promise<void> {
           channelCursors.set(chat.id, maxRow?.m ?? 0);
           continue;
         }
+        const lastSeen = channelCursors.get(chat.id)!;
         const newRows = db()
           .query<
             {

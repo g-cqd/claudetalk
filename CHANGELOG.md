@@ -6,6 +6,43 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-05-24
+
+T2 (channel push) + cross-machine end-to-end integration tests
+landed; both caught real bugs that were silently broken.
+
+### Fixed
+
+- **Channel push lost the first message in any chat that was empty
+  at join time.** `channelPoll` used `if (lastSeen === 0)` to detect
+  "needs init", but a chat with zero messages also has cursor 0, so
+  the init branch re-ran every tick. When Alice posted a message
+  later, Bob's cursor would jump straight to the new max — never
+  surfacing the delta. Fix: `Map.has(chat.id)` to distinguish
+  "uninitialised" from "initialised to 0". Caught by the new T2
+  integration test in `test/integration/channel-push.test.ts`.
+- **`RelayClient.pullCatchup` used the `ws://` URL for an HTTP
+  fetch**, throwing `ERR_INVALID_ARG_VALUE` on every (re)connect.
+  Catch-up after offline periods was silently failing. Fix: flip
+  the protocol prefix `ws://` → `http://` (and `wss://` → `https://`)
+  for the HTTP pull endpoint. Caught by the new relay-end-to-end
+  integration test.
+
+### Tests
+
+- **`test/integration/channel-push.test.ts`** — spawns two MCP
+  servers, asserts a chat message sent by Alice produces a
+  `notifications/claude/channel` push on Bob's stdout within
+  6 seconds, with the expected meta shape (chat_id / sender /
+  message_id / seq / sig / kind / members).
+- **`test/integration/relay-end-to-end.test.ts`** — spawns the
+  relay binary on an ephemeral port + two MCP servers with
+  separate `CLAUDETALK_HOME`s, each pointing at the relay. Verifies
+  Alice's chat message arrives in Bob's local SQLite (via the
+  `read` tool) end-to-end through sign → encrypt → publish →
+  relay broadcast → ingest → decrypt → verify sig → insert local.
+- 206 pass / 0 fail (was 204).
+
 ## [0.8.1] — 2026-05-24
 
 ### Fixed — silent data loss during pre-v0.5.0 → v0.5.0+ upgrade

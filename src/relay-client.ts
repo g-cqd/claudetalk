@@ -269,9 +269,15 @@ export class RelayClient {
     }
   }
 
-  /** Catch up missed frames via HTTP before the WS opens. */
+  /** Catch up missed frames via HTTP before the WS opens. The
+   *  pull endpoint is on the same host/port as the WS endpoint but
+   *  speaks HTTP — flip ws://→http:// (and wss://→https://). */
   private async pullCatchup(token: string): Promise<void> {
-    const url = `${this.config.relayUrl.replace(/\/+$/, "")}/pull?since=${this.lastFrameId}`;
+    const httpUrl = this.config.relayUrl
+      .replace(/\/+$/, "")
+      .replace(/^ws:\/\//, "http://")
+      .replace(/^wss:\/\//, "https://");
+    const url = `${httpUrl}/pull?since=${this.lastFrameId}`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
