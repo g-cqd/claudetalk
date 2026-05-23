@@ -6,6 +6,49 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-05-24
+
+Phase K3 + K4 — pseudonym derives from public key (forgery requires
+private-key compromise), signature carried in the channel-push
+payload. Sets the table for N1 (the relay) to verify both ends.
+
+### Breaking — your pseudonym will change on first run under v0.6.1
+
+Pre-v0.6.1 pseudonyms were `f(SHA-256(folder_path))` — anyone who
+knew or guessed your folder path could pose as you. v0.6.1+ pseudonyms
+are `f(SHA-256(public_key))` where the keypair is HKDF-derived from
+`(machine_seed, folder_path)`. Same machine + same folder → same
+pseudonym, every run. Cross-machine same-folder used to collide
+(continuity); now it does not (each machine has a distinct key
+hence a distinct pseudonym for the same folder).
+
+**Migration on first startup:** `src/server.ts:migrateLegacyPseudonym`
+rewrites every row referencing the old path-derived pseudonym to the
+new key-derived one — `instances`, `chat_members`, `messages.from_pseudonym`,
+`message_reactions.reactor`, `message_mentions.target`, `asks.from/to`,
+`personal_nicknames.viewer/target`, `group_nickname_votes.target/voter`,
+`instance_status`, `chat_preferences`. Wrapped in an IMMEDIATE
+transaction; idempotent across runs.
+
+### Added
+
+- **`pseudonymForKey(publicKey, absPath)`** in `src/pseudonym.ts`.
+  Same `<Adjective><Animal>-<3hex>` wire format as the old
+  `pseudonymFor`; the only difference is the hash input.
+- **`meta.sig`** in every `notifications/claude/channel` push.
+  Base64url Ed25519 signature over `messageSigningPayload(...)`.
+  Empty string for legacy unsigned rows (Phase K1 grace).
+- **Test: `pseudonymForKey` determinism + differs from path-derived**
+  in `test/unit/keys.test.ts`.
+
+### What's next (v0.7.0)
+
+Phase N1 — the relay binary + RelayClient. Bundles K4
+verification at the relay (rejects frames whose sig doesn't verify
+against the published pubkey), pseudonym TOFU at the relay (first
+key-claim wins), and N1b later for the claude.ai Connector
+HTTP-MCP path.
+
 ## [0.6.0] — 2026-05-24
 
 Phase K0 + K1: deterministic Ed25519 keypair per (machine, folder)

@@ -9,6 +9,7 @@ import {
   sign,
   verify,
 } from "../../src/keys.ts";
+import { pseudonymFor, pseudonymForKey } from "../../src/pseudonym.ts";
 import { isolatedHome } from "../helpers/tmp.ts";
 
 let home: { home: string; cleanup: () => void };
@@ -80,6 +81,24 @@ test("verify fails with the wrong public key", async () => {
   });
   const sig = await sign(a.privateKey, payload);
   expect(await verify(b.publicKey, payload, sig)).toBe(false);
+});
+
+test("pseudonymForKey is deterministic + differs from path-derived", async () => {
+  const k = await getKeyPairForFolder("/Users/alice/projects/foo");
+  const fromKey = pseudonymForKey(k.publicKey, "/Users/alice/projects/foo");
+  const fromKey2 = pseudonymForKey(k.publicKey, "/Users/alice/projects/foo");
+  expect(fromKey.pseudonym).toBe(fromKey2.pseudonym);
+  // Path-derived and key-derived produce different pseudonyms in
+  // general; they only coincide by random hash collision.
+  const fromPath = pseudonymFor("/Users/alice/projects/foo");
+  if (fromPath.pseudonym === fromKey.pseudonym) {
+    // Unlikely but possible — skip the assertion in that case.
+    console.warn("Hash collision in pseudonym test; skipping diff assertion");
+  } else {
+    expect(fromKey.pseudonym).not.toBe(fromPath.pseudonym);
+  }
+  // The wire format is the same shape: <Adj><Animal>-<3hex>.
+  expect(fromKey.pseudonym).toMatch(/^[A-Z][a-z]+[A-Z][a-z]+-[0-9a-f]{3}$/);
 });
 
 test("machine_seed is persisted to machine.json on backfill", async () => {

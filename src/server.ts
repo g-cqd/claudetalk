@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { pseudonymFor } from "./pseudonym.ts";
+import { pseudonymFor, pseudonymForKey } from "./pseudonym.ts";
 import { resolveProjectDir, ensureRootDir } from "./paths.ts";
 import { getOrCreateMachineId } from "./machine-id.ts";
 import { getKeyPairForFolder } from "./keys.ts";
@@ -20,6 +20,59 @@ import { flushNow, instrumentServer, instrumentTransport, stopAuditFlusher } fro
 
 // stdio MCP: all logging MUST go to stderr.
 const log = (...args: unknown[]) => console.error("[claudetalk]", ...args);
+
+/** Phase K3 transition: if this machine + folder used to have a path-
+ *  derived pseudonym (pre-v0.6.1) and now has a key-derived one, rewrite
+ *  every row referencing the old name to the new name. Idempotent and
+ *  safe to run on every startup — the WHERE clause is `pseudonym = old`
+ *  so once the migration ran (and the old pseudonym no longer exists in
+ *  the DB) subsequent runs are no-ops.
+ *
+ *  Tables touched (every column that ever stores a pseudonym):
+ *    instances.pseudonym
+ *    chat_members.pseudonym
+ *    messages.from_pseudonym
+ *    message_reactions.reactor
+ *    message_mentions.target
+ *    asks.from_pseudonym, asks.to_pseudonym
+ *    personal_nicknames.viewer, personal_nicknames.target
+ *    group_nickname_votes.target, group_nickname_votes.voter
+ *    instance_status.pseudonym
+ *    chat_preferences.viewer
+ */
+function migrateLegacyPseudonym(oldName: string, newName: string): void {
+  const d = db();
+  try {
+    d.transaction(() => {
+      // If the new pseudonym already exists in instances, the old one is
+      // stale (from a stale earlier session) — drop it to avoid PK
+      // collision on the UPDATE.
+      const collides = d
+        .query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM instances WHERE pseudonym = ?")
+        .get(newName);
+      if ((collides?.c ?? 0) > 0) {
+        d.run("DELETE FROM instances WHERE pseudonym = ?", [oldName]);
+      } else {
+        d.run("UPDATE instances SET pseudonym = ? WHERE pseudonym = ?", [newName, oldName]);
+      }
+      d.run("UPDATE chat_members SET pseudonym = ? WHERE pseudonym = ?", [newName, oldName]);
+      d.run("UPDATE messages SET from_pseudonym = ? WHERE from_pseudonym = ?", [newName, oldName]);
+      d.run("UPDATE message_reactions SET reactor = ? WHERE reactor = ?", [newName, oldName]);
+      d.run("UPDATE message_mentions SET target = ? WHERE target = ?", [newName, oldName]);
+      d.run("UPDATE asks SET from_pseudonym = ? WHERE from_pseudonym = ?", [newName, oldName]);
+      d.run("UPDATE asks SET to_pseudonym = ? WHERE to_pseudonym = ?", [newName, oldName]);
+      d.run("UPDATE personal_nicknames SET viewer = ? WHERE viewer = ?", [newName, oldName]);
+      d.run("UPDATE personal_nicknames SET target = ? WHERE target = ?", [newName, oldName]);
+      d.run("UPDATE group_nickname_votes SET target = ? WHERE target = ?", [newName, oldName]);
+      d.run("UPDATE group_nickname_votes SET voter = ? WHERE voter = ?", [newName, oldName]);
+      d.run("UPDATE instance_status SET pseudonym = ? WHERE pseudonym = ?", [newName, oldName]);
+      d.run("UPDATE chat_preferences SET viewer = ? WHERE viewer = ?", [newName, oldName]);
+    }).immediate();
+    log(`migrated legacy pseudonym '${oldName}' → '${newName}' (Phase K3 transition)`);
+  } catch (e) {
+    log("legacy-pseudonym migration failed (continuing under new identity):", e);
+  }
+}
 
 // Crash forensics: when the server dies unexpectedly, append a stack trace
 // to ~/.claudetalk/crash.log BEFORE the process exits. Claude Code does not
@@ -83,13 +136,26 @@ peers when relevant via 'chat'.`;
 async function main(): Promise<void> {
   ensureRootDir();
   const projectDir = resolveProjectDir();
-  const me = pseudonymFor(projectDir);
-  installCrashHandlers(me.pseudonym);
+  // Bootstrap-only pseudonym so crash handlers + db init can log
+  // something sensible. Replaced below with the key-derived identity
+  // once the Ed25519 keypair is ready.
+  const bootstrap = pseudonymFor(projectDir);
+  installCrashHandlers(bootstrap.pseudonym);
   db(); // open + migrate
   const machineId = getOrCreateMachineId();
   // Phase K0: derive the deterministic Ed25519 keypair for this folder.
   // Same folder + same machine ⇒ same keypair, every run.
-  me.keyPair = await getKeyPairForFolder(me.path);
+  const keyPair = await getKeyPairForFolder(projectDir);
+  // Phase K3 (v0.6.1+): the pseudonym IS the key fingerprint. Forgery
+  // requires compromising the private key, not just guessing the folder
+  // path. Pre-v0.6.1 sessions had a path-derived pseudonym for this
+  // (machine, folder); migrate any DB rows referencing the old name to
+  // the new one so existing chats / cursors keep working.
+  const me = pseudonymForKey(keyPair.publicKey, projectDir);
+  me.keyPair = keyPair;
+  if (bootstrap.pseudonym !== me.pseudonym) {
+    migrateLegacyPseudonym(bootstrap.pseudonym, me.pseudonym);
+  }
   upsertInstance(
     me.pseudonym,
     me.path,
@@ -106,7 +172,7 @@ async function main(): Promise<void> {
   }
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.6.0" },
+    { name: "claudetalk", version: "0.6.1" },
     {
       capabilities: {
         tools: {},
@@ -198,10 +264,11 @@ async function main(): Promise<void> {
               from_pseudonym: string;
               body: string;
               created_at: number;
+              signature: string | null;
             },
             [string, number, string]
           >(
-            `SELECT id, seq, from_pseudonym, body, created_at
+            `SELECT id, seq, from_pseudonym, body, created_at, signature
              FROM messages
              WHERE chat_id = ? AND seq > ? AND from_pseudonym != ?
              ORDER BY seq ASC LIMIT 20`,
@@ -212,6 +279,12 @@ async function main(): Promise<void> {
             // Suppress the row's members lookup for direct chats (the other
             // member IS the sender). For groups, members list is useful.
             const isGroup = chat.kind === "group";
+            // K4 (v0.6.1+): include the Ed25519 signature in the push so
+            // a receiving Claude (when the relay forwards a frame from
+            // another machine) can verify against the author's published
+            // pubkey. Pre-K1 rows have null signature; we pass through as
+            // an empty string the receiver can recognise as "legacy
+            // unsigned, do not trust the body as authenticated".
             await server.server.notification({
               method: "notifications/claude/channel",
               params: {
@@ -222,6 +295,7 @@ async function main(): Promise<void> {
                   message_id: row.id,
                   seq: String(row.seq),
                   ts: String(row.created_at),
+                  sig: row.signature ?? "",
                   kind: isGroup ? "group" : "direct",
                   ...(isGroup && chat.title ? { title: chat.title } : {}),
                   ...(isGroup
