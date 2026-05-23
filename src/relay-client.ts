@@ -29,6 +29,7 @@ import {
 } from "./relay-protocol.ts";
 import { mintToken, namespaceForSecret } from "./relay-auth.ts";
 import { messageSigningPayload, verify } from "./keys.ts";
+import { decryptBody, encryptBody, isEncrypted } from "./relay-crypto.ts";
 import {
   addChatMember,
   db,
@@ -84,7 +85,13 @@ export class RelayClient {
   }
 
   /** Publish a chat message frame. Resolves with the relay-assigned
-   *  frame_id, or null if the client is permanently closed. */
+   *  frame_id, or null if the client is permanently closed. The body
+   *  is AES-GCM encrypted with a key derived from the shared secret
+   *  before send so the relay (and anyone passively observing) holds
+   *  only ciphertext. The signature, however, is computed over the
+   *  PLAINTEXT body — the relay verifies the sig against the
+   *  publicly-known plaintext format and the relay-side namespace
+   *  binding ensures only same-secret peers can decrypt. */
   async publishMessage(args: {
     messageId: string;
     chatId: string;
@@ -93,6 +100,7 @@ export class RelayClient {
     signature: string;
   }): Promise<number | null> {
     if (this.closed) return null;
+    const encryptedBody = await encryptBody(this.config.sharedSecret, args.body);
     const frame: ClientFrame = {
       v: PROTOCOL_VERSION,
       kind: "msg",
@@ -100,7 +108,7 @@ export class RelayClient {
       public_key: this.me.keyPair!.publicKey,
       target: args.chatId,
       ref_id: args.messageId,
-      body: args.body,
+      body: encryptedBody,
       ts: args.createdAt,
       sig: args.signature,
     };
@@ -279,16 +287,29 @@ export class RelayClient {
     }
   }
 
-  /** Verify a received frame's signature and persist it locally. */
+  /** Verify a received frame's signature and persist it locally.
+   *  v0.8.0+: bodies are AES-GCM encrypted on the wire ("ct1:" prefix);
+   *  decrypt first, then verify the sig over the recovered plaintext. */
   private async ingestFrame(frame: ClientFrame): Promise<void> {
-    // Verify signature against the sender's pubkey (TOFU: pubkey is
-    // carried in the frame; relay enforces consistency across frames).
     if (frame.kind !== "msg") return; // others not implemented in v0.7.0
+    let plaintextBody: string;
+    if (isEncrypted(frame.body)) {
+      try {
+        plaintextBody = await decryptBody(this.config.sharedSecret, frame.body);
+      } catch {
+        console.error(
+          `[claudetalk.relay-client] dropping frame ${frame.ref_id}: decrypt failed (wrong key?)`,
+        );
+        return;
+      }
+    } else {
+      plaintextBody = frame.body;
+    }
     const payload = messageSigningPayload({
       messageId: frame.ref_id,
       chatId: frame.target,
       authorPseudonym: frame.sender,
-      body: frame.body,
+      body: plaintextBody,
       createdAt: frame.ts,
     });
     const ok = await verify(frame.public_key, payload, frame.sig);
@@ -318,13 +339,13 @@ export class RelayClient {
     insertMessage(
       frame.target,
       frame.sender,
-      frame.body,
-      null, // parent_id — Phase N2 will add threading propagation
+      plaintextBody,
+      null, // parent_id — relay protocol does not carry threading yet
       frame.sig,
       frame.ref_id,
       frame.ts,
     );
-    recordMessageMentions(frame.ref_id, frame.body, frame.sender);
+    recordMessageMentions(frame.ref_id, plaintextBody, frame.sender);
   }
 }
 

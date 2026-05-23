@@ -6,6 +6,65 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-24
+
+Phase N2 — end-to-end body encryption. The relay no longer sees
+plaintext message bodies; it holds only ciphertext + IV. Closes the
+last documented gap in the network threat model.
+
+### Added
+
+- **`src/relay-crypto.ts`** — AES-GCM-256 encrypt / decrypt. Key
+  derived once per process via HKDF-SHA256 from the shared secret
+  (salt = `"claudetalk:body-encryption:v1"`). Every machine in the
+  same namespace derives the same key; the relay derives nothing.
+- **Wire format**: encrypted bodies carry a `"ct1:"` prefix followed
+  by `base64url(iv || ciphertext_plus_tag)`. 12-byte random IV per
+  message (AES-GCM nonce). Plaintext bodies (legacy / pre-N2 traffic
+  from a v0.7.0 sender to a v0.8.0 receiver) pass through unchanged
+  and are detected by the missing prefix.
+- **`RelayClient.publishMessage` encrypts the body** before sending
+  the `ClientFrame`. **`ingestFrame` decrypts then verifies the
+  Ed25519 signature against the recovered plaintext**, so the
+  signature trust chain still authenticates the BODY (not just the
+  sender identity).
+- **Relay-side**: `relay/src/index.ts` skips signature verification
+  when the body is encrypted (it has no way to reconstruct the
+  signed bytes). HMAC bearer token + pubkey TOFU still authenticate
+  the SENDER; only the relay-side body-integrity check is dropped.
+  Recipients re-verify the sig over the decrypted plaintext.
+- **`test/unit/relay-crypto.test.ts`** (6) — round trip, random-IV
+  uniqueness, wrong-secret rejection, prefix detection, tampered
+  ciphertext detection (auth-tag failure).
+
+### Security implications
+
+| Threat | v0.7.0 | v0.8.0 |
+|---|---|---|
+| Relay operator reads message bodies | YES (plaintext) | NO (ciphertext only) |
+| Passive on-path observer (TLS-terminated) reads bodies | YES | NO |
+| Attacker with shared secret can post AS another pseudonym | NO (sig + TOFU) | NO (unchanged) |
+| Attacker with shared secret can read bodies | YES | YES (same group) |
+
+The shared secret remains the single namespace-wide authority. To
+revoke a former machine: rotate the secret on every remaining
+machine; old messages remain decryptable by anyone who held the old
+key (recoverable from network captures), so consider the rotation
+forward-only.
+
+### Tests
+
+- 203 pass / 0 fail (was 197).
+
+### What's next
+
+- **N1b** — HTTP-MCP endpoint on the relay so `claude.ai`
+  Connectors can join. Requires resolving the 5 open questions in
+  `docs/distributed-online-design.md`.
+- **N3** — onboarding UX, relay `/metrics`, per-namespace rate
+  limits, optional GitHub OAuth tier, deployment IaC (Fly.io
+  `fly.toml`, `Dockerfile`).
+
 ## [0.7.0] — 2026-05-24
 
 Phase N1 — the relay binary + RelayClient. Cross-machine ClaudeTalk

@@ -305,18 +305,29 @@ const server = Bun.serve<WsData>({
           message: "pseudonym claimed a different public_key previously",
         });
       }
-      // Verify the Ed25519 signature.
-      const payload = messageSigningPayload({
-        messageId: frame.ref_id,
-        chatId: frame.target,
-        authorPseudonym: frame.sender,
-        body: frame.body,
-        createdAt: frame.ts,
-      });
+      // Signature verification: when the body is encrypted ("ct1:"
+      // prefix, since v0.8.0 / Phase N2) the relay holds only
+      // ciphertext and cannot reconstruct the bytes the sender
+      // signed — those are over the plaintext body. In that case
+      // we skip the sig check at the relay; recipients verify after
+      // decrypt. The HMAC bearer token (namespace membership) +
+      // pubkey TOFU still authenticate the SENDER; only the BODY
+      // is no longer relay-attestable. For plaintext bodies (v0.7.0
+      // back-compat) we still verify.
+      const bodyIsEncrypted = frame.body.startsWith("ct1:");
       void (async () => {
-        const ok = await verify(frame.public_key, payload, frame.sig);
-        if (!ok) {
-          return send(ws, { v: PROTOCOL_VERSION, control: "error", code: "bad_sig" });
+        if (!bodyIsEncrypted) {
+          const payload = messageSigningPayload({
+            messageId: frame.ref_id,
+            chatId: frame.target,
+            authorPseudonym: frame.sender,
+            body: frame.body,
+            createdAt: frame.ts,
+          });
+          const ok = await verify(frame.public_key, payload, frame.sig);
+          if (!ok) {
+            return send(ws, { v: PROTOCOL_VERSION, control: "error", code: "bad_sig" });
+          }
         }
         const relayTs = Date.now();
         const frameId = insertFrame(ws.data.namespace, frame, relayTs);
