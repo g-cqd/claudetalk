@@ -33,6 +33,7 @@ import {
 } from "../../src/relay-protocol.ts";
 import { verifyToken } from "../../src/relay-auth.ts";
 import { messageSigningPayload, verify } from "../../src/keys.ts";
+import { migrate } from "../../src/migrations.ts";
 import { buildHttpMcpHandler } from "./mcp-http.ts";
 
 const PORT = Number(process.env.RELAY_PORT ?? 7878);
@@ -62,6 +63,7 @@ const log = (...args: unknown[]) => console.log("[relay]", ...args);
 const db = new Database(DB_PATH, { create: true });
 db.exec("PRAGMA journal_mode = WAL;");
 db.exec("PRAGMA busy_timeout = 1000;");
+// Relay-specific tables (frames log, pubkey TOFU).
 db.exec(`
   CREATE TABLE IF NOT EXISTS frames (
     frame_id  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,6 +88,17 @@ db.exec(`
     PRIMARY KEY (namespace, pseudonym)
   );
 `);
+// Phase N1b-tools-2: also run the full ClaudeTalk schema so the relay
+// can materialise inbound frames as proper message/chat rows. Lets
+// HTTP MCP tools use the same primitives the stdio MCP does (asks,
+// reactions, mute, nicknames, threading).
+//
+// NOTE: src/migrations.ts uses PRAGMA user_version + BEGIN IMMEDIATE
+// to be safe under concurrency. It runs against any sqlite Database,
+// not just the local MCP one. Our relay DB will end up with BOTH the
+// relay-specific tables (above) AND the full ClaudeTalk schema. They
+// don't conflict — no name overlap.
+migrate(db);
 
 interface FrameRow {
   frame_id: number;
@@ -118,7 +131,72 @@ function insertFrame(ns: string, frame: ClientFrame, relayTs: number): number {
       relayTs,
     ],
   );
+  // Phase N1b-tools-2: materialise the frame as a row in the
+  // ClaudeTalk schema's `messages` table so future schema-aware HTTP
+  // tools can read it as a proper chat row. Bodies are stored as the
+  // relay holds them (ct1:-encrypted in v0.8+; the relay deliberately
+  // never decrypts to preserve the N2 trust property).
+  if (frame.kind === "msg") {
+    try {
+      materialiseMessageFrame(frame);
+    } catch (e) {
+      // Materialisation failures shouldn't kill the relay; log + move on.
+      // The frame is still in `frames` for catch-up.
+      log("materialise failed", (e as Error).message);
+    }
+  }
   return Number(r.lastInsertRowid);
+}
+
+/** Insert an inbound frame into the schema-shaped messages/chats/
+ *  chat_members tables. Idempotent (re-running with the same ref_id
+ *  is a no-op). Uses INSERT OR IGNORE so concurrent inserts of the
+ *  same UUID can't collide. */
+function materialiseMessageFrame(frame: ClientFrame): void {
+  // Ensure the chat exists (group: or direct: prefix is enough).
+  const kind = frame.target.startsWith("group:") ? "group" : "direct";
+  db.run(
+    `INSERT OR IGNORE INTO chats (id, kind, title, created_at) VALUES (?, ?, NULL, ?)`,
+    [frame.target, kind, frame.ts],
+  );
+  // Ensure the sender is a member.
+  db.run(
+    `INSERT OR IGNORE INTO chat_members
+       (chat_id, pseudonym, joined_at, last_read_message_seq, last_notified_message_seq)
+     VALUES (?, ?, ?, 0, 0)`,
+    [frame.target, frame.sender, frame.ts],
+  );
+  // For direct chats, also add the other peer (extracted from the id).
+  if (kind === "direct") {
+    const ids = frame.target.replace(/^direct:/, "").split("|");
+    for (const id of ids) {
+      if (id !== frame.sender) {
+        db.run(
+          `INSERT OR IGNORE INTO chat_members
+             (chat_id, pseudonym, joined_at, last_read_message_seq, last_notified_message_seq)
+           VALUES (?, ?, ?, 0, 0)`,
+          [frame.target, id, frame.ts],
+        );
+      }
+    }
+  }
+  // Allocate a seq via the message_seq counter (created by migration v3).
+  // If the UUID already exists, skip the insert + don't bump the counter.
+  const existing = db
+    .query<{ id: string }, [string]>("SELECT id FROM messages WHERE id = ?")
+    .get(frame.ref_id);
+  if (existing) return;
+  db.exec("UPDATE message_seq SET next = next + 1 WHERE id = 1");
+  const seqRow = db
+    .query<{ next: number }, []>("SELECT next - 1 AS next FROM message_seq WHERE id = 1")
+    .get();
+  const seq = seqRow?.next ?? 1;
+  db.run(
+    `INSERT INTO messages
+       (id, seq, chat_id, from_pseudonym, body, created_at, parent_id, signature)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+    [frame.ref_id, seq, frame.target, frame.sender, frame.body, frame.ts, frame.sig],
+  );
 }
 
 function pullSince(ns: string, since: number): RelayFrame[] {

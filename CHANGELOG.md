@@ -6,6 +6,64 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.2] — 2026-05-24
+
+Phase N1b-tools-2 foundation — the relay now runs the **full
+ClaudeTalk schema** alongside its own `frames`/`pubkey_claims`
+tables, and materialises every inbound message frame into the
+schema-shaped `messages`/`chats`/`chat_members` rows. Sets up
+future iterations to plug richer HTTP-MCP tools (ask/answer,
+reactions, mute, status, search, nicknames) that operate on the
+proper schema instead of reaching into the raw frame log.
+
+### Added
+
+- **`relay/src/index.ts`** imports + calls `migrate(db)` from
+  `src/migrations.ts` at startup. Creates `messages`, `chats`,
+  `chat_members`, `asks`, `personal_nicknames`,
+  `group_nickname_votes`, `tool_calls`, `message_reactions`,
+  `message_mentions`, `instance_status`, `chat_preferences`,
+  `dashboard_version`, `message_seq`, and all triggers. No
+  conflicts with the pre-existing relay tables (different names).
+- **`materialiseMessageFrame(frame)`** — called from
+  `insertFrame` whenever a `kind: "msg"` frame arrives. Inserts
+  rows into `chats` (kind detected from `group:`/`direct:`
+  prefix), `chat_members` (sender + the other peer for direct
+  chats), and `messages` (with allocated seq, preserved UUID id,
+  encrypted body). Idempotent via `INSERT OR IGNORE` and a
+  pre-check on `messages.id` so duplicate frames from rebroadcast
+  loops don't bump the seq counter or fail.
+
+### Privacy preserved
+
+The relay still **does not decrypt** message bodies. The
+materialised `messages` rows store `ct1:`-encrypted bodies
+verbatim. Recipients (local Claude Code via WS, or HTTP MCP
+clients with the shared secret) decrypt locally on read.
+Anything the relay materialises is observable by an attacker
+who holds the relay's disk, BUT no more so than the existing
+frames log already exposed — same data, two shapes.
+
+### Tests
+
+- **New: "Relay materialises inbound frames into the ClaudeTalk
+  schema"** asserts `chats` / `messages` / `chat_members` rows
+  appear after a publish via the HTTP MCP, with the expected
+  body shape (`ct1:` prefix) and non-null signature.
+- 225 pass / 0 fail (was 224).
+
+### Still open
+
+- **N1b-tools-3**: plug the existing tool registrations
+  (`src/tools.ts`, `src/chat-tools.ts`, etc.) into the HTTP MCP
+  path. Blocker: those modules read from `src/db.ts`'s
+  singleton; the relay opens its own `Database` instance. Either
+  refactor `src/db.ts` to support injected connections, or have
+  the relay process `CLAUDETALK_HOME` itself at the relay
+  db's parent. Multi-session refactor.
+- **N1b-oauth**: same as before — blocked on live Connector
+  probing.
+
 ## [0.10.1] — 2026-05-24
 
 Phase N1b expansion — `discover`, `read`, `publish` tools on the

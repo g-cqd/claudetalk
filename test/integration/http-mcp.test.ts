@@ -201,6 +201,43 @@ test(
   20_000,
 );
 
+test("Relay materialises inbound frames into the ClaudeTalk schema (messages/chats)", async () => {
+  // Open the relay's SQLite directly (read-only via a separate
+  // connection) and confirm messages/chats rows exist after the
+  // earlier publish.
+  const { Database } = await import("bun:sqlite");
+  const { join } = await import("node:path");
+  const relayDb = new Database(join(RELAY_DIR, "relay.db"));
+  try {
+    const chats = relayDb
+      .query<{ id: string; kind: string }, []>(
+        "SELECT id, kind FROM chats WHERE id = 'group:httpmcp-smoke'",
+      )
+      .all();
+    expect(chats.length).toBe(1);
+    expect(chats[0]!.kind).toBe("group");
+
+    const msgs = relayDb
+      .query<{ id: string; seq: number; body: string; signature: string | null }, []>(
+        "SELECT id, seq, body, signature FROM messages WHERE chat_id = 'group:httpmcp-smoke'",
+      )
+      .all();
+    expect(msgs.length).toBeGreaterThan(0);
+    // Body is encrypted at rest — relay never decrypts (N2 trust).
+    expect(msgs[0]!.body).toMatch(/^ct1:/);
+    expect(msgs[0]!.signature).not.toBeNull();
+
+    const members = relayDb
+      .query<{ pseudonym: string }, []>(
+        "SELECT pseudonym FROM chat_members WHERE chat_id = 'group:httpmcp-smoke'",
+      )
+      .all();
+    expect(members.length).toBeGreaterThan(0);
+  } finally {
+    relayDb.close();
+  }
+});
+
 test(
   "HTTP MCP: publish accepts a client-signed frame",
   async () => {
