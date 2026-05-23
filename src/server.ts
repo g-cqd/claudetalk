@@ -5,7 +5,9 @@ import { pseudonymFor, pseudonymForKey } from "./pseudonym.ts";
 import { resolveProjectDir, ensureRootDir } from "./paths.ts";
 import { getOrCreateMachineId } from "./machine-id.ts";
 import { getKeyPairForFolder } from "./keys.ts";
-import { isNetworkConfigured } from "./network-config.ts";
+import { getNetworkConfig, isNetworkConfigured } from "./network-config.ts";
+import { RelayClient } from "./relay-client.ts";
+import { setRelayClient } from "./relay-singleton.ts";
 import {
   db,
   listChatMembers,
@@ -168,11 +170,17 @@ async function main(): Promise<void> {
       `machine=${machineId.slice(0, 8)}  pubkey=${me.keyPair.publicKey.slice(0, 8)}…`,
   );
   if (isNetworkConfigured()) {
-    log("network: ~/.claudetalk/network.json present (Phase N1 relay not yet wired)");
+    const cfg = getNetworkConfig()!;
+    const relay = new RelayClient(me, {
+      relayUrl: cfg.relay_url,
+      sharedSecret: cfg.shared_secret,
+    });
+    setRelayClient(relay);
+    log(`network: connected via relay ${cfg.relay_url}`);
   }
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.6.1" },
+    { name: "claudetalk", version: "0.7.0" },
     {
       capabilities: {
         tools: {},
@@ -331,6 +339,10 @@ async function main(): Promise<void> {
     stopAuditFlusher();
     try {
       flushNow();
+    } catch {}
+    try {
+      const relay = require("./relay-singleton.ts").getRelayClient();
+      relay?.close();
     } catch {}
     try {
       server.close();

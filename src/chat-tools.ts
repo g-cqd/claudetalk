@@ -26,6 +26,7 @@ import { fmtChat, fmtMessageList } from "./format.ts";
 import { recordMessageMentions } from "./mentions.ts";
 import { ErrorCode, toolError, toolText } from "./errors.ts";
 import { messageSigningPayload, sign } from "./keys.ts";
+import { getRelayClient } from "./relay-singleton.ts";
 
 /** Per-message body cap. 64 KiB is comfortably above any reasonable inline
  *  Claude exchange while preventing single-payload DoS / unbounded SQLite
@@ -83,6 +84,21 @@ async function postAndRead(
       createdAt,
     );
     recordMessageMentions(inserted.id, message, meIdentity.pseudonym);
+    // Phase N1: also publish to the relay (if configured) so other
+    // machines in the same namespace see this message. Fire-and-forget;
+    // local SQLite write above is authoritative.
+    const relay = getRelayClient();
+    if (relay && signature !== null) {
+      void relay
+        .publishMessage({
+          messageId,
+          chatId,
+          body: message,
+          createdAt,
+          signature,
+        })
+        .catch(() => {});
+    }
   }
   const recent = listMessages(chatId, 0, 10_000).slice(-historyLimit);
   if (recent.length > 0) markChatRead(chatId, meIdentity.pseudonym, recent[recent.length - 1]!.seq);

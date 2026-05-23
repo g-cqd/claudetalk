@@ -17,5 +17,5 @@
     "exactOptionalPropertyTypes": false,
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "bin/**/*.ts", "hooks/**/*.ts"]
+  "include": ["src/**/*.ts", "bin/**/*.ts", "hooks/**/*.ts", "relay/src/**/*.ts"]
 }

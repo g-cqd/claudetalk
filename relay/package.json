@@ -1,0 +1,11 @@
+{
+  "name": "claudetalk-relay",
+  "version": "0.7.0",
+  "description": "ClaudeTalk cross-machine relay. Self-hosted Bun WebSocket server.",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts"
+  },
+  "private": true
+}

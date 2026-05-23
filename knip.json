@@ -3,14 +3,16 @@
   "entry": [
     "hooks/check-inbox.ts",
     "scripts/**/*.ts",
-    "test/**/*.test.ts"
+    "test/**/*.test.ts",
+    "relay/src/index.ts"
   ],
   "project": [
     "src/**/*.ts",
     "bin/**/*.ts",
     "hooks/**/*.ts",
     "scripts/**/*.ts",
-    "test/**/*.ts"
+    "test/**/*.ts",
+    "relay/src/**/*.ts"
   ],
   "ignoreDependencies": [
     "@stryker-mutator/command-runner"

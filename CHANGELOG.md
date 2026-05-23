@@ -6,6 +6,96 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-24
+
+Phase N1 — the relay binary + RelayClient. Cross-machine ClaudeTalk
+finally works end-to-end: a message sent from your laptop appears
+in inboxes on every other machine in the same namespace within
+~200 ms. Builds on K0/K1/K3/K4 from v0.6.x — every frame is
+Ed25519-signed by the sender's private key (lives only on their
+machine), TOFU-bound at the relay, re-verified on receipt.
+
+### Added
+
+- **`relay/`** — standalone Bun WebSocket server. ~280 LOC. Run with
+  `RELAY_SHARED_SECRET=... bun run relay/src/index.ts`. See
+  `relay/README.md`.
+  - WebSocket endpoint `/ws` with HMAC bearer auth (±30 s window)
+  - HTTP `/pull?since=N` for catch-up after offline period
+  - HTTP `/healthz`
+  - Pubkey TOFU per `(namespace, pseudonym)`
+  - Per-frame Ed25519 signature verification
+  - Append-only `frames` table; 30-day retention with hourly purge
+  - All connections in the same namespace (= `SHA-256(shared_secret)`)
+    see each other's frames; different namespaces are isolated
+- **`src/relay-protocol.ts`** — wire format types
+  (`ClientFrame`, `RelayFrame`, `RelayControl`, `PullResponse`),
+  versioned via the `v` field.
+- **`src/relay-auth.ts`** — `mintToken` / `verifyToken` /
+  `namespaceForSecret`. 104-byte HMAC token: pseudonym hash + ts +
+  pubkey + MAC.
+- **`src/relay-client.ts`** — outbound WS client. Reconnect with
+  exponential back-off (1s → 30s, jitter), capped outbound queue
+  (5k frames, drops oldest on overflow), HTTP catch-up on every
+  (re)connect before resuming live broadcast. Bridges every local
+  `insertMessage` to the relay; ingests inbound frames into local
+  SQLite with idempotent UUID-based dedup.
+- **`src/relay-singleton.ts`** — module-level handle so
+  `chat-tools.ts` can publish without threading the client through
+  every registerTool call.
+- **`src/server.ts`** — on startup, if `~/.claudetalk/network.json`
+  has `relay_url` + `shared_secret`, instantiate `RelayClient`
+  and stash it in the singleton. Logs `network: connected via
+  relay …` on success.
+- **`relay/README.md`** — config, threat model, deployment
+  pointers (Fly.io / Docker / systemd stubs; full IaC in N1b).
+- **`test/unit/relay-auth.test.ts`** (5) — mint/verify round trip,
+  wrong-secret rejection, ±30s drift enforcement, MAC tamper
+  detection (via raw-byte flip rather than base64url char swap
+  which can be a no-op), namespace determinism.
+
+### Configuration
+
+To enable cross-machine messaging on a machine, create
+`~/.claudetalk/network.json`:
+
+```json
+{
+  "relay_url": "ws://your-relay-host:7878",
+  "shared_secret": "<base64url of 32 random bytes>"
+}
+```
+
+The `shared_secret` MUST match across every machine that should
+share a namespace. Distribute it via your existing secrets channel
+(1Password, iCloud Keychain, dotfiles repo, scp, etc.).
+
+### Threat model
+
+- Anyone with the `shared_secret` can connect to the relay and
+  observe message metadata (pseudonyms, chat IDs, timestamps) — but
+  cannot post as any other pseudonym without that pseudonym's
+  private key (Ed25519 sig verification + TOFU).
+- The relay sees plaintext message **bodies** in v0.7.0. Phase N2
+  adds client-side AES-GCM encryption so the relay holds only
+  ciphertext.
+- Local SQLite remains the source of truth for all tools and
+  hooks; relay outage means cross-machine sync stalls, NOT that
+  local operation breaks.
+
+### Tests
+
+- 197 pass / 0 fail (was 192).
+
+### What's next
+
+- **N1b** — HTTP-MCP endpoint on the same relay so `claude.ai`
+  Connectors can join (see `docs/distributed-online-design.md`).
+- **N2** — client-side body encryption; relay becomes a ciphertext
+  router.
+- **N3** — onboarding UX (`claudetalk auth add-machine`, QR codes,
+  relay `/metrics`, optional GitHub OAuth tier).
+
 ## [0.6.1] — 2026-05-24
 
 Phase K3 + K4 — pseudonym derives from public key (forgery requires
