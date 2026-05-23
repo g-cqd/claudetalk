@@ -13,7 +13,8 @@ import {
   db,
   listChatMembers,
   listInstances,
-  listMessages,
+  listRecentMessages,
+  unreadByMemberForChat,
 } from "../db.ts";
 import type {
   AskRow,
@@ -90,17 +91,12 @@ export function snapshot(
 
   const chats: ChatSummary[] = chatRows.map((chat) => {
     const members = listChatMembers(chat.id);
-    const recent = listMessages(chat.id, 0, 10_000).slice(-recentMessages);
-    const unread_per_member: Record<string, number> = {};
-    for (const m of members) {
-      const row = d
-        .query<{ c: number }, [string, number, string]>(
-          `SELECT COUNT(*) AS c FROM messages
-           WHERE chat_id = ? AND seq > ? AND from_pseudonym != ?`,
-        )
-        .get(chat.id, m.last_read_message_seq, m.pseudonym);
-      unread_per_member[m.pseudonym] = row?.c ?? 0;
-    }
+    // v0.5.3 perf: dedicated SELECT ... ORDER BY seq DESC LIMIT N instead
+    // of pulling 10k rows then slicing the tail.
+    const recent = listRecentMessages(chat.id, recentMessages);
+    // v0.5.3 perf: single GROUP BY query for all members of this chat
+    // instead of one COUNT(*) per member.
+    const unread_per_member = unreadByMemberForChat(chat.id);
     return {
       chat,
       members: members.map((m) => ({

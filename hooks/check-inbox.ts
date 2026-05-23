@@ -28,10 +28,21 @@ import {
   mentionsForTargetSince,
 } from "../src/mentions.ts";
 
+/** Cap on bytes read from the hook's stdin. Claude Code's hook payload is
+ *  bounded (a few KB max in practice). If something is piping multi-MB
+ *  into our hook, that's a bug or an attack — refuse rather than allocate. */
+const STDIN_MAX_BYTES = 256 * 1024;
+
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";
   const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  let total = 0;
+  for await (const chunk of process.stdin) {
+    const buf = chunk as Buffer;
+    total += buf.length;
+    if (total > STDIN_MAX_BYTES) return ""; // silently abort; hook is best-effort
+    chunks.push(buf);
+  }
   return Buffer.concat(chunks).toString("utf8");
 }
 

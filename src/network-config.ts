@@ -8,8 +8,9 @@
  * the file-write contract is stable before any networking code starts
  * depending on it.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { readJsonBounded } from "./safe-json.ts";
 
 export interface NetworkConfig {
   /** wss:// URL of the relay this machine connects to. */
@@ -38,21 +39,18 @@ function rootDir(): string {
 export function getNetworkConfig(): NetworkConfig | null {
   const path = configPath(rootDir());
   if (!existsSync(path)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<NetworkConfig>;
-    if (typeof parsed.relay_url !== "string" || parsed.relay_url.length === 0) return null;
-    if (typeof parsed.shared_secret !== "string" || parsed.shared_secret.length === 0) {
-      return null;
-    }
-    return {
-      relay_url: parsed.relay_url,
-      shared_secret: parsed.shared_secret,
-      encrypt: parsed.encrypt ?? false,
-      ...(parsed.display_name ? { display_name: parsed.display_name } : {}),
-    };
-  } catch {
+  const parsed = readJsonBounded<Partial<NetworkConfig>>(path);
+  if (parsed === null) return null;
+  if (typeof parsed.relay_url !== "string" || parsed.relay_url.length === 0) return null;
+  if (typeof parsed.shared_secret !== "string" || parsed.shared_secret.length === 0) {
     return null;
   }
+  return {
+    relay_url: parsed.relay_url,
+    shared_secret: parsed.shared_secret,
+    encrypt: parsed.encrypt ?? false,
+    ...(parsed.display_name ? { display_name: parsed.display_name } : {}),
+  };
 }
 
 /** Pure check used in startup logging + doctor without parsing further. */

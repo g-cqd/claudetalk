@@ -15,7 +15,7 @@ import {
 } from "./db.ts";
 import { registerTools } from "./tools.ts";
 import { fmtUnread } from "./format.ts";
-import { flushNow, instrumentServer, instrumentTransport } from "./audit-log.ts";
+import { flushNow, instrumentServer, instrumentTransport, stopAuditFlusher } from "./audit-log.ts";
 
 // stdio MCP: all logging MUST go to stderr.
 const log = (...args: unknown[]) => console.error("[claudetalk]", ...args);
@@ -32,7 +32,9 @@ function installCrashHandlers(pseudonym: string): void {
       const stack =
         err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
       const line = `${new Date().toISOString()}  ${pseudonym}  pid=${process.pid}  ${kind}\n${stack}\n---\n`;
-      require("node:fs").appendFileSync(path, line, { mode: 0o644 });
+      // mode 0o600: stack traces can leak in-flight payload fragments
+      // and source paths; keep the crash log owner-only.
+      require("node:fs").appendFileSync(path, line, { mode: 0o600 });
     } catch {
       // We're dying anyway; best-effort.
     }
@@ -87,7 +89,7 @@ async function main(): Promise<void> {
   }
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.5.2" },
+    { name: "claudetalk", version: "0.5.3" },
     {
       capabilities: {
         tools: {},
@@ -233,6 +235,9 @@ async function main(): Promise<void> {
     clearInterval(heartbeat);
     clearInterval(poll);
     clearInterval(channelPoll);
+    // Stop the audit log's own 200ms flusher BEFORE the final flush so it
+    // doesn't fire against a closed DB handle a tick after we exit.
+    stopAuditFlusher();
     try {
       flushNow();
     } catch {}

@@ -307,6 +307,41 @@ export function listMessages(chatId: string, sinceSeq: number, limit: number): M
     .all(chatId, sinceSeq, limit);
 }
 
+/** Return the most-recent `limit` messages in chronological order
+ *  (ascending). Avoids the listMessages(0, 10000).slice(-N) pattern that
+ *  allocates the full chat history before keeping the tail. */
+export function listRecentMessages(chatId: string, limit: number): MessageRow[] {
+  const cap = Math.max(1, Math.min(limit, 500));
+  const rows = db()
+    .query<MessageRow, [string, number]>(
+      `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
+       FROM messages WHERE chat_id = ?
+       ORDER BY seq DESC LIMIT ?`,
+    )
+    .all(chatId, cap);
+  return rows.reverse();
+}
+
+/** Per-member unread count for one chat in a single query. Replaces the
+ *  per-member COUNT(*) loop in the dashboard snapshot. */
+export function unreadByMemberForChat(chatId: string): Record<string, number> {
+  const rows = db()
+    .query<{ pseudonym: string; unread: number }, [string]>(
+      `SELECT cm.pseudonym AS pseudonym,
+              COUNT(m.id)  AS unread
+       FROM chat_members cm
+       LEFT JOIN messages m ON m.chat_id = cm.chat_id
+                           AND m.seq > cm.last_read_message_seq
+                           AND m.from_pseudonym != cm.pseudonym
+       WHERE cm.chat_id = ?
+       GROUP BY cm.pseudonym`,
+    )
+    .all(chatId);
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.pseudonym] = r.unread;
+  return out;
+}
+
 /** Look up a message by either its UUID id or its numeric seq. The tools
  *  expose seq to users (the human-visible "[N]" label); cross-machine
  *  routing uses id. */

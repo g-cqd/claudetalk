@@ -4,9 +4,10 @@
  * in cross-machine routing metadata. Sticky across runs; deterministic
  * per machine, not per folder.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
+import { readJsonBounded } from "./safe-json.ts";
 
 interface MachineFile {
   machine_id: string;
@@ -26,14 +27,11 @@ function rootDir(): string {
 export function getOrCreateMachineId(): string {
   const path = machineFilePath(rootDir());
   if (existsSync(path)) {
-    try {
-      const parsed = JSON.parse(readFileSync(path, "utf8")) as MachineFile;
-      if (typeof parsed.machine_id === "string" && parsed.machine_id.length > 0) {
-        return parsed.machine_id;
-      }
-    } catch {
-      // corrupted file — regenerate
+    const parsed = readJsonBounded<MachineFile>(path);
+    if (parsed && typeof parsed.machine_id === "string" && parsed.machine_id.length > 0) {
+      return parsed.machine_id;
     }
+    // corrupted / oversized file — fall through and regenerate
   }
   const file: MachineFile = {
     machine_id: crypto.randomUUID(),
@@ -48,9 +46,5 @@ export function getOrCreateMachineId(): string {
 export function readMachineFile(): MachineFile | null {
   const path = machineFilePath(rootDir());
   if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as MachineFile;
-  } catch {
-    return null;
-  }
+  return readJsonBounded<MachineFile>(path);
 }

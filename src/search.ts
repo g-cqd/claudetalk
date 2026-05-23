@@ -67,7 +67,12 @@ export function registerSearchTool(server: McpServer, me: Identity): void {
     async ({ query, scope, limit }) => {
       touchInstance(me.pseudonym);
       const lim = limit ?? 25;
-      const needle = `%${query}%`;
+      // Escape SQLite LIKE wildcards so a query of `"%"` matches the
+      // literal `%` rather than every row (which would trigger an
+      // unbounded full-table scan + LIKE backtracking — a viable DoS
+      // against the shared SQLite writer lock).
+      const escaped = query.replace(/[\\%_]/g, (c) => `\\${c}`);
+      const needle = `%${escaped}%`;
       const which = scope ?? "all";
       const lines: string[] = [`Search '${query}' (scope=${which}):`];
 
@@ -75,7 +80,7 @@ export function registerSearchTool(server: McpServer, me: Identity): void {
         const hits = db()
           .query<ChatHit, [string, number]>(
             `SELECT id AS message_id, seq AS message_seq, chat_id, from_pseudonym, body, created_at
-             FROM messages WHERE body LIKE ? COLLATE NOCASE
+             FROM messages WHERE body LIKE ? ESCAPE '\\' COLLATE NOCASE
              ORDER BY seq DESC LIMIT ?`,
           )
           .all(needle, lim);
@@ -92,7 +97,7 @@ export function registerSearchTool(server: McpServer, me: Identity): void {
         const hits = db()
           .query<AskHit, [string, string, number]>(
             `SELECT id AS ask_id, from_pseudonym, to_pseudonym, body, answer_body, created_at, answered_at
-             FROM asks WHERE body LIKE ? COLLATE NOCASE OR answer_body LIKE ? COLLATE NOCASE
+             FROM asks WHERE body LIKE ? ESCAPE '\\' COLLATE NOCASE OR answer_body LIKE ? ESCAPE '\\' COLLATE NOCASE
              ORDER BY id DESC LIMIT ?`,
           )
           .all(needle, needle, lim);

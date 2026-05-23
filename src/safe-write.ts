@@ -33,8 +33,20 @@ export interface DiffEntry {
   after?: unknown;
 }
 
+/** Size cap for config files we read into memory. ~/.claude.json
+ *  legitimately runs to tens of KB on busy users; 4 MiB is comfortably
+ *  above realistic config size while preventing an attacker-pre-placed
+ *  multi-GB JSON from OOM'ing the installer. (Security audit M7.) */
+const READ_JSON_MAX_BYTES = 4_000_000;
+
 function readJsonRaw(path: string): string | null {
   if (!existsSync(path)) return null;
+  const st = statSync(path);
+  if (st.size > READ_JSON_MAX_BYTES) {
+    throw new Error(
+      `Refusing to read ${path}: size ${st.size} > max ${READ_JSON_MAX_BYTES}`,
+    );
+  }
   return readFileSync(path, "utf8");
 }
 

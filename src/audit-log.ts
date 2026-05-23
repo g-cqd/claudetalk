@@ -67,8 +67,16 @@ export interface ToolCallQuery {
 
 // ---------------- batched writer ----------------
 
+/** Hard cap on the in-memory queue. Under sustained DB-busy contention
+ *  the 200ms flusher can fall behind; an unbounded queue would grow
+ *  without bound. At ~250 bytes per row (typical args+result summary),
+ *  10k entries ≈ 2.5 MB — bounded RAM, and we'd rather drop old log
+ *  rows than OOM the MCP server (which would take down the Claude
+ *  session). */
+const QUEUE_HARD_CAP = 10_000;
 const queue: ToolCallInsert[] = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
+let overflowWarned = false;
 
 function ensureFlusher(): void {
   if (flushTimer !== null) return;
@@ -76,6 +84,15 @@ function ensureFlusher(): void {
   // Don't keep the event loop alive just for the flusher.
   if (typeof flushTimer === "object" && "unref" in flushTimer) {
     (flushTimer as { unref: () => void }).unref();
+  }
+}
+
+/** Stop the periodic flusher. Used by server shutdown so the next 200ms
+ *  tick doesn't fire against a closed DB handle. Safe to call repeatedly. */
+export function stopAuditFlusher(): void {
+  if (flushTimer !== null) {
+    clearInterval(flushTimer);
+    flushTimer = null;
   }
 }
 
@@ -118,6 +135,20 @@ export function flushNow(): void {
 }
 
 function enqueue(row: ToolCallInsert): void {
+  if (queue.length >= QUEUE_HARD_CAP) {
+    // Drop the oldest row to make room for the new one. Warn once per
+    // overflow event; reset the flag when the queue drains below cap.
+    queue.shift();
+    if (!overflowWarned) {
+      overflowWarned = true;
+      console.error(
+        `[claudetalk] audit log queue hit ${QUEUE_HARD_CAP} pending rows; ` +
+          "dropping oldest. DB writer likely contended.",
+      );
+    }
+  } else if (overflowWarned && queue.length < QUEUE_HARD_CAP / 2) {
+    overflowWarned = false;
+  }
   queue.push(row);
   ensureFlusher();
 }

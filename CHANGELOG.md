@@ -6,6 +6,58 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-05-18
+
+Audit-driven medium + low sweep (continuing from v0.5.2 HIGH fixes).
+
+### Performance
+
+- **Dashboard snapshot: 1 query per chat instead of N+1.** New
+  `unreadByMemberForChat(chatId)` does a single `LEFT JOIN ... GROUP
+  BY` returning every member's unread count. Replaces the
+  per-member `COUNT(*)` loop in `src/web/snapshot.ts`. On a 10-chat /
+  5-member dashboard, snapshot drops from ~50 SELECTs to ~10.
+- **`listRecentMessages(chatId, n)`** — dedicated `ORDER BY seq DESC
+  LIMIT N` then reverse, instead of `listMessages(0, 10_000).slice(-N)`
+  which pulled the full chat history before discarding it. Used by
+  the dashboard snapshot.
+
+### Reliability
+
+- **Audit log queue capped at 10k rows.** Under sustained DB-busy
+  contention the 200ms batched flusher could fall behind unboundedly
+  and OOM the MCP server (which would take down the Claude session).
+  Drops oldest row when full, warns once on overflow / reset.
+- **`stopAuditFlusher()` exported and called from server shutdown.**
+  Previously the 200ms flush timer kept firing after `flushNow()` on
+  shutdown — risk of writing to a closed DB handle one tick after
+  process.exit.
+
+### Security
+
+- **`search` tool escapes SQLite LIKE wildcards.** A query of `"%"`
+  was matching every row and triggering an unbounded scan + LIKE
+  backtracking on the shared writer lock — a viable DoS. Now uses
+  `LIKE ? ESCAPE '\\'` and pre-escapes `%`, `_`, `\` in the input.
+- **JSON config readers bounded by size.** New `src/safe-json.ts`
+  provides `readJsonBounded()` with a 1 MiB default cap (4 MiB for
+  installer config). Prevents a malicious pre-placed multi-GB
+  `~/.claudetalk/machine.json` or `~/.claudetalk/network.json` from
+  OOM'ing every newly-launched MCP server. Wired into machine-id,
+  network-config, and safe-write.
+- **`crash.log` mode 0o600** (was 0o644). Stack traces can leak
+  in-flight payload fragments and source paths; keep them
+  owner-only.
+- **Hook stdin capped at 256 KB.** `hooks/check-inbox.ts:readStdin`
+  silently aborts if the hook payload exceeds the cap. Claude
+  Code's payloads are a few KB max in practice; anything bigger is
+  an attack or a bug.
+
+### Tests
+
+- 179 pass / 0 fail. Coverage unchanged; the changes are largely
+  additive helpers + small guards.
+
 ## [0.5.2] — 2026-05-18
 
 ### Fixed (v0.5.0 regressions surfaced by audit)
