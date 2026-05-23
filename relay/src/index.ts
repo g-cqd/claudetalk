@@ -33,6 +33,7 @@ import {
 } from "../../src/relay-protocol.ts";
 import { verifyToken } from "../../src/relay-auth.ts";
 import { messageSigningPayload, verify } from "../../src/keys.ts";
+import { buildHttpMcpHandler } from "./mcp-http.ts";
 
 const PORT = Number(process.env.RELAY_PORT ?? 7878);
 const HOST = process.env.RELAY_HOST ?? "0.0.0.0";
@@ -224,6 +225,22 @@ function send(ws: unknown, msg: RelayControl | RelayFrame): void {
   } catch {}
 }
 
+/** Persist a frame + broadcast to live WS subscribers in the namespace.
+ *  Used by the WS handler (when a connected client publishes) AND by the
+ *  HTTP MCP handler (when an HTTP-only client posts via tools/call). */
+function publishFrameAndBroadcast(ns: string, frame: ClientFrame, except?: unknown): number {
+  const relayTs = Date.now();
+  const frameId = insertFrame(ns, frame, relayTs);
+  const broadcastFrame: RelayFrame = {
+    v: PROTOCOL_VERSION,
+    frame_id: frameId,
+    relay_ts: relayTs,
+    frame,
+  };
+  broadcast(ns, broadcastFrame, except);
+  return frameId;
+}
+
 // ---------------- bun.serve ----------------
 
 function bearerOf(req: Request): string | null {
@@ -233,13 +250,29 @@ function bearerOf(req: Request): string | null {
   return m ? m[1]! : null;
 }
 
+// HTTP MCP handler (Phase N1b alpha). Built lazily once at startup so
+// every request can reuse the same McpServer + transport.
+const httpMcpHandler = await buildHttpMcpHandler({
+  db,
+  sharedSecret: SHARED_SECRET,
+  namespace: namespaceForToken(SHARED_SECRET),
+  publishFrame: (ns, frame) => publishFrameAndBroadcast(ns, frame),
+});
+
 const server = Bun.serve<WsData>({
   port: PORT,
   hostname: HOST,
-  fetch(req, srv) {
+  async fetch(req, srv) {
     const url = new URL(req.url);
     const token = bearerOf(req);
     if (url.pathname === "/healthz") return new Response(JSON.stringify({ ok: true }));
+    if (url.pathname === "/mcp") {
+      // Phase N1b: MCP-over-HTTP-SSE endpoint for claude.ai Connectors,
+      // Claude Agent SDK, and any other MCP HTTP client. Auth check is
+      // inside the handler; it 401s if the bearer is missing/bad.
+      const resp = await httpMcpHandler(req);
+      return resp ?? new Response("handler returned nothing", { status: 500 });
+    }
     if (url.pathname === "/metrics") {
       // Prometheus-exposition-format text. Anyone on the bind interface
       // can scrape this; no auth (it's metadata, not bodies). Move
@@ -385,17 +418,9 @@ const server = Bun.serve<WsData>({
             return send(ws, { v: PROTOCOL_VERSION, control: "error", code: "bad_sig" });
           }
         }
-        const relayTs = Date.now();
-        const frameId = insertFrame(ws.data.namespace, frame, relayTs);
-        const broadcastFrame: RelayFrame = {
-          v: PROTOCOL_VERSION,
-          frame_id: frameId,
-          relay_ts: relayTs,
-          frame,
-        };
-        // Ack the sender + broadcast to everyone else in the namespace.
+        const frameId = publishFrameAndBroadcast(ws.data.namespace, frame, ws);
+        // Ack the sender.
         send(ws, { v: PROTOCOL_VERSION, control: "ack", frame_id: frameId });
-        broadcast(ws.data.namespace, broadcastFrame, ws);
       })();
     },
     close(ws) {

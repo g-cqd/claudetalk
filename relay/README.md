@@ -45,8 +45,14 @@ All env vars optional except `RELAY_SHARED_SECRET`:
 
 ## Endpoints
 
-- `WS /ws` — main publish/subscribe channel (HMAC bearer required)
+- `WS /ws` — main publish/subscribe channel for local-machine clients (HMAC bearer required)
 - `GET /pull?since=<frame_id>` — HTTP catch-up after offline (HMAC bearer required)
+- `POST/GET /mcp` — **MCP-over-HTTP-SSE endpoint** (Phase N1b alpha).
+  HMAC bearer required. Speaks the MCP Streamable HTTP transport
+  (spec 2025-11-25). Tools exposed in this alpha: `whoami`, `inbox`,
+  `chat`. Lets claude.ai Connectors, the Claude Agent SDK, and any
+  other MCP HTTP client join the same namespace as local sessions.
+  See `docs/distributed-online-design.md`.
 - `GET /healthz` — liveness probe (no auth), returns `{ ok: true }`
 - `GET /metrics` — Prometheus exposition format (no auth — metadata only,
   no message bodies). Exposes `claudetalk_relay_frames_total`,

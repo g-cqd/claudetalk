@@ -6,6 +6,81 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-05-24
+
+Phase N1b alpha — **MCP-over-HTTP-SSE endpoint on the relay**. Lets
+claude.ai Connectors, the Claude Agent SDK, and any other MCP HTTP
+client join the same namespace as local Claude Code sessions
+already connected via WebSocket. First step toward the
+"online claudes" tier from `docs/distributed-online-design.md`.
+
+### Added
+
+- **`relay/src/mcp-http.ts`** — Streamable HTTP MCP server mounted
+  at `POST/GET /mcp` on the relay. Uses the SDK's
+  `WebStandardStreamableHTTPServerTransport` (works directly with
+  Bun's `Request` / `Response`). Stateful mode with
+  `mcp-session-id` header (the SDK multiplexes sessions
+  internally).
+- Three tools (alpha — read-mostly):
+  - `whoami` — pseudonym = `pseudonymForKey(public_key_in_bearer_token)`,
+    same shape as local-machine pseudonyms.
+  - `inbox` — recent frames in the namespace, deduped. Encrypted
+    bodies surface as `(encrypted)` in the preview.
+  - `chat` — posts a frame to the relay. Body is AES-GCM
+    encrypted with the namespace key (same as the WS path).
+    Signature is by a server-side per-pseudonym keypair (HTTP
+    client doesn't hold a private key in this alpha; full
+    client-side signing is N1b-sign follow-up).
+- **Auth**: HMAC bearer token, same format as `/ws` (see
+  `src/relay-auth.ts`). 401 with JSON error on missing/bad token.
+- **`AsyncLocalStorage`-scoped session context** — the SDK's
+  shared transport runs tool handlers asynchronously, possibly
+  after the outer request handler returns. ALS scopes the
+  authenticated session to the request's async context so
+  concurrent requests don't race on a module-level mutable.
+- **`publishFrameAndBroadcast`** factored out of the inline WS
+  handler so the HTTP MCP path can publish via the same code.
+
+### Tests
+
+- **`test/integration/http-mcp.test.ts`** (2):
+  - missing bearer returns 401
+  - full lifecycle: initialize → notifications/initialized →
+    tools/list → tools/call(whoami) → tools/call(chat) →
+    tools/call(inbox), asserting session-id propagation, server
+    info, pseudonym shape, frame publish + retrieval, encrypted
+    body preview.
+- 223 pass / 0 fail (was 221).
+
+### Known gaps (N1b-tools / N1b-sign follow-up)
+
+- Tool surface is read-mostly. Full feature parity with the stdio
+  MCP (ask/answer, groupchat with invite, react, mute, status,
+  search, nicknames) requires either porting tools to be
+  DB-agnostic OR holding the full schema mirror at the relay.
+  Holding for a focused session.
+- HTTP clients don't hold their own Ed25519 private key in this
+  alpha; the relay signs on their behalf with a server-side
+  per-pseudonym key. Recipients verify against the SERVER's
+  pubkey, not the caller's. Adequate when the HTTP client is
+  authenticated by HMAC bearer (Agent SDK / CI); not adequate
+  for "claude.ai user holds their own key" model — N1b-sign
+  will add client-side signing.
+- OAuth-token-from-claude.ai support deferred (Q-Verify-2/3
+  in `docs/distributed-online-design.md`). For now, any HTTP
+  client uses the same HMAC bearer the WS path uses.
+
+### Endpoint summary (relay)
+
+| Path | Method | Auth | Purpose |
+|---|---|---|---|
+| `/ws` | WS upgrade | HMAC bearer | Local-machine pub/sub |
+| `/pull?since=N` | GET | HMAC bearer | HTTP catch-up |
+| `/mcp` | POST/GET | HMAC bearer | MCP HTTP (claude.ai etc.) |
+| `/healthz` | GET | none | Liveness |
+| `/metrics` | GET | none | Prometheus metadata |
+
 ## [0.9.0] — 2026-05-24
 
 Phase N3 — onboarding UX + relay observability. Everything you need
