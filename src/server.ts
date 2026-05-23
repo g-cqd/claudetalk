@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { pseudonymFor } from "./pseudonym.ts";
 import { resolveProjectDir, ensureRootDir } from "./paths.ts";
 import { getOrCreateMachineId } from "./machine-id.ts";
+import { getKeyPairForFolder } from "./keys.ts";
 import { isNetworkConfigured } from "./network-config.ts";
 import {
   db,
@@ -86,14 +87,26 @@ async function main(): Promise<void> {
   installCrashHandlers(me.pseudonym);
   db(); // open + migrate
   const machineId = getOrCreateMachineId();
-  upsertInstance(me.pseudonym, me.path, process.pid, machineId);
-  log(`identity: ${me.pseudonym}  folder=${me.path}  machine=${machineId.slice(0, 8)}`);
+  // Phase K0: derive the deterministic Ed25519 keypair for this folder.
+  // Same folder + same machine ⇒ same keypair, every run.
+  me.keyPair = await getKeyPairForFolder(me.path);
+  upsertInstance(
+    me.pseudonym,
+    me.path,
+    process.pid,
+    machineId,
+    me.keyPair.publicKey,
+  );
+  log(
+    `identity: ${me.pseudonym}  folder=${me.path}  ` +
+      `machine=${machineId.slice(0, 8)}  pubkey=${me.keyPair.publicKey.slice(0, 8)}…`,
+  );
   if (isNetworkConfigured()) {
     log("network: ~/.claudetalk/network.json present (Phase N1 relay not yet wired)");
   }
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.5.4" },
+    { name: "claudetalk", version: "0.6.0" },
     {
       capabilities: {
         tools: {},

@@ -25,6 +25,7 @@ import {
 import { fmtChat, fmtMessageList } from "./format.ts";
 import { recordMessageMentions } from "./mentions.ts";
 import { ErrorCode, toolError, toolText } from "./errors.ts";
+import { messageSigningPayload, sign } from "./keys.ts";
 
 /** Per-message body cap. 64 KiB is comfortably above any reasonable inline
  *  Claude exchange while preventing single-payload DoS / unbounded SQLite
@@ -40,22 +41,71 @@ const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(
 /** Post a message (if any) into the chat, parse out @-mentions, mark recent
  *  as read for `me`, and return the recent slice. Shared by chat / groupchat.
  *  `replyToSeq` is the human-visible [N] sequence the user passed; we resolve
- *  it to the parent's UUID before storing. */
-function postAndRead(
+ *  it to the parent's UUID before storing.
+ *  Phase K1: when `me` has a keypair attached (server-side always; tests may
+ *  pass null for legacy unsigned inserts), the message is Ed25519-signed
+ *  before persistence and the signature is stored in messages.signature. */
+async function postAndRead(
   chatId: string,
-  me: string,
+  meIdentity: Identity,
   message: string | undefined,
   historyLimit: number,
   replyToSeq: number | null,
 ) {
   if (message !== undefined) {
     const parentUuid = replyToSeq === null ? null : (getMessage(replyToSeq)?.id ?? null);
-    const inserted = insertMessage(chatId, me, message, parentUuid);
-    recordMessageMentions(inserted.id, message, me);
+    // Pre-allocate UUID + timestamp so they're part of the signature.
+    const messageId = crypto.randomUUID();
+    const createdAt = Date.now();
+    let signature: string | null = null;
+    if (meIdentity.keyPair) {
+      signature = await sign(
+        meIdentity.keyPair.privateKey,
+        messageSigningPayload({
+          messageId,
+          chatId,
+          authorPseudonym: meIdentity.pseudonym,
+          body: message,
+          createdAt,
+        }),
+      );
+    }
+    // insertMessage today generates its own UUID + timestamp; for the
+    // signature to bind to the persisted row we use the precomputed
+    // values. Pass through via a new optional argument tuple.
+    const inserted = insertMessageWithIdAndTs(
+      chatId,
+      meIdentity.pseudonym,
+      message,
+      parentUuid,
+      signature,
+      messageId,
+      createdAt,
+    );
+    recordMessageMentions(inserted.id, message, meIdentity.pseudonym);
   }
   const recent = listMessages(chatId, 0, 10_000).slice(-historyLimit);
-  if (recent.length > 0) markChatRead(chatId, me, recent[recent.length - 1]!.seq);
+  if (recent.length > 0) markChatRead(chatId, meIdentity.pseudonym, recent[recent.length - 1]!.seq);
   return recent;
+}
+
+/** Wrap insertMessage so the caller can lock in the UUID + created_at
+ *  used in the signed payload, ensuring the on-disk row's bytes-to-sign
+ *  match what we signed. */
+function insertMessageWithIdAndTs(
+  chatId: string,
+  from: string,
+  body: string,
+  parentId: string | null,
+  signature: string | null,
+  precomputedId: string,
+  precomputedCreatedAt: number,
+) {
+  // Temporarily monkey-patch crypto.randomUUID + Date.now? No — too
+  // hacky. Instead, push directly into the DB layer via the helper
+  // exposed for tests; or insert via a dedicated low-level path. The
+  // simplest correct fix: extend insertMessage to accept the id + ts.
+  return insertMessage(chatId, from, body, parentId, signature, precomputedId, precomputedCreatedAt);
 }
 
 /** Validate that `replyToSeq` (if provided) refers to a message that exists
@@ -123,7 +173,7 @@ export function registerChatTools(server: McpServer, me: Identity): void {
       addChatMember(chatId, other);
       const replyErr = validateReplyTo(reply_to, chatId);
       if (replyErr) return error(replyErr);
-      const recent = postAndRead(chatId, me.pseudonym, message, history ?? 20, reply_to ?? null);
+      const recent = await postAndRead(chatId, me, message, history ?? 20, reply_to ?? null);
       const lines = [
         `chat_id=${chatId}  (direct with ${other})`,
         message !== undefined ? "Sent your message." : "",
@@ -209,7 +259,7 @@ export function registerChatTools(server: McpServer, me: Identity): void {
         inviteResults.push({ pseudonym: invitee, result: "added" });
       }
 
-      const recent = postAndRead(chatId, me.pseudonym, message, history ?? 20, reply_to ?? null);
+      const recent = await postAndRead(chatId, me, message, history ?? 20, reply_to ?? null);
       const members = listChatMembers(chatId).map((m) => m.pseudonym);
       const chat = getChat(chatId)!;
       const lines = [

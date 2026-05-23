@@ -24,6 +24,12 @@ export interface Identity {
   pseudonym: string;
   path: string;
   hash: string;
+  /** Ed25519 keypair for this (machine, folder). Lazily attached by the
+   *  server startup; tools that don't sign (whoami, discover, inbox, …)
+   *  treat it as optional. Always populated when called from src/server.ts
+   *  main(); undefined only in unit-test stubs that build an Identity by
+   *  hand. */
+  keyPair?: import("./keys.ts").KeyPair;
 }
 
 /** Stable per-folder identity. SHA-256 of the absolute path drives the pick. */

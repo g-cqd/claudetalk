@@ -9,6 +9,9 @@ export interface InstanceRow {
   last_seen: number;
   pid: number | null;
   machine_id: string | null;
+  /** Base64url-encoded Ed25519 public key (43 chars). NULL for instances
+   *  that connected under v0.5.x; populated for v0.6.0+ sessions. */
+  public_key: string | null;
 }
 
 export interface MessageRow {
@@ -22,6 +25,10 @@ export interface MessageRow {
   created_at: number;
   /** Parent message UUID for threading. */
   parent_id: string | null;
+  /** Base64url Ed25519 signature over `messageSigningPayload(...)`. NULL
+   *  for legacy pre-K1 rows; populated for every new message under
+   *  v0.6.0+. Verified against `instances.public_key` of the author. */
+  signature: string | null;
 }
 
 export interface AskRow {
@@ -154,17 +161,19 @@ export function upsertInstance(
   path: string,
   pid: number,
   machineId: string | null = null,
+  publicKey: string | null = null,
 ): void {
   const t = now();
   db().run(
-    `INSERT INTO instances (pseudonym, path, first_seen, last_seen, pid, machine_id)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO instances (pseudonym, path, first_seen, last_seen, pid, machine_id, public_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(pseudonym) DO UPDATE SET
        path = excluded.path,
        last_seen = excluded.last_seen,
        pid = excluded.pid,
-       machine_id = COALESCE(excluded.machine_id, instances.machine_id)`,
-    [pseudonym, path, t, t, pid, machineId],
+       machine_id  = COALESCE(excluded.machine_id, instances.machine_id),
+       public_key  = COALESCE(excluded.public_key, instances.public_key)`,
+    [pseudonym, path, t, t, pid, machineId, publicKey],
   );
 }
 
@@ -176,7 +185,7 @@ export function listInstances(activeWithinMs: number): InstanceRow[] {
   const cutoff = now() - activeWithinMs;
   return db()
     .query<InstanceRow, [number]>(
-      `SELECT pseudonym, path, first_seen, last_seen, pid, machine_id
+      `SELECT pseudonym, path, first_seen, last_seen, pid, machine_id, public_key
        FROM instances WHERE last_seen >= ? ORDER BY pseudonym ASC`,
     )
     .all(cutoff);
@@ -186,7 +195,7 @@ export function getInstance(pseudonym: string): InstanceRow | null {
   return (
     db()
       .query<InstanceRow, [string]>(
-        "SELECT pseudonym, path, first_seen, last_seen, pid, machine_id FROM instances WHERE pseudonym = ?",
+        "SELECT pseudonym, path, first_seen, last_seen, pid, machine_id, public_key FROM instances WHERE pseudonym = ?",
       )
       .get(pseudonym) ?? null
   );
@@ -272,18 +281,25 @@ function nextMessageSeq(): number {
   return txn.immediate();
 }
 
+/** Insert a new message. Callers that need to sign the body before
+ *  insertion can lock in the UUID and timestamp by passing
+ *  `precomputedId` / `precomputedCreatedAt`, ensuring the on-disk
+ *  bytes-to-sign match the values used at signing time. */
 export function insertMessage(
   chatId: string,
   from: string,
   body: string,
   parentId: string | null = null,
+  signature: string | null = null,
+  precomputedId?: string,
+  precomputedCreatedAt?: number,
 ): MessageRow {
-  const t = now();
-  const id = crypto.randomUUID();
+  const t = precomputedCreatedAt ?? now();
+  const id = precomputedId ?? crypto.randomUUID();
   const seq = nextMessageSeq();
   db().run(
-    "INSERT INTO messages (id, seq, chat_id, from_pseudonym, body, created_at, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [id, seq, chatId, from, body, t, parentId],
+    "INSERT INTO messages (id, seq, chat_id, from_pseudonym, body, created_at, parent_id, signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [id, seq, chatId, from, body, t, parentId, signature],
   );
   return {
     id,
@@ -293,6 +309,7 @@ export function insertMessage(
     body,
     created_at: t,
     parent_id: parentId,
+    signature,
   };
 }
 
@@ -300,7 +317,7 @@ export function insertMessage(
 export function listMessages(chatId: string, sinceSeq: number, limit: number): MessageRow[] {
   return db()
     .query<MessageRow, [string, number, number]>(
-      `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
+      `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id, signature
        FROM messages WHERE chat_id = ? AND seq > ?
        ORDER BY seq ASC LIMIT ?`,
     )
@@ -314,7 +331,7 @@ export function listRecentMessages(chatId: string, limit: number): MessageRow[] 
   const cap = Math.max(1, Math.min(limit, 500));
   const rows = db()
     .query<MessageRow, [string, number]>(
-      `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
+      `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id, signature
        FROM messages WHERE chat_id = ?
        ORDER BY seq DESC LIMIT ?`,
     )
@@ -350,7 +367,7 @@ export function getMessage(idOrSeq: string | number): MessageRow | null {
     return (
       db()
         .query<MessageRow, [number]>(
-          `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
+          `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id, signature
            FROM messages WHERE seq = ?`,
         )
         .get(idOrSeq) ?? null
@@ -359,7 +376,7 @@ export function getMessage(idOrSeq: string | number): MessageRow | null {
   return (
     db()
       .query<MessageRow, [string]>(
-        `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
+        `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id, signature
          FROM messages WHERE id = ?`,
       )
       .get(idOrSeq) ?? null
@@ -375,66 +392,17 @@ export function markChatRead(chatId: string, pseudonym: string, upToSeq: number)
 }
 
 // ---------- asks ----------
-
-export function insertAsk(from: string, to: string, body: string): AskRow {
-  const t = now();
-  const res = db().run(
-    "INSERT INTO asks (from_pseudonym, to_pseudonym, body, created_at) VALUES (?, ?, ?, ?)",
-    [from, to, body, t],
-  );
-  return {
-    id: Number(res.lastInsertRowid),
-    from_pseudonym: from,
-    to_pseudonym: to,
-    body,
-    created_at: t,
-    answered_at: null,
-    answer_body: null,
-  };
-}
-
-export function getAsk(id: number): AskRow | null {
-  return (
-    db()
-      .query<AskRow, [number]>(
-        `SELECT id, from_pseudonym, to_pseudonym, body, created_at, answered_at, answer_body
-         FROM asks WHERE id = ?`,
-      )
-      .get(id) ?? null
-  );
-}
-
-export function answerAsk(id: number, answerer: string, answer: string): AskRow | null {
-  const ask = getAsk(id);
-  if (!ask) return null;
-  if (ask.to_pseudonym !== answerer) return null;
-  if (ask.answered_at !== null) return ask;
-  db().run("UPDATE asks SET answered_at = ?, answer_body = ? WHERE id = ?", [now(), answer, id]);
-  return getAsk(id);
-}
-
-export function listPendingAsksFor(to: string): AskRow[] {
-  return db()
-    .query<AskRow, [string]>(
-      `SELECT id, from_pseudonym, to_pseudonym, body, created_at, answered_at, answer_body
-       FROM asks WHERE to_pseudonym = ? AND answered_at IS NULL
-       ORDER BY id ASC`,
-    )
-    .all(to);
-}
-
-export function listAnsweredAsksFrom(
-  from: string,
-  sinceSeenId: number,
-): AskRow[] {
-  return db()
-    .query<AskRow, [string, number]>(
-      `SELECT id, from_pseudonym, to_pseudonym, body, created_at, answered_at, answer_body
-       FROM asks WHERE from_pseudonym = ? AND answered_at IS NOT NULL AND id > ?
-       ORDER BY id ASC`,
-    )
-    .all(from, sinceSeenId);
-}
+// Helpers live in src/asks.ts; re-exported here so existing callers
+// don't need to change their import sites. Also imported locally because
+// unreadSummary calls listPendingAsksFor.
+import { listPendingAsksFor } from "./asks.ts";
+export {
+  answerAsk,
+  getAsk,
+  insertAsk,
+  listAnsweredAsksFrom,
+  listPendingAsksFor,
+} from "./asks.ts";
 
 // Nickname tables are migrated above; the helpers live in src/nickname.ts
 // to keep this module focused on chats / asks / presence. Tests and tools
@@ -480,7 +448,7 @@ export function unreadSummary(pseudonym: string): Unread {
         .get(chat.id, member.last_read_message_seq, pseudonym);
       const latest = db()
         .query<MessageRow, [string]>(
-          `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id
+          `SELECT id, seq, chat_id, from_pseudonym, body, created_at, parent_id, signature
            FROM messages WHERE chat_id = ? ORDER BY seq DESC LIMIT 1`,
         )
         .get(chat.id) ?? null;

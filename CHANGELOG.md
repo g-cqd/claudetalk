@@ -6,6 +6,57 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-24
+
+Phase K0 + K1: deterministic Ed25519 keypair per (machine, folder)
+and message signing. K3 (pseudonym derives from pubkey) + K4
+(signature in relay protocol) land alongside the relay in v0.6.1.
+
+### Added
+
+- **`src/keys.ts`** — Ed25519 keypair derivation, sign, verify.
+  Keypair seed = HKDF-SHA256(machine_seed, "claudetalk:keys:v1",
+  folder_path). Stable across runs (machine_seed in
+  ~/.claudetalk/machine.json mode 0o600). No external `gpg` or
+  similar — Bun's native Web Crypto.
+- **Migration v4** — `instances.public_key TEXT NULL`,
+  `messages.signature TEXT NULL`. Additive, nullable; pre-K0 rows
+  read as "legacy unsigned".
+- **`upsertInstance(..., public_key)`** — each session stamps its
+  pubkey at startup. COALESCE preserves any existing value (so a
+  v0.5.x row keeps its NULL until the session under v0.6.0+ writes
+  to it).
+- **`chat-tools.postAndRead`** signs every new message body
+  (`messageSigningPayload(messageId, chatId, author, body,
+  createdAt)`) before persistence. `messages.signature` populated
+  for every send under v0.6.0+; readers can verify against
+  `instances.public_key` of the author (Phase K4 will enforce at
+  the relay).
+
+### Internal
+
+- **`src/asks.ts`** extracted from `db.ts` to stay under the
+  500-line ceiling after the K0 + machine-seed wiring pushed db.ts
+  over.
+- Identity.keyPair now optional on the Identity interface;
+  server.ts attaches it at startup, tools that don't sign treat
+  it as null safely.
+
+### Tests
+
+- `test/unit/keys.test.ts` (6) — deterministic generation, sign /
+  verify round trip, tamper detection (body change + wrong key),
+  machine_seed backfill into a v0.5.x machine.json.
+- 191 pass / 0 fail.
+
+### What's next (v0.6.1)
+
+K3 (pseudonym = SHA-256(pubkey)), K4 (signature in
+notifications/claude/channel push + relay frame), and the actual
+relay binary (Phase N1) land together. They share so much
+infrastructure (sig verification, identity model) that releasing
+them piecemeal would create awkward intermediate states.
+
 ## [0.5.4] — 2026-05-24
 
 Audit closure — remaining MED + LOW items from the v0.5.2 audit.

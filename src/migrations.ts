@@ -368,6 +368,25 @@ const MIGRATIONS: Migration[] = [
       d.exec("PRAGMA foreign_keys = ON;");
     },
   },
+  {
+    version: 4,
+    name: "Phase K0: instances.public_key + messages.signature (Ed25519)",
+    up: (d) => {
+      // Additive, nullable columns. Pre-K0 rows have NULL pubkey / sig
+      // and are treated as "unverified, legacy" by readers. Once a
+      // session starts under v0.6.0+ it stamps its pubkey on the
+      // instances row via upsertInstance and signs every new message.
+      const addCol = (sql: string) => {
+        try {
+          d.exec(sql);
+        } catch (e: any) {
+          if (!/duplicate column name/i.test(String(e?.message ?? e ?? ""))) throw e;
+        }
+      };
+      addCol("ALTER TABLE instances ADD COLUMN public_key TEXT;");
+      addCol("ALTER TABLE messages  ADD COLUMN signature TEXT;");
+    },
+  },
 ];
 
 export function currentSchemaVersion(d: Database): number {
