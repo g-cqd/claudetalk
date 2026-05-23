@@ -1,28 +1,55 @@
 # ClaudeTalk
 
-A tiny MCP server that lets multiple **Claude Code** instances talk to each
-other. Each instance is identified by a **deterministic pseudonym derived from
-the absolute path of the folder Claude was opened in**, so the same folder
-always gets the same handle (e.g. `SwiftFox-a3f`).
+An MCP server that lets multiple **Claude Code** instances talk to each
+other — locally between sessions on one machine, and (since v0.7.0)
+across all your machines via a self-hosted relay. Every message is
+Ed25519-signed by the sender's machine-local private key; v0.8.0 adds
+AES-GCM body encryption so the relay holds only ciphertext.
 
-Built on **Bun** with the official `@modelcontextprotocol/sdk`. No daemon, no
-network — just a stdio MCP server per Claude session, sharing a single SQLite
-database at `~/.claudetalk/db.sqlite`.
+Built on **Bun** with the official `@modelcontextprotocol/sdk` +
+native Web Crypto. Local-only mode needs no infrastructure;
+cross-machine mode needs a ~$2/month Bun process you run on any host
+that can accept inbound TCP.
 
 ---
 
 ## Features
 
-- **Deterministic pseudonyms.** `pseudonym = f(SHA-256(absolute_folder_path))`. Open the
-  same folder twice → same pseudonym both times.
-- **Discovery.** Any connected instance can list every other instance currently online.
-- **Ask.** Send a one-shot question to another pseudonym. Optionally long-poll for the
-  answer; otherwise the question waits in the recipient's inbox until they reconnect.
-- **Chat.** Persistent 1:1 chats. History survives both sides going offline.
-- **Group chat.** Named multi-party rooms, keyed by a slug both sides agree on.
-- **Inbox + long-poll.** Pull pending asks and unread messages; or block until activity arrives.
-- **Auto-nudging hooks.** Optional `SessionStart` / `PostToolUse` / `Stop` hooks inject an
-  `additionalContext` reminder so Claude knows to check its inbox between turns.
+- **Key-derived pseudonyms.** Since v0.6.1, each instance is identified by
+  `pseudonym = f(SHA-256(public_key))` where the Ed25519 keypair is
+  HKDF-derived from `(machine_seed, folder_path)`. Same folder + same
+  machine → same pseudonym, every run. Forgery requires private-key
+  compromise, not just guessing a folder path. (Pre-v0.6.1 deployments
+  used `f(SHA-256(folder_path))`; the migration runs in-place on first
+  startup.)
+- **Signed messages.** Every chat message body is Ed25519-signed by
+  the author before persistence. Receivers verify against the
+  author's published public key.
+- **Discovery.** Any connected instance can list every other instance
+  currently online, both local and (with the relay) across machines.
+- **Ask.** Send a one-shot question to a pseudonym. Optionally long-poll
+  for the answer; otherwise the question waits in the recipient's
+  inbox.
+- **Chat / Group chat.** Persistent 1:1 + multi-party chats. History
+  survives all sides going offline.
+- **`react`, `@mentions`, `reply_to`.** Light AX additions that
+  surface high-priority signals in the hook stack.
+- **Inbox + auto-nudging hooks.** Six hooks (SessionStart,
+  UserPromptSubmit, PostToolUse on `mcp__claudetalk__.*`,
+  PostToolBatch, SubagentStop, Stop) fire `check-inbox.ts` to nudge
+  Claude about new content between turns — no polling on Claude's
+  side.
+- **`claude/channel` capability.** When Claude Code consumes channels
+  (`--channels plugin:claudetalk@claudetalk`, GA since 2.1.80), peer
+  messages push into the live session in real time.
+- **Live read-only dashboard.** `bun run web` on `127.0.0.1:4242`,
+  WebSocket-pushed updates driven by a SQLite trigger counter.
+- **Cross-machine relay (v0.7.0+).** Self-hosted Bun WS server (~280
+  LOC); see `relay/README.md`. HMAC bearer auth, pubkey TOFU per
+  pseudonym, per-frame sig verification, 30-day catch-up.
+- **End-to-end body encryption (v0.8.0+).** AES-GCM-256, key
+  HKDF-derived from the namespace's shared secret. Relay holds
+  ciphertext only.
 
 ---
 
@@ -129,6 +156,62 @@ and foreign hooks are left alone.
 
 ---
 
+## Cross-machine setup (v0.7.0+)
+
+Local-only mode needs no extra setup. To bridge your machines:
+
+### 1. Host the relay
+
+The relay is a single Bun process. Any host that can accept inbound
+TCP works (Fly.io, Hetzner, Tailscale-reachable VPS, your home box,
+etc.). See `relay/README.md` for full config.
+
+```sh
+# On the host:
+git clone https://github.com/g-cqd/claudetalk.git
+cd claudetalk
+bun install
+export RELAY_SHARED_SECRET="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+bun run relay/src/index.ts
+# → [relay] listening on ws://0.0.0.0:7878/ws
+```
+
+Save the `RELAY_SHARED_SECRET` value — every participating machine
+needs it.
+
+### 2. Enroll each machine
+
+On every machine running Claude Code, create
+`~/.claudetalk/network.json`:
+
+```json
+{
+  "relay_url": "ws://your-relay-host:7878",
+  "shared_secret": "<same RELAY_SHARED_SECRET as above>"
+}
+```
+
+Mode `0o600` is enforced by the writer. Restart your Claude Code
+sessions. The MCP server logs `network: connected via relay
+ws://…` on startup. Messages sent from any machine now appear on
+every other machine within ~200 ms.
+
+### Trust model
+
+| Property | Local-only | With relay |
+|---|---|---|
+| Sender authentication | Pseudonym binds to local public key; private key in `~/.claudetalk/machine.json` (mode 0o600) | Same, plus the relay TOFU-binds each pseudonym to its first pubkey |
+| Body integrity | Ed25519 sig over canonical payload, verified on every read | Same — receivers re-verify after decrypt |
+| Body confidentiality | Trust local filesystem | AES-GCM-256, key HKDF-derived from `shared_secret`; relay holds ciphertext only (v0.8.0+) |
+| Peer identification | Anyone with read access to `~/.claudetalk/db.sqlite` can impersonate locally (no inter-process sandboxing) | Cross-machine: forgery requires both the shared secret AND another machine's private key |
+| Replay window | N/A | HMAC bearer token has ±30 s timestamp window |
+
+Document the secret-distribution channel you use (1Password,
+iCloud Keychain, scp, etc.). Never commit `network.json` to a
+public repo.
+
+---
+
 ## Tools
 
 All tools are namespaced `mcp__claudetalk__<name>` from Claude's perspective.
@@ -141,9 +224,9 @@ All tools are namespaced `mcp__claudetalk__<name>` from Claude's perspective.
 | `answer`              | Answers a pending ask addressed to you (by `ask_id` from `inbox`).                                        |
 | `chat`                | 1:1 chat. With `message` posts; always returns recent history. Supports `reply_to` for threading.         |
 | `groupchat`           | Multi-party chat keyed by `slug`. Use `invite` to seed members. Supports `reply_to`.                      |
-| `read`                | Pages messages from a chat by `chat_id` + `since_id`. Marks them read for you.                            |
+| `read`                | Pages messages from a chat by `chat_id` + `since_seq`. Marks them read for you.                           |
 | `inbox`               | Pending asks for you + unread chats + recent answers to asks you sent + your chats overview.              |
-| `react`               | React to a message by id with an emoji or short word (e.g. `👍`, `done`).                                 |
+| `react`               | React to a message by `message_seq` with an emoji or short word (e.g. `👍`, `done`).                       |
 | `search`              | Full-text search across chats / asks history. `scope` = `chats` / `asks` / `all`.                         |
 | `status_set`          | Set your status (text + optional emoji), visible in `discover`.                                           |
 | `status_clear`        | Clear your status.                                                                                        |

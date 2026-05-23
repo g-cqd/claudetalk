@@ -226,9 +226,9 @@ const MIGRATIONS: Migration[] = [
     up: (d) => {
       // SQLite can't ALTER a column's type. Rebuild every table that
       // references messages.id (which is becoming TEXT). FK enforcement
-      // is ON (PRAGMA foreign_keys = ON in db.ts), so disable it for
-      // the duration of this migration — re-enabled at the bottom.
-      d.exec("PRAGMA foreign_keys = OFF;");
+      // is OFF for the duration of migrate() (set around the
+      // transaction in migrate() itself, since SQLite ignores
+      // PRAGMA foreign_keys changes inside a transaction).
 
       // 1. Sequence counter for messages.seq (per-DB monotonic; the unit
       //    that cursors compare against, NOT a cross-machine identity).
@@ -364,8 +364,8 @@ const MIGRATIONS: Migration[] = [
             UPDATE dashboard_version SET v = v + 1 WHERE id = 1;
           END;
       `);
-
-      d.exec("PRAGMA foreign_keys = ON;");
+      // FK re-enable is handled by the migrate() wrapper's finally
+      // block — PRAGMA changes inside a transaction would be no-ops.
     },
   },
   {
@@ -402,6 +402,14 @@ export function migrate(d: Database): void {
   const have = currentSchemaVersion(d);
   const target = targetSchemaVersion();
   if (have >= target) return;
+  // SQLite does not allow `PRAGMA foreign_keys` to change inside a
+  // transaction (silently ignored). Migrations that rebuild tables
+  // (notably v3) need FK enforcement OFF so DROP TABLE doesn't
+  // cascade-delete dependent rows. Toggle it here, AROUND the
+  // transaction, then restore. Caller's expected state (FK=ON) is
+  // re-applied in the finally block.
+  d.exec("PRAGMA foreign_keys = OFF;");
+  try {
   for (const m of MIGRATIONS) {
     if (m.version <= have) continue;
     // BEGIN IMMEDIATE so two concurrent migrators race on the lock
@@ -437,5 +445,9 @@ export function migrate(d: Database): void {
       }
       throw e;
     }
+  }
+  } finally {
+    // Always restore FK enforcement after all migration steps complete.
+    try { d.exec("PRAGMA foreign_keys = ON;"); } catch {}
   }
 }

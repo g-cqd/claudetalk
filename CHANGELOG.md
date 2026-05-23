@@ -6,6 +6,52 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-05-24
+
+### Fixed — silent data loss during pre-v0.5.0 → v0.5.0+ upgrade
+
+The migration v3 logic toggled `PRAGMA foreign_keys = OFF` inside its
+`BEGIN IMMEDIATE` block to avoid `DROP TABLE messages` cascading to
+`message_reactions` / `message_mentions` / `chat_members`. But SQLite
+**silently ignores PRAGMA foreign_keys changes inside a transaction**
+— so FK enforcement stayed ON, and `DROP TABLE messages` cascaded,
+deleting every reaction and mention row before the rebuild step had a
+chance to copy them. Migration appeared to succeed (`user_version=3`);
+data quietly evaporated.
+
+The fix moves the PRAGMA toggle to the `migrate()` wrapper, AROUND
+the transaction (PRAGMA is connection-scoped; legal outside any
+txn). FK enforcement is restored in a `finally` block. Caught by the
+new T1 migration-upgrade fixture test (`test/unit/migrations-upgrade.test.ts`)
+which seeds a v1 schema with reactions / mentions / chat_members
+rows, migrates to target, and asserts every row is preserved.
+
+### Tests
+
+- **`test/unit/migrations-upgrade.test.ts`** (1) — full v1 → current
+  migration with data preservation assertions across all rebuilt
+  tables. This was the originally-uncovered case from the v0.5.2
+  audit (T1 in the test gaps list).
+- 204 pass / 0 fail (was 203).
+
+### Docs
+
+- **`README.md`** — overhauled to reflect v0.6+ reality. Key
+  changes: pseudonym is now key-derived (forgery requires private-key
+  compromise); cross-machine setup section pointing to the relay;
+  threat model table (local-only vs with relay); tool-table param
+  fixes (`since_seq`, `message_seq`).
+
+### Note on impact
+
+If you ran a pre-v0.5.0 build of ClaudeTalk that accumulated
+reactions or mentions, and then upgraded to any v0.5.x/0.6.x/0.7.x/
+0.8.0 release, the upgrade WILL have deleted them. There's no
+recovery from the live DB. The fix in v0.8.1 prevents recurrence on
+the SAME machine being upgraded fresh, and on any new machines
+joining the network. For most users this is academic (clean
+installs were unaffected).
+
 ## [0.8.0] — 2026-05-24
 
 Phase N2 — end-to-end body encryption. The relay no longer sees
