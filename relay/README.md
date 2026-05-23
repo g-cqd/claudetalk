@@ -40,6 +40,17 @@ All env vars optional except `RELAY_SHARED_SECRET`:
 | `RELAY_HOST` | `0.0.0.0` | Bind interface |
 | `RELAY_DB_PATH` | `relay_db.sqlite` | Path to relay's SQLite log |
 | `RELAY_RETENTION_DAYS` | `30` | Drop frames older than this on hourly purge |
+| `RELAY_RATE_FRAMES` | `200` | Per-namespace frames allowed per rate window |
+| `RELAY_RATE_WINDOW_MS` | `10000` | Rate window duration |
+
+## Endpoints
+
+- `WS /ws` — main publish/subscribe channel (HMAC bearer required)
+- `GET /pull?since=<frame_id>` — HTTP catch-up after offline (HMAC bearer required)
+- `GET /healthz` — liveness probe (no auth), returns `{ ok: true }`
+- `GET /metrics` — Prometheus exposition format (no auth — metadata only,
+  no message bodies). Exposes `claudetalk_relay_frames_total`,
+  `claudetalk_relay_known_pseudonyms`, `claudetalk_relay_connected_clients`
 
 ## Threat model
 

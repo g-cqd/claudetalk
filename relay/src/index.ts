@@ -40,6 +40,11 @@ const SHARED_SECRET = process.env.RELAY_SHARED_SECRET ?? "";
 const DB_PATH = process.env.RELAY_DB_PATH ?? "relay_db.sqlite";
 const RETENTION_DAYS = Number(process.env.RELAY_RETENTION_DAYS ?? 30);
 const PULL_MAX_FRAMES = 500;
+// Per-namespace token bucket: defaults to 200 frames in any 10s window.
+// Tuned for "many machines burst-publishing at once is fine, but a stuck
+// loop on one machine doesn't drown the others." Configurable via env.
+const RATE_FRAMES_PER_WINDOW = Number(process.env.RELAY_RATE_FRAMES ?? 200);
+const RATE_WINDOW_MS = Number(process.env.RELAY_RATE_WINDOW_MS ?? 10_000);
 
 if (!SHARED_SECRET) {
   console.error(
@@ -176,6 +181,14 @@ interface WsData {
   publicKeyB64u: string;
 }
 
+// Per-namespace rate limiter — extracted to relay/src/rate-limit.ts so
+// unit tests can exercise it without spawning the full relay.
+import { NamespaceRateLimiter } from "./rate-limit.ts";
+const rateLimiter = new NamespaceRateLimiter({
+  framesPerWindow: RATE_FRAMES_PER_WINDOW,
+  windowMs: RATE_WINDOW_MS,
+});
+
 const subscribersByNs = new Map<string, Set<unknown>>();
 
 function addSub(ns: string, ws: unknown): void {
@@ -227,6 +240,45 @@ const server = Bun.serve<WsData>({
     const url = new URL(req.url);
     const token = bearerOf(req);
     if (url.pathname === "/healthz") return new Response(JSON.stringify({ ok: true }));
+    if (url.pathname === "/metrics") {
+      // Prometheus-exposition-format text. Anyone on the bind interface
+      // can scrape this; no auth (it's metadata, not bodies). Move
+      // behind auth or a separate bind if your threat model needs it.
+      const frames = db
+        .query<{ namespace: string; n: number }, []>(
+          "SELECT namespace, COUNT(*) AS n FROM frames GROUP BY namespace",
+        )
+        .all();
+      const clients = db
+        .query<{ namespace: string; n: number }, []>(
+          "SELECT namespace, COUNT(*) AS n FROM pubkey_claims GROUP BY namespace",
+        )
+        .all();
+      const lines: string[] = [
+        "# HELP claudetalk_relay_frames_total Total stored frames per namespace.",
+        "# TYPE claudetalk_relay_frames_total counter",
+      ];
+      for (const r of frames) {
+        lines.push(`claudetalk_relay_frames_total{namespace="${r.namespace}"} ${r.n}`);
+      }
+      lines.push(
+        "# HELP claudetalk_relay_known_pseudonyms TOFU-bound pseudonyms per namespace.",
+        "# TYPE claudetalk_relay_known_pseudonyms gauge",
+      );
+      for (const r of clients) {
+        lines.push(`claudetalk_relay_known_pseudonyms{namespace="${r.namespace}"} ${r.n}`);
+      }
+      let connected = 0;
+      for (const set of subscribersByNs.values()) connected += set.size;
+      lines.push(
+        "# HELP claudetalk_relay_connected_clients Live WebSocket connections.",
+        "# TYPE claudetalk_relay_connected_clients gauge",
+        `claudetalk_relay_connected_clients ${connected}`,
+      );
+      return new Response(lines.join("\n") + "\n", {
+        headers: { "content-type": "text/plain; version=0.0.4" },
+      });
+    }
     if (url.pathname === "/ws") {
       if (!token) return new Response("missing bearer", { status: 401 });
       const verified = verifyToken(token, SHARED_SECRET);
@@ -277,6 +329,10 @@ const server = Bun.serve<WsData>({
           code: "malformed",
           message: "only kind=msg supported in v1",
         });
+      }
+      // Per-namespace rate limit before doing any work.
+      if (!rateLimiter.allow(ws.data.namespace)) {
+        return send(ws, { v: PROTOCOL_VERSION, control: "error", code: "rate_limited" });
       }
       // Pin the pseudonym on first frame; reject changes.
       if (ws.data.pseudonym === "") ws.data.pseudonym = frame.sender;

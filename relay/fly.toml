@@ -1,0 +1,45 @@
+# Fly.io deployment for the claudetalk relay.
+#
+# Quickstart from the repo root:
+#   cd relay
+#   fly launch --no-deploy --copy-config --name claudetalk-relay-<you>
+#   fly secrets set RELAY_SHARED_SECRET="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+#   fly volumes create relay_data --size 1
+#   fly deploy
+#
+# After deploy: the relay is reachable at wss://claudetalk-relay-<you>.fly.dev.
+# Put that URL + the same RELAY_SHARED_SECRET into ~/.claudetalk/network.json
+# on every machine (see relay/README.md).
+
+app = "claudetalk-relay"
+primary_region = "cdg"  # change to your nearest region
+
+[build]
+  dockerfile = "Dockerfile"
+  # Build context is the parent directory because the relay imports from
+  # ../../src/. Run `fly deploy` from the relay/ subdir with the
+  # `--build-only-cwd ..` argument, or move the Dockerfile to repo root.
+
+[env]
+  RELAY_HOST = "0.0.0.0"
+  RELAY_PORT = "7878"
+  RELAY_DB_PATH = "/data/relay_db.sqlite"
+  RELAY_RETENTION_DAYS = "30"
+
+[[mounts]]
+  source = "relay_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 7878
+  force_https = true
+  auto_stop_machines = "off"  # the relay must stay up to accept WS connections
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# RELAY_SHARED_SECRET must be set via `fly secrets set`, never in this file.

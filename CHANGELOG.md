@@ -6,6 +6,72 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-24
+
+Phase N3 — onboarding UX + relay observability. Everything you need
+to deploy + enroll machines without hand-editing JSON files.
+
+### Added
+
+#### Onboarding CLI
+
+- **`claudetalk auth init --relay-url <ws://...>`** — generates a
+  fresh 32-byte base64url shared secret, writes `~/.claudetalk/network.json`
+  with mode 0o600, defaults `encrypt: true`. Refuses non-`ws://`/`wss://`
+  URLs; refuses to overwrite existing config without `--yes`.
+- **`claudetalk auth status`** — prints relay URL, encrypt flag, and
+  a redacted preview of the secret (first 4 + last 4 chars only).
+- **`claudetalk auth add-machine`** — emits a paste-ready bash
+  one-liner that creates `~/.claudetalk/network.json` on the second
+  machine (with the same secret), `chmod`s it 0o600, and prints a
+  success line. Includes a clear warning that the output is itself a
+  secret.
+- **`claudetalk auth reset`** — deletes `~/.claudetalk/network.json`
+  (turns cross-machine mode off). Idempotent.
+
+#### Relay observability + safety
+
+- **Per-namespace rate limit** at the relay (`relay/src/rate-limit.ts`).
+  Default: 200 frames / 10s window per namespace. Configurable via
+  `RELAY_RATE_FRAMES` + `RELAY_RATE_WINDOW_MS`. Window-bucket counter
+  (not token bucket) — simpler, slightly burstier, fine for the
+  "circuit breaker against a stuck loop" goal.
+- **`GET /metrics`** on the relay — Prometheus exposition format.
+  Exposes `claudetalk_relay_frames_total{namespace}`,
+  `claudetalk_relay_known_pseudonyms{namespace}`,
+  `claudetalk_relay_connected_clients`. No auth (metadata only, no
+  message bodies); put behind a proxy if your threat model needs it.
+
+#### Deployment IaC
+
+- **`relay/Dockerfile`** — minimal `oven/bun:1.3` image. Build context
+  is repo root (relay imports from `../../src/`). Default config:
+  binds 0.0.0.0:7878, SQLite at `/data/relay_db.sqlite`. Exits 2 if
+  `RELAY_SHARED_SECRET` env is missing.
+- **`relay/fly.toml`** — Fly.io app config. Shared-CPU-1x / 256mb,
+  persistent 1GB volume mounted at `/data`. Quickstart steps in
+  `relay/README.md`.
+
+### Tests
+
+- **`test/unit/cli-auth.test.ts`** (10) — init creates+chmods,
+  refuses bad URL, refuses overwrite without `--yes`, rotates with
+  `--yes`, status redacts secret, add-machine emits heredoc,
+  reset is idempotent.
+- **`test/unit/relay-rate-limit.test.ts`** (4) — within-window
+  cap, window rollover refills, namespaces don't share budgets,
+  reset helper.
+- Extended **`test/integration/relay-end-to-end.test.ts`** to
+  exercise `/healthz` + `/metrics` against the live spawned relay.
+- 221 pass / 0 fail (was 206).
+
+### What's still ahead
+
+Phase N1b — HTTP-MCP endpoint on the relay so `claude.ai`
+Connectors can join the namespace. Substantial (~400 LOC + verifying
+the 5 open questions in `docs/distributed-online-design.md` against
+the live Connector flow). Holding for a focused session.
+
 ## [0.8.2] — 2026-05-24
 
 T2 (channel push) + cross-machine end-to-end integration tests

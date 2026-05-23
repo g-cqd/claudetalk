@@ -211,3 +211,21 @@ test(
   },
   30_000,
 );
+
+test("relay exposes /healthz and Prometheus /metrics", async () => {
+  // Reuses the relay from beforeAll. RELAY_PORT/SECRET are set.
+  const baseUrl = `http://127.0.0.1:${RELAY_PORT}`;
+  const health = await fetch(`${baseUrl}/healthz`);
+  expect(health.status).toBe(200);
+  expect(await health.json()).toEqual({ ok: true });
+
+  const metrics = await fetch(`${baseUrl}/metrics`);
+  expect(metrics.status).toBe(200);
+  const text = await metrics.text();
+  expect(metrics.headers.get("content-type")).toContain("text/plain");
+  expect(text).toContain("claudetalk_relay_frames_total");
+  expect(text).toContain("claudetalk_relay_known_pseudonyms");
+  expect(text).toContain("claudetalk_relay_connected_clients");
+  // After the e2e test above ran, frames > 0 for the test namespace.
+  expect(text).toMatch(/claudetalk_relay_frames_total\{namespace="[^"]+"\} \d+/);
+});

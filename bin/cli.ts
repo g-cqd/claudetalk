@@ -81,6 +81,16 @@ COMMANDS
       CLAUDETALK_HOME. Spawns its own MCP server in a subprocess; diffs
       each new response against the recorded result_summary. Defaults:
       limit=200, home=mktemp (deleted on exit unless --keep or --home).
+  auth init --relay-url <url> [--yes]
+      Create ~/.claudetalk/network.json with a fresh shared secret +
+      the given relay URL. Activates cross-machine mode on this box.
+  auth status
+      Show network.json shape (hides the secret value).
+  auth add-machine
+      Print a paste-ready one-liner that enrolls another machine in
+      this namespace. Treat the output as a secret.
+  auth reset
+      Delete ~/.claudetalk/network.json (turns cross-machine mode off).
   help
       Show this help.
 `);
@@ -422,6 +432,37 @@ switch (cmd) {
     });
     console.log(formatReplayReport(report, hasFlag("verbose")));
     if (report.errors > 0) process.exit(1);
+    break;
+  }
+  case "auth": {
+    const sub = process.argv[3];
+    if (!sub) {
+      console.error("Usage: claudetalk auth <init|status|add-machine|reset>");
+      process.exit(2);
+    }
+    const { runAuthInit, runAuthStatus, runAddMachine, runAuthReset } = await import(
+      "../src/cli-auth.ts"
+    );
+    let r: { ok: boolean; output: string };
+    if (sub === "init") {
+      const relayUrl = getArg("relay-url");
+      if (!relayUrl) {
+        console.error("Usage: claudetalk auth init --relay-url <ws://...> [--yes]");
+        process.exit(2);
+      }
+      r = runAuthInit({ relayUrl, yes: hasFlag("yes") });
+    } else if (sub === "status") {
+      r = runAuthStatus();
+    } else if (sub === "add-machine") {
+      r = runAddMachine();
+    } else if (sub === "reset") {
+      r = runAuthReset();
+    } else {
+      console.error(`Unknown auth subcommand '${sub}'.`);
+      process.exit(2);
+    }
+    console.log(r.output);
+    if (!r.ok) process.exit(1);
     break;
   }
   case "help":
