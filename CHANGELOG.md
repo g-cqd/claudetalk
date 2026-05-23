@@ -6,6 +6,62 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.4] — 2026-05-24
+
+Phase N1b-tools-4 infrastructure — every existing tool registration
+(`registerTools`, `registerChatTools`, `registerNicknameTools`,
+`registerReactionTools`, `registerSearchTool`, `registerStatusTools`,
+`registerMuteTools`) now resolves `me.*` through an
+AsyncLocalStorage-aware Proxy. Sets up the HTTP MCP path to host the
+same tool surface as stdio without code duplication.
+
+### How it works
+
+- New **`src/identity-context.ts`** exports an
+  `AsyncLocalStorage<Identity>` (`identityContext`) and a
+  `dynamicIdentity(staticFallback)` helper that returns a `Proxy`
+  over the static identity. Every property read on the proxy
+  routes to `identityContext.getStore() ?? staticFallback`.
+- Each `register*Tools(server, staticMe)` function wraps `staticMe`
+  in `dynamicIdentity` and binds it to `me`. **Handler bodies are
+  unchanged** — they still write `me.pseudonym`, `me.keyPair`,
+  etc. The Proxy transparently picks up the ALS value when set.
+- Stdio MCP (`src/server.ts`) never sets the ALS, so handlers see
+  the static `me` — zero behavioural change. The HTTP MCP path
+  on the relay (next iteration) will wrap each request in
+  `identityContext.run(perRequestIdentity, ...)` to override the
+  static `me` for that request.
+
+### Why a Proxy
+
+Touching every `me.*` reference across 8 files would be ~100 line
+changes and create review friction. The Proxy approach changes 7
+lines total (one per register* function) and is transparent at
+every callsite. The cost is a tiny per-access function-call indirection,
+negligible compared to SQLite roundtrips.
+
+### Tests
+
+- **`test/unit/identity-context.test.ts`** (5):
+  - Static fallback when ALS empty
+  - ALS-scoped identity wins inside `.run()`
+  - Fallback restored after `.run()` exits
+  - Concurrent ALS scopes are isolated (the property that makes
+    this safe under many concurrent HTTP requests)
+  - ALS survives await boundaries inside a single `.run()`
+- 232 pass / 0 fail (was 227).
+
+### Still open
+
+- **N1b-tools-5**: actually swap the custom HTTP-MCP tools
+  (whoami/inbox/chat/discover/read/search/react/status_*) for
+  calls to the now-Proxy-aware `registerTools` + siblings. Each
+  request handler wraps `transport.handleRequest` in
+  `identityContext.run(perRequestIdentity, ...)`. The
+  infrastructure is here; the swap is a separate atomic change
+  with its own integration-test pass.
+- **N1b-oauth**: still blocked on live Connector probing.
+
 ## [0.10.3] — 2026-05-24
 
 Phase N1b-tools-3 — `_setDb` injection point on `src/db.ts` so the

@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { Identity } from "./pseudonym.ts";
 import { _now, db, touchInstance } from "./db.ts";
 import { ErrorCode, toolError, toolText } from "./errors.ts";
+import { dynamicIdentity } from "./identity-context.ts";
 
 const STATUS_MAX = 80;
 
@@ -57,7 +58,8 @@ export function fmtStatus(row: InstanceStatusRow | null): string {
 const text = (s: string) => toolText(s);
 const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
-export function registerStatusTools(server: McpServer, me: Identity): void {
+export function registerStatusTools(server: McpServer, staticMe: Identity): void {
+  const me = dynamicIdentity(staticMe);
   server.registerTool(
     "status_set",
     {

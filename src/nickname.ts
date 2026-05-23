@@ -13,6 +13,7 @@
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { dynamicIdentity } from "./identity-context.ts";
 import type { Identity } from "./pseudonym.ts";
 import {
   _now,
@@ -185,7 +186,8 @@ export function displayBoth(
 const text = (s: string) => toolText(s);
 const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
-export function registerNicknameTools(server: McpServer, me: Identity): void {
+export function registerNicknameTools(server: McpServer, staticMe: Identity): void {
+  const me = dynamicIdentity(staticMe);
   server.registerTool(
     "nickname_set",
     {

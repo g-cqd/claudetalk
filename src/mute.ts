@@ -8,6 +8,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Identity } from "./pseudonym.ts";
+import { dynamicIdentity } from "./identity-context.ts";
 import { _now, db, getChat, touchInstance } from "./db.ts";
 import { ErrorCode, toolError, toolText } from "./errors.ts";
 
@@ -43,7 +44,8 @@ export function listMutedChatsFor(viewer: string): string[] {
 const text = (s: string) => toolText(s);
 const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
-export function registerMuteTools(server: McpServer, me: Identity): void {
+export function registerMuteTools(server: McpServer, staticMe: Identity): void {
+  const me = dynamicIdentity(staticMe);
   server.registerTool(
     "mute",
     {

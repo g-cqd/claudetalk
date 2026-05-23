@@ -27,6 +27,7 @@ import { recordMessageMentions } from "./mentions.ts";
 import { ErrorCode, toolError, toolText } from "./errors.ts";
 import { messageSigningPayload, sign } from "./keys.ts";
 import { getRelayClient } from "./relay-singleton.ts";
+import { dynamicIdentity } from "./identity-context.ts";
 
 /** Per-message body cap. 64 KiB is comfortably above any reasonable inline
  *  Claude exchange while preventing single-payload DoS / unbounded SQLite
@@ -137,7 +138,10 @@ function validateReplyTo(replyToSeq: number | null | undefined, chatId: string):
   return null;
 }
 
-export function registerChatTools(server: McpServer, me: Identity): void {
+export function registerChatTools(server: McpServer, staticMe: Identity): void {
+  // See src/identity-context.ts: Proxy makes `me.*` resolve to the
+  // ALS-scoped identity for HTTP MCP, static for stdio.
+  const me = dynamicIdentity(staticMe);
   // ---------- chat ----------
   server.registerTool(
     "chat",

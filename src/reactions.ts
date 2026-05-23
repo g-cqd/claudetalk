@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { Identity } from "./pseudonym.ts";
 import { _now, db, getMessage, listChatMembers, touchInstance } from "./db.ts";
 import { ErrorCode, toolError, toolText } from "./errors.ts";
+import { dynamicIdentity } from "./identity-context.ts";
 
 const REACTION_MAX_LEN = 32;
 /** Allowed reaction characters: Unicode letters/digits, underscore, dash,
@@ -107,7 +108,8 @@ export function summariseReactionsBatch(messageIds: string[]): Map<string, strin
 const text = (s: string) => toolText(s);
 const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(s, code);
 
-export function registerReactionTools(server: McpServer, me: Identity): void {
+export function registerReactionTools(server: McpServer, staticMe: Identity): void {
+  const me = dynamicIdentity(staticMe);
   server.registerTool(
     "react",
     {

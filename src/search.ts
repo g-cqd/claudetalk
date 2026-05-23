@@ -8,6 +8,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Identity } from "./pseudonym.ts";
 import { db, touchInstance } from "./db.ts";
+import { dynamicIdentity } from "./identity-context.ts";
 
 interface ChatHit {
   message_id: string;
@@ -36,7 +37,8 @@ function truncate(s: string, max = 120): string {
   return `${s.slice(0, max - 1)}…`;
 }
 
-export function registerSearchTool(server: McpServer, me: Identity): void {
+export function registerSearchTool(server: McpServer, staticMe: Identity): void {
+  const me = dynamicIdentity(staticMe);
   server.registerTool(
     "search",
     {

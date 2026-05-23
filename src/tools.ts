@@ -19,6 +19,7 @@ import { registerMuteTools } from "./mute.ts";
 import { ErrorCode, toolError, toolText } from "./errors.ts";
 import { resetNotificationCursors } from "./notifications.ts";
 import { getChat } from "./db.ts";
+import { dynamicIdentity } from "./identity-context.ts";
 
 const ACTIVE_WINDOW_MS_DEFAULT = 10 * 60 * 1000;
 /** Cap on the optional inline-wait in `ask`. Kept short so Claude is never
@@ -35,7 +36,12 @@ const error = (s: string, code: ErrorCode = ErrorCode.UNSPECIFIED) => toolError(
 
 
 
-export function registerTools(server: McpServer, me: Identity): void {
+export function registerTools(server: McpServer, staticMe: Identity): void {
+  // Proxy `me` so every tool handler transparently resolves to either
+  // the closure-captured static identity (stdio MCP path) or the
+  // AsyncLocalStorage-scoped per-request identity (HTTP MCP path on
+  // the relay). Handler bodies unchanged — see src/identity-context.ts.
+  const me = dynamicIdentity(staticMe);
   // ---------- whoami ----------
   server.registerTool(
     "whoami",
