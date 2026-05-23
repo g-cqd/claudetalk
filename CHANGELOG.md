@@ -6,6 +6,57 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-05-24
+
+Phase N1b expansion — `discover`, `read`, `publish` tools on the
+HTTP MCP path, plus session-level TOFU binding so HTTP-only clients
+appear in `discover` consistently with the WS path.
+
+### Added
+
+- **`discover`** (HTTP MCP) — lists pseudonyms TOFU-bound in the
+  namespace via the relay's `pubkey_claims` table. Annotates
+  caller as `(you)`.
+- **`read`** (HTTP MCP) — fetches frames for a chat by
+  `chat_id` + `limit`, returns the raw frame shape as JSON. Bodies
+  are whatever the relay stores — `ct1:`-encrypted for v0.8+
+  traffic, plaintext for older. Decryption is caller-side (clients
+  hold the shared secret; the relay doesn't decrypt).
+- **`publish`** (HTTP MCP, Phase N1b-sign) — client-side signed
+  publish. Lets an HTTP client (Agent SDK, advanced users) hold its
+  own Ed25519 keypair, sign frames locally, and submit the raw
+  frame. Relay verifies bearer-token pubkey via TOFU, broadcasts.
+  Recipients verify the BODY against the CLIENT's key, not the
+  server's. The earlier `chat` tool (server-side signing) remains
+  for callers who don't want to do crypto.
+- **Session-level TOFU at the HTTP path** — every authorized
+  request binds the session's `pseudonym → public_key` claim in
+  the relay's `pubkey_claims` table (the same place the WS path
+  writes). Pseudonym now appears in `discover` from the first
+  request. Conflict (different pubkey already bound) returns 403
+  `pubkey_mismatch`.
+
+### Tests
+
+- Extended **`test/integration/http-mcp.test.ts`** — full
+  lifecycle now asserts `discover` returns the caller as `(you)`,
+  `read` returns the frame JSON we just `chat`'d. New test for
+  `publish` builds a real client-signed + client-encrypted frame
+  and verifies it round-trips through `read`.
+- 224 pass / 0 fail (was 223).
+
+### Still open (genuine N1b-* follow-up work, not "deferred")
+
+- **N1b-tools-2**: full feature parity with stdio MCP
+  (ask/answer, groupchat with invite, react, mute, status,
+  search, nicknames, threading via `parent_id`). Either port the
+  tool surface to a DB-agnostic interface or hold the full
+  schema mirror at the relay. Multi-session effort.
+- **N1b-oauth**: claude.ai OAuth token verification. Depends on
+  Q-Verify-2/3 in `docs/distributed-online-design.md` — needs
+  live probing of the Connector flow to confirm whether tokens
+  are JWTs (verifiable inline) or opaque (introspection-required).
+
 ## [0.10.0] — 2026-05-24
 
 Phase N1b alpha — **MCP-over-HTTP-SSE endpoint on the relay**. Lets

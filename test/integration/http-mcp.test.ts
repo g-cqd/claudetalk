@@ -151,9 +151,9 @@ test(
     // 3. tools/list.
     const list = await rpcCall("tools/list");
     const tools = (list.result?.tools ?? []).map((t: any) => t.name);
-    expect(tools).toContain("whoami");
-    expect(tools).toContain("inbox");
-    expect(tools).toContain("chat");
+    for (const expected of ["whoami", "inbox", "chat", "discover", "read", "publish"]) {
+      expect(tools).toContain(expected);
+    }
 
     // 4. tools/call whoami.
     const who = await rpcCall("tools/call", { name: "whoami", arguments: {} });
@@ -177,6 +177,101 @@ test(
     const inbText = inb.result?.content?.[0]?.text ?? "";
     expect(inbText).toContain("group:httpmcp-smoke");
     expect(inbText).toContain("(encrypted)");
+
+    // 7. tools/call discover — the relay TOFU-bound our pseudonym on
+    //    the first publish; we should appear in discover.
+    const disc = await rpcCall("tools/call", { name: "discover", arguments: {} });
+    const discText = disc.result?.content?.[0]?.text ?? "";
+    expect(discText).toMatch(/Known pseudonyms \(\d+\):/);
+    // Our pseudonym should be flagged "(you)".
+    expect(discText).toContain("(you)");
+
+    // 8. tools/call read — fetch frames for the chat we posted to.
+    const rd = await rpcCall("tools/call", {
+      name: "read",
+      arguments: { chat_id: "group:httpmcp-smoke", limit: 5 },
+    });
+    const rdText = rd.result?.content?.[0]?.text ?? "";
+    expect(rdText).toContain("group:httpmcp-smoke");
+    const parsedRead = JSON.parse(rdText.slice(rdText.indexOf("[")));
+    expect(Array.isArray(parsedRead)).toBe(true);
+    expect(parsedRead.length).toBeGreaterThan(0);
+    expect(parsedRead[0]!.body).toContain("ct1:"); // encrypted
+  },
+  20_000,
+);
+
+test(
+  "HTTP MCP: publish accepts a client-signed frame",
+  async () => {
+    // Reuse SESSION_ID from the prior lifecycle test (Bun test files
+    // share module state). If the prior test was skipped, re-init.
+    if (!SESSION_ID) {
+      await rpcCall("initialize", {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "http-test-publish", version: "0" },
+      });
+      await rpcNotify("notifications/initialized");
+    }
+
+    // Build a real client-signed frame: sign over plaintext (matches
+    // the WS-path convention) so a recipient can decrypt+verify.
+    const { getKeyPairForFolder, messageSigningPayload, sign } = await import(
+      "../../src/keys.ts"
+    );
+    process.env.CLAUDETALK_HOME = CLIENT_HOME;
+    const kp = await getKeyPairForFolder("/tmp/httpmcp-test-client");
+    delete process.env.CLAUDETALK_HOME;
+
+    const refId = crypto.randomUUID();
+    const ts = Date.now();
+    const target = "group:publish-test";
+    const plaintext = "client-signed message";
+    // Pseudonym MUST match what whoami would return (= bearer pubkey).
+    const { pseudonymForKey } = await import("../../src/pseudonym.ts");
+    const me = pseudonymForKey(kp.publicKey, "(http)");
+    const sigBytes = await sign(
+      kp.privateKey,
+      messageSigningPayload({
+        messageId: refId,
+        chatId: target,
+        authorPseudonym: me.pseudonym,
+        body: plaintext,
+        createdAt: ts,
+      }),
+    );
+    // Encrypt the body client-side as the protocol expects.
+    const { encryptBody } = await import("../../src/relay-crypto.ts");
+    const encryptedBody = await encryptBody(SECRET, plaintext);
+
+    const resp = await rpcCall("tools/call", {
+      name: "publish",
+      arguments: {
+        kind: "msg",
+        target,
+        ref_id: refId,
+        body: encryptedBody,
+        ts,
+        sig: sigBytes,
+      },
+    });
+    const t = resp.result?.content?.[0]?.text ?? "";
+    expect(t).toContain("published frame_id=");
+    expect(t).toContain("client-signed");
+
+    // Verify via read.
+    const rd = await rpcCall("tools/call", {
+      name: "read",
+      arguments: { chat_id: target, limit: 5 },
+    });
+    const rdText = rd.result?.content?.[0]?.text ?? "";
+    expect(rdText).toContain(target);
+    const parsed = JSON.parse(rdText.slice(rdText.indexOf("[")));
+    expect(parsed.length).toBeGreaterThan(0);
+    expect(parsed[0]!.ref_id).toBe(refId);
+    expect(parsed[0]!.public_key).toBe(kp.publicKey);
+    expect(parsed[0]!.sig).toBe(sigBytes);
   },
   20_000,
 );
