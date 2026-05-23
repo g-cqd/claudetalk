@@ -6,6 +6,58 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-05-24
+
+Audit closure — remaining MED + LOW items from the v0.5.2 audit.
+After this release the audit findings list is fully landed; the next
+release (v0.6.0) bundles Phase N1 (relay) with the K0/K1/K3/K4 key
+work, which together resolve the network-design pseudonym-identity
+gap.
+
+### Security
+
+- **`safe-write.ts` refuses to follow symbolic links** when writing
+  through `~/.claude.json` / `~/.claude/settings.json`. Without
+  this, an attacker-pre-placed symlink at the target pointing to a
+  sensitive file would cause `copyFileSync` to copy the target's
+  contents into a `0o644` backup. (Audit M4.)
+- **Rate-limit bucket pre-debits from the audit log on first call
+  from a fresh process.** A hot crash-loop could previously bypass
+  the 30-calls / 10s ceiling by restarting the MCP server between
+  every call (each restart restored a full budget). Now the bucket
+  starts at `30 - recent_audit_count` so loops are throttled across
+  restarts. (Audit M9.)
+
+### Reliability
+
+- **WebSocket subscribers tracked as `Set<WS>` per viewer** instead
+  of an integer count. A previously-possible drift where `open`
+  fired without a matching `close` (transport error / send-failed
+  before establishment) left the count > 0 with no real
+  subscribers — version ticker never stopped. Set membership is
+  self-correcting. (Audit M8 perf.)
+- **`PRAGMA foreign_keys = ON` restored after any failed migration
+  step.** Migration v3 toggles FKs off to rebuild messages /
+  message_reactions / message_mentions / chat_members; if it
+  rolled back mid-step, FKs stayed off for the rest of the
+  process. (Audit M7 perf.)
+
+### Performance
+
+- **`POLL_MS` bumped from 2s → 10s** in `src/server.ts`. This loop
+  feeds the MCP logging notification path, which Claude Code
+  doesn't surface; the 2s cadence was pure overhead. (Audit M6
+  perf.)
+
+### Tests
+
+- New `test/unit/rate-limit-backfill.test.ts` (4 cases) — clean
+  bucket, partial pre-debit, full denial after over-limit recent
+  calls, per-tool isolation.
+- New `test/unit/audit-log-overflow.test.ts` (2 cases) — queue cap
+  enforced, single overflow warning per overflow event.
+- 185 pass / 0 fail (was 179).
+
 ## [0.5.3] — 2026-05-18
 
 Audit-driven medium + low sweep (continuing from v0.5.2 HIGH fixes).

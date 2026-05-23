@@ -10,6 +10,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -160,6 +161,26 @@ export function safeWriteJson(
 
   let mode = 0o644;
   if (existsSync(path)) {
+    // Refuse to follow symlinks. `copyFileSync(path, bak)` follows symlinks
+    // by default, so an attacker-pre-placed symlink at ~/.claude.json
+    // pointing to a sensitive file (e.g. ~/.ssh/id_rsa) would copy the
+    // target's contents into a 0o644 backup that we then create.
+    // (Security audit M4.)
+    try {
+      const lst = lstatSync(path);
+      if (lst.isSymbolicLink()) {
+        throw new Error(
+          `Refusing to write through symbolic link at ${path}. ` +
+            `Resolve the symlink or remove it before retrying.`,
+        );
+      }
+    } catch (e: any) {
+      if (e?.code === "ENOENT") {
+        // raced; file disappeared between existsSync and lstatSync — fine
+      } else {
+        throw e;
+      }
+    }
     try {
       mode = statSync(path).mode & 0o777;
     } catch {}

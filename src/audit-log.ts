@@ -175,6 +175,33 @@ export function _resetAuditLogForTests(): void {
     flushTimer = null;
   }
   queue.length = 0;
+  overflowWarned = false;
+}
+
+/** Test helper: peek the queue length without flushing. */
+export function _queueLengthForTests(): number {
+  return queue.length;
+}
+
+/** Test helper: enqueue a row without the immediate-flush that
+ *  insertToolCall performs (which would prevent the queue from
+ *  accumulating past the cap during a cap-overflow test). */
+export function _enqueueForTests(row: {
+  pseudonym: string;
+  tool: string;
+  args_json: string | null;
+  result_summary: string | null;
+  is_error: boolean;
+  error: string | null;
+  started_at: number;
+  duration_ms: number;
+}): void {
+  enqueue({
+    ...row,
+    kind: "tool",
+    direction: "in",
+    jrpc_id: null,
+  });
 }
 
 // ---------------- queries ----------------

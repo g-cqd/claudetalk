@@ -115,9 +115,13 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
   // builds a new snapshot when it bumped. Cheap (1 row by PK).
   const VERSION_POLL_MS = 150;
 
-  // viewer (or null = unbound) -> ref count. Drives which snapshots we have
-  // to build on a version bump.
-  const subscribers = new Map<string | null, number>();
+  // viewer (or null = unbound) -> Set of open WebSocket handles. Set size
+  // is the authoritative subscriber count. Previously this was a number
+  // counter that could drift if `open` fired without a matching `close`
+  // (transport error, ws.send threw before establishment, etc.) —
+  // resulting in a ticker that never stopped because count > 0 with no
+  // real subscribers. (Perf audit M8.)
+  const subscribers = new Map<string | null, Set<unknown>>();
   let lastVersion = -1;
   let versionTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -150,6 +154,19 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
       clearInterval(versionTimer);
       versionTimer = null;
     }
+  }
+
+  function addSubscriber(viewer: string | null, ws: unknown): void {
+    const set = subscribers.get(viewer) ?? new Set<unknown>();
+    set.add(ws);
+    subscribers.set(viewer, set);
+  }
+
+  function removeSubscriber(viewer: string | null, ws: unknown): void {
+    const set = subscribers.get(viewer);
+    if (!set) return;
+    set.delete(ws);
+    if (set.size === 0) subscribers.delete(viewer);
   }
 
   const server = Bun.serve<WsData>({
@@ -247,7 +264,7 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
         const v = ws.data.viewer;
         const topic = topicFor(v);
         ws.subscribe(topic);
-        subscribers.set(v, (subscribers.get(v) ?? 0) + 1);
+        addSubscriber(v, ws);
         startVersionTickerIfNeeded(server);
         ws.send(
           JSON.stringify({
@@ -267,10 +284,7 @@ export function serveDashboard(opts: ServeOptions = {}): DashboardServer {
         }
       },
       close(ws) {
-        const v = ws.data.viewer;
-        const n = (subscribers.get(v) ?? 1) - 1;
-        if (n <= 0) subscribers.delete(v);
-        else subscribers.set(v, n);
+        removeSubscriber(ws.data.viewer, ws);
         if (subscribers.size === 0) stopVersionTicker();
       },
     },

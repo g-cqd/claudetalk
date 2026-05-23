@@ -401,6 +401,12 @@ export function migrate(d: Database): void {
       d.exec("COMMIT;");
     } catch (e: any) {
       try { d.exec("ROLLBACK;"); } catch {}
+      // Always restore FK enforcement to ON after a failed migration
+      // step. Migration v3 toggles `foreign_keys = OFF` to rebuild
+      // tables — if it rolls back mid-step, FK enforcement stays off
+      // for the rest of the process unless we put it back. (Perf
+      // audit M7.)
+      try { d.exec("PRAGMA foreign_keys = ON;"); } catch {}
       // SQLITE_BUSY here is fine — another process is migrating; we'll
       // observe the bumped user_version on the next iteration / startup.
       if (

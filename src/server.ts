@@ -52,7 +52,11 @@ function installCrashHandlers(pseudonym: string): void {
 }
 
 const HEARTBEAT_MS = 30_000;
-const POLL_MS = 2_000;
+// Activity-summary poll for the logging-notification path. Claude Code
+// doesn't surface MCP logging messages, so this loop is mostly
+// no-op overhead. Raised from 2 s → 10 s; if/when a non-Claude-Code MCP
+// client subscribes, a few-second delay is fine. (Perf audit M6.)
+const POLL_MS = 10_000;
 /** Phase 0 (channel mode): poll for new chat messages addressed at us and
  *  push them through the channel API. Tight loop because the whole point is
  *  real-time delivery; cost is one MAX(id) per chat membership per tick. */
@@ -89,7 +93,7 @@ async function main(): Promise<void> {
   }
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.5.3" },
+    { name: "claudetalk", version: "0.5.4" },
     {
       capabilities: {
         tools: {},
