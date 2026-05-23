@@ -94,6 +94,19 @@ export function getDashboardVersion(): number {
   }
 }
 
+/** Inject an externally-managed Database to serve as the singleton.
+ *  Used by the relay (relay/src/index.ts) so the existing tool
+ *  registrations operate on the relay's DB rather than the local
+ *  MCP server's ~/.claudetalk/db.sqlite. Pass `null` to revert to
+ *  default singleton creation. Call BEFORE any other src/db.ts
+ *  function (otherwise the default singleton wins).
+ *
+ *  Caller owns the lifecycle of the injected db (must close it
+ *  themselves on shutdown). */
+export function _setDb(d: Database | null): void {
+  _db = d;
+}
+
 export function db(): Database {
   if (_db) return _db;
   ensureRootDir();

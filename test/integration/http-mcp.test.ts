@@ -151,7 +151,18 @@ test(
     // 3. tools/list.
     const list = await rpcCall("tools/list");
     const tools = (list.result?.tools ?? []).map((t: any) => t.name);
-    for (const expected of ["whoami", "inbox", "chat", "discover", "read", "publish"]) {
+    for (const expected of [
+      "whoami",
+      "inbox",
+      "chat",
+      "discover",
+      "read",
+      "publish",
+      "search",
+      "react",
+      "status_set",
+      "status_clear",
+    ]) {
       expect(tools).toContain(expected);
     }
 
@@ -236,6 +247,67 @@ test("Relay materialises inbound frames into the ClaudeTalk schema (messages/cha
   } finally {
     relayDb.close();
   }
+});
+
+test("HTTP MCP: status_set + status_clear round-trip via discover", async () => {
+  // discover doesn't yet surface status, so we check the relay DB directly.
+  const { Database } = await import("bun:sqlite");
+  const { join } = await import("node:path");
+  if (!SESSION_ID) {
+    await rpcCall("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "http-test-status", version: "0" },
+    });
+    await rpcNotify("notifications/initialized");
+  }
+  await rpcCall("tools/call", {
+    name: "status_set",
+    arguments: { status: "available for review", emoji: "👀" },
+  });
+  const relayDb = new Database(join(RELAY_DIR, "relay.db"));
+  try {
+    const row = relayDb
+      .query<{ status: string; emoji: string | null }, []>(
+        "SELECT status, emoji FROM instance_status WHERE pseudonym != ''",
+      )
+      .get();
+    expect(row?.status).toBe("available for review");
+    expect(row?.emoji).toBe("👀");
+  } finally {
+    relayDb.close();
+  }
+  await rpcCall("tools/call", { name: "status_clear", arguments: {} });
+  const relayDb2 = new Database(join(RELAY_DIR, "relay.db"));
+  try {
+    const row = relayDb2
+      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM instance_status")
+      .get();
+    expect(row?.n ?? 0).toBe(0);
+  } finally {
+    relayDb2.close();
+  }
+});
+
+test("HTTP MCP: search hits a posted message via the materialised schema", async () => {
+  if (!SESSION_ID) {
+    await rpcCall("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "http-test-search", version: "0" },
+    });
+    await rpcNotify("notifications/initialized");
+  }
+  // search on the encrypted body — won't match the plaintext but
+  // WILL match the "ct1:" prefix (every encrypted body has it).
+  const r = await rpcCall("tools/call", {
+    name: "search",
+    arguments: { query: "ct1", limit: 10 },
+  });
+  const text = r.result?.content?.[0]?.text ?? "";
+  expect(text).toMatch(/Search 'ct1' — \d+ hits:/);
+  // At least one of the earlier publishes should show up.
+  expect(text).toContain("(encrypted)");
 });
 
 test(

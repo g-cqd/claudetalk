@@ -34,6 +34,7 @@ import {
 import { verifyToken } from "../../src/relay-auth.ts";
 import { messageSigningPayload, verify } from "../../src/keys.ts";
 import { migrate } from "../../src/migrations.ts";
+import { _setDb } from "../../src/db.ts";
 import { buildHttpMcpHandler } from "./mcp-http.ts";
 
 const PORT = Number(process.env.RELAY_PORT ?? 7878);
@@ -99,6 +100,14 @@ db.exec(`
 // relay-specific tables (above) AND the full ClaudeTalk schema. They
 // don't conflict — no name overlap.
 migrate(db);
+
+// Phase N1b-tools-3: inject the relay's Database into src/db.ts's
+// singleton so the existing tool registrations (whoami, discover,
+// inbox, chat, ask, react, ...) operate on the relay's DB when
+// called via the HTTP MCP path. Local Claude Code sessions continue
+// to use their own per-machine ~/.claudetalk/db.sqlite — those
+// processes never import _setDb.
+_setDb(db);
 
 interface FrameRow {
   frame_id: number;

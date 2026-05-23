@@ -347,6 +347,132 @@ export async function buildHttpMcpHandler(opts: HttpMcpOptions): Promise<(req: R
     },
   );
 
+  // ---------- search ----------
+  server.registerTool(
+    "search",
+    {
+      title: "Substring search across message bodies in the relay",
+      description:
+        "LIKE-based scan with wildcard escaping. Returns matches in the " +
+        "namespace's materialised `messages` table. Bodies stored as ct1: " +
+        "are still searchable on the prefix but encrypted content won't " +
+        "match plaintext queries — that's the N2 trust property.",
+      inputSchema: {
+        query: z.string().min(2).max(256).describe("Substring to match (case-insensitive)."),
+        limit: z.number().int().min(1).max(50).optional()
+          .describe("Max hits. Default 20."),
+      },
+    },
+    async ({ query, limit }) => {
+      const escaped = query.replace(/[\\%_]/g, (c) => `\\${c}`);
+      const needle = `%${escaped}%`;
+      const rows = opts.db
+        .query<
+          { seq: number; chat_id: string; from_pseudonym: string; body: string },
+          [string, number]
+        >(
+          `SELECT seq, chat_id, from_pseudonym, body
+           FROM messages WHERE body LIKE ? ESCAPE '\\' COLLATE NOCASE
+           ORDER BY seq DESC LIMIT ?`,
+        )
+        .all(needle, limit ?? 20);
+      const lines = [`Search '${query}' — ${rows.length} hits:`];
+      for (const r of rows) {
+        const preview = r.body.startsWith("ct1:") ? "(encrypted)" : r.body.slice(0, 80);
+        lines.push(`  [#${r.seq}] ${r.chat_id} — ${r.from_pseudonym}: ${preview}`);
+      }
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    },
+  );
+
+  // ---------- react ----------
+  server.registerTool(
+    "react",
+    {
+      title: "Add or remove a reaction on a message",
+      description:
+        "Identify the message by its UUID `message_id` (call `read` to " +
+        "see them). Pass empty `reaction` to clear your existing reaction.",
+      inputSchema: {
+        message_id: z.string().min(8).max(64).describe("Message UUID."),
+        reaction: z.string().max(32).describe("Emoji or short token; empty to clear."),
+      },
+    },
+    async ({ message_id, reaction }) => {
+      const me = currentSessionFromContext();
+      if (!me) return { content: [{ type: "text" as const, text: "(no session)" }], isError: true };
+      const row = opts.db
+        .query<{ id: string }, [string]>("SELECT id FROM messages WHERE id = ?")
+        .get(message_id);
+      if (!row) {
+        return { content: [{ type: "text" as const, text: `unknown message_id ${message_id}` }], isError: true };
+      }
+      const trimmed = reaction.trim();
+      if (trimmed.length === 0) {
+        opts.db.run("DELETE FROM message_reactions WHERE message_id = ? AND reactor = ?", [
+          message_id,
+          me.pseudonym,
+        ]);
+        return { content: [{ type: "text" as const, text: `cleared your reaction on ${message_id}` }] };
+      }
+      opts.db.run(
+        `INSERT INTO message_reactions (message_id, reactor, reaction, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(message_id, reactor) DO UPDATE SET
+           reaction = excluded.reaction, created_at = excluded.created_at`,
+        [message_id, me.pseudonym, trimmed, Date.now()],
+      );
+      return { content: [{ type: "text" as const, text: `reacted to ${message_id} with '${trimmed}'` }] };
+    },
+  );
+
+  // ---------- status_set ----------
+  server.registerTool(
+    "status_set",
+    {
+      title: "Set your status text + optional emoji",
+      description: "Visible to other Claudes in the same namespace via `discover`.",
+      inputSchema: {
+        status: z.string().min(1).max(80).describe("Short status text."),
+        emoji: z.string().max(8).optional().describe("Optional emoji."),
+      },
+    },
+    async ({ status, emoji }) => {
+      const me = currentSessionFromContext();
+      if (!me) return { content: [{ type: "text" as const, text: "(no session)" }], isError: true };
+      // instance_status FKs into instances; ensure a row exists.
+      opts.db.run(
+        `INSERT OR IGNORE INTO instances (pseudonym, path, first_seen, last_seen, pid)
+         VALUES (?, '(http)', ?, ?, NULL)`,
+        [me.pseudonym, Date.now(), Date.now()],
+      );
+      opts.db.run(
+        `INSERT INTO instance_status (pseudonym, status, emoji, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(pseudonym) DO UPDATE SET
+           status = excluded.status, emoji = excluded.emoji, updated_at = excluded.updated_at`,
+        [me.pseudonym, status, emoji ?? null, Date.now()],
+      );
+      return { content: [{ type: "text" as const, text: `status: ${emoji ?? ""} ${status}`.trim() }] };
+    },
+  );
+
+  // ---------- status_clear ----------
+  server.registerTool(
+    "status_clear",
+    {
+      title: "Clear your status",
+      description: "Removes your row from instance_status.",
+      inputSchema: {},
+    },
+    async () => {
+      const me = currentSessionFromContext();
+      if (!me) return { content: [{ type: "text" as const, text: "(no session)" }], isError: true };
+      opts.db.run("DELETE FROM instance_status WHERE pseudonym = ?", [me.pseudonym]);
+      return { content: [{ type: "text" as const, text: "status cleared" }] };
+    },
+  );
+
   // ---------- publish (Phase N1b-sign) ----------
   //
   // Client-side signed publish. Lets an HTTP client (Agent SDK, etc.)

@@ -6,6 +6,51 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.3] — 2026-05-24
+
+Phase N1b-tools-3 — `_setDb` injection point on `src/db.ts` so the
+relay's HTTP MCP path can share helpers with the stdio server, plus
+4 more HTTP tools (`search`, `react`, `status_set`, `status_clear`)
+that exercise the now-shared materialised schema.
+
+### Added
+
+- **`_setDb(db)`** export in `src/db.ts`. Lets the relay
+  (`relay/src/index.ts`) inject its own `Database` instance as the
+  singleton so subsequent `db()` calls return the relay's
+  connection. Wired at relay startup right after `migrate(db)`.
+  Local Claude Code processes never call `_setDb` and continue
+  using their default `~/.claudetalk/db.sqlite`.
+- **`search`** (HTTP MCP) — LIKE-based scan over the materialised
+  `messages.body` with wildcard escaping. Encrypted bodies (`ct1:`)
+  match on the prefix but not on plaintext content (N2 trust
+  preserved).
+- **`react`** (HTTP MCP) — by message UUID. Empty `reaction`
+  clears. UPSERT on `(message_id, reactor)`.
+- **`status_set`** / **`status_clear`** (HTTP MCP) — write to
+  `instance_status` (with an `INSERT OR IGNORE` into `instances`
+  first since instance_status FKs there).
+
+### Tests
+
+- **Extended `test/integration/http-mcp.test.ts`**:
+  - `tools/list` now asserts all 10 tools are present (was 6).
+  - New: status_set + status_clear round-trip via direct relay DB
+    query.
+  - New: search hits the `ct1:` prefix in encrypted bodies.
+- 227 pass / 0 fail (was 225).
+
+### Still open (genuine work, not "deferred")
+
+- **N1b-tools-4** — port the full `registerTools` / `registerChatTools` /
+  etc. registrations to use AsyncLocalStorage-scoped `me: Identity`
+  instead of closure-captured static identity. That would unlock
+  every existing stdio tool over HTTP without re-implementing each
+  one in `mcp-http.ts`. Substantial refactor of every existing tool
+  handler. Multi-session.
+- **N1b-oauth** — still blocked on live claude.ai Connector probing
+  (Q-Verify-2/3 in `docs/distributed-online-design.md`).
+
 ## [0.10.2] — 2026-05-24
 
 Phase N1b-tools-2 foundation — the relay now runs the **full
