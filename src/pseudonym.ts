@@ -30,6 +30,12 @@ export interface Identity {
    *  main(); undefined only in unit-test stubs that build an Identity by
    *  hand. */
   keyPair?: import("./keys.ts").KeyPair;
+  /** HTTP MCP only: the public key claimed by the bearer token (whose
+   *  hash drives `pseudonym`). The relay's HTTP `publish` tool uses this
+   *  to forward client-signed frames with the caller's actual pubkey,
+   *  separate from the server-side keypair the chat/ask tools sign with.
+   *  Always undefined for stdio MCP sessions. */
+  bearerPublicKey?: string;
 }
 
 /** Stable per-folder identity. SHA-256 of the absolute path drives the

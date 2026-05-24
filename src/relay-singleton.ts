@@ -1,20 +1,30 @@
 /**
- * Module-level handle to the active RelayClient. src/server.ts sets it
- * on startup (when network.json is present); src/chat-tools.ts pulls it
- * from here to publish each new local message to the relay.
+ * Module-level handle to the active "publisher" used by chat-tools to
+ * route a locally-inserted message out to the relay (in the stdio MCP
+ * server process) or to the relay's own broadcast pipeline (in the
+ * relay process itself, via a loopback).
  *
- * We use a singleton so we don't have to thread the client through every
- * registerTool call site. The MCP server has exactly one identity and
- * one relay connection per process.
+ * Both shapes satisfy the same `Publisher` interface so chat-tools
+ * doesn't care which one it's talking to.
  */
-import type { RelayClient } from "./relay-client.ts";
 
-let _client: RelayClient | null = null;
-
-export function setRelayClient(c: RelayClient | null): void {
-  _client = c;
+export interface Publisher {
+  publishMessage(args: {
+    messageId: string;
+    chatId: string;
+    body: string;
+    createdAt: number;
+    signature: string;
+  }): Promise<number | null>;
+  close(): void;
 }
 
-export function getRelayClient(): RelayClient | null {
-  return _client;
+let _publisher: Publisher | null = null;
+
+export function setRelayClient(c: Publisher | null): void {
+  _publisher = c;
+}
+
+export function getRelayClient(): Publisher | null {
+  return _publisher;
 }

@@ -180,7 +180,7 @@ async function main(): Promise<void> {
   }
 
   const server = new McpServer(
-    { name: "claudetalk", version: "0.10.4" },
+    { name: "claudetalk", version: "0.10.5" },
     {
       capabilities: {
         tools: {},

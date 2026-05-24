@@ -148,66 +148,94 @@ test(
     // 2. notifications/initialized (no response expected).
     await rpcNotify("notifications/initialized");
 
-    // 3. tools/list.
+    // 3. tools/list — N1b-tools-5 exposes the full stdio surface
+    //    (registerTools registers ~18 tools) + the relay-specific
+    //    `publish`. Confirm representative names from each register*.
     const list = await rpcCall("tools/list");
     const tools = (list.result?.tools ?? []).map((t: any) => t.name);
     for (const expected of [
+      // src/tools.ts
       "whoami",
-      "inbox",
-      "chat",
       "discover",
+      "ask",
+      "answer",
+      "inbox",
+      "notifications_reset",
+      "wait_for_messages",
+      // src/chat-tools.ts
+      "chat",
+      "groupchat",
       "read",
-      "publish",
-      "search",
+      // src/reactions.ts
       "react",
+      // src/status.ts
       "status_set",
       "status_clear",
+      // src/search.ts
+      "search",
+      // src/mute.ts
+      "mute",
+      // src/nickname.ts
+      "nickname_set",
+      "nickname_clear",
+      "nickname_in_chat",
+      "nicknames_list",
+      // relay-specific
+      "publish",
     ]) {
       expect(tools).toContain(expected);
     }
 
-    // 4. tools/call whoami.
+    // 4. tools/call whoami — stdio MCP format: "You are: <pseudonym>"
+    //    followed by "Folder: <path>". Path is "(http)" for HTTP
+    //    clients.
     const who = await rpcCall("tools/call", { name: "whoami", arguments: {} });
     const whoText = who.result?.content?.[0]?.text ?? "";
-    expect(whoText).toContain("You are:");
     expect(whoText).toMatch(/You are: [A-Z][a-z]+[A-Z][a-z]+-[0-9a-f]{3}/);
+    expect(whoText).toContain("(http)"); // path for HTTP clients
     void MY_PUBKEY;
 
-    // 5. tools/call chat.
+    // 5. tools/call groupchat — the correct way to post to a slug-
+    //    addressed room. (`chat` is for direct 1:1 by pseudonym).
     const post = await rpcCall("tools/call", {
-      name: "chat",
+      name: "groupchat",
       arguments: { slug: "httpmcp-smoke", message: "hello from HTTP MCP" },
     });
     const postText = post.result?.content?.[0]?.text ?? "";
-    expect(postText).toContain("posted to group:httpmcp-smoke");
-    expect(postText).toContain("frame_id=");
+    expect(postText).toContain("chat_id=group:httpmcp-smoke");
+    expect(postText).toContain("Sent your message");
 
-    // 6. tools/call inbox — should show the frame we just posted.
-    //    Body is encrypted at rest → preview is "(encrypted)" not plaintext.
-    const inb = await rpcCall("tools/call", { name: "inbox", arguments: { limit: 20 } });
+    // 6. tools/call inbox — stdio MCP format: "Inbox for <pseudonym>:"
+    //    + chat lines. We just posted into httpmcp-smoke; it should
+    //    appear in our chats listing.
+    const inb = await rpcCall("tools/call", { name: "inbox", arguments: {} });
     const inbText = inb.result?.content?.[0]?.text ?? "";
+    expect(inbText).toContain("Inbox for ");
     expect(inbText).toContain("group:httpmcp-smoke");
-    expect(inbText).toContain("(encrypted)");
 
-    // 7. tools/call discover — the relay TOFU-bound our pseudonym on
-    //    the first publish; we should appear in discover.
+    // 7. tools/call discover — stdio MCP format: "Active ClaudeTalk
+    //    instances (N):" + per-instance lines. Our pseudonym should
+    //    appear (and the trailing "(You are ...)" footer too).
     const disc = await rpcCall("tools/call", { name: "discover", arguments: {} });
     const discText = disc.result?.content?.[0]?.text ?? "";
-    expect(discText).toMatch(/Known pseudonyms \(\d+\):/);
-    // Our pseudonym should be flagged "(you)".
-    expect(discText).toContain("(you)");
+    expect(discText).toMatch(/Active ClaudeTalk instances \(\d+\):/);
+    expect(discText).toContain("(You are ");
 
-    // 8. tools/call read — fetch frames for the chat we posted to.
+    // 8. tools/call read — stdio MCP format: "chat_id=X (N messages
+    //    since 0)" + [seq] lines. With the N1b-tools-5 architecture
+    //    chat-tools' insertMessage writes the PLAINTEXT body into the
+    //    relay's `messages` table (the loopback Publisher only
+    //    encrypts for the WS broadcast envelope + frames log). HTTP-
+    //    sent content via chat/groupchat is therefore relay-readable;
+    //    callers who want N2 confidentiality at the relay must use
+    //    `publish` instead with a pre-encrypted body.
     const rd = await rpcCall("tools/call", {
       name: "read",
       arguments: { chat_id: "group:httpmcp-smoke", limit: 5 },
     });
     const rdText = rd.result?.content?.[0]?.text ?? "";
-    expect(rdText).toContain("group:httpmcp-smoke");
-    const parsedRead = JSON.parse(rdText.slice(rdText.indexOf("[")));
-    expect(Array.isArray(parsedRead)).toBe(true);
-    expect(parsedRead.length).toBeGreaterThan(0);
-    expect(parsedRead[0]!.body).toContain("ct1:"); // encrypted
+    expect(rdText).toContain("chat_id=group:httpmcp-smoke");
+    expect(rdText).toContain("hello from HTTP MCP");
   },
   20_000,
 );
@@ -234,9 +262,23 @@ test("Relay materialises inbound frames into the ClaudeTalk schema (messages/cha
       )
       .all();
     expect(msgs.length).toBeGreaterThan(0);
-    // Body is encrypted at rest — relay never decrypts (N2 trust).
-    expect(msgs[0]!.body).toMatch(/^ct1:/);
+    // N1b-tools-5 trade-off: chat-tools writes plaintext into messages
+    // (via insertMessage) BEFORE the loopback Publisher encrypts for
+    // the WS broadcast frame. The `frames` table still holds the
+    // ct1:-encrypted body. HTTP clients who need N2-strength
+    // confidentiality at the relay must use `publish` with a pre-
+    // encrypted body instead of `chat`/`groupchat`. See CHANGELOG
+    // v0.10.5 for the rationale.
+    expect(msgs[0]!.body).toBe("hello from HTTP MCP");
     expect(msgs[0]!.signature).not.toBeNull();
+    // Frames table still has the encrypted form:
+    const frames = relayDb
+      .query<{ body: string }, []>(
+        "SELECT body FROM frames WHERE target = 'group:httpmcp-smoke'",
+      )
+      .all();
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames[0]!.body).toMatch(/^ct1:/);
 
     const members = relayDb
       .query<{ pseudonym: string }, []>(
@@ -298,16 +340,24 @@ test("HTTP MCP: search hits a posted message via the materialised schema", async
     });
     await rpcNotify("notifications/initialized");
   }
-  // search on the encrypted body — won't match the plaintext but
-  // WILL match the "ct1:" prefix (every encrypted body has it).
+  // Seed regardless of session state — the lifecycle test posted to
+  // a different slug so we need to ensure something with our needle
+  // exists in messages.body.
+  await rpcCall("tools/call", {
+    name: "groupchat",
+    arguments: { slug: "search-seed", message: "needle to find" },
+  });
+  // chat-tools writes plaintext to messages (see N1b-tools-5 trade-off
+  // in CHANGELOG). Search hits the plaintext content directly.
   const r = await rpcCall("tools/call", {
     name: "search",
-    arguments: { query: "ct1", limit: 10 },
+    arguments: { query: "needle", limit: 10 },
   });
   const text = r.result?.content?.[0]?.text ?? "";
-  expect(text).toMatch(/Search 'ct1' — \d+ hits:/);
-  // At least one of the earlier publishes should show up.
-  expect(text).toContain("(encrypted)");
+  expect(text).toContain("Search 'needle'");
+  expect(text).toContain("Chat hits");
+  // The chat we seeded was "needle to find" in chat_id=group:search-seed.
+  expect(text).toMatch(/\[#\d+\] group:search-seed/);
 });
 
 test(
@@ -369,18 +419,37 @@ test(
     expect(t).toContain("published frame_id=");
     expect(t).toContain("client-signed");
 
-    // Verify via read.
+    // Verify via read — stdio MCP format: "chat_id=X (N messages
+    // since 0)\n[seq] sender (Xs ago): <body>". Body is encrypted at
+    // rest. The frame was materialised into the messages table via
+    // publishFrameAndBroadcast → insertFrame → materialiseMessageFrame.
     const rd = await rpcCall("tools/call", {
       name: "read",
       arguments: { chat_id: target, limit: 5 },
     });
     const rdText = rd.result?.content?.[0]?.text ?? "";
-    expect(rdText).toContain(target);
-    const parsed = JSON.parse(rdText.slice(rdText.indexOf("[")));
-    expect(parsed.length).toBeGreaterThan(0);
-    expect(parsed[0]!.ref_id).toBe(refId);
-    expect(parsed[0]!.public_key).toBe(kp.publicKey);
-    expect(parsed[0]!.sig).toBe(sigBytes);
+    expect(rdText).toContain(`chat_id=${target}`);
+    expect(rdText).toContain(me.pseudonym);
+    expect(rdText).toMatch(/\[\d+\]/); // [seq] prefix
+    expect(rdText).toContain("ct1:"); // body is encrypted at rest
+
+    // Also confirm via direct DB query that signature + public_key
+    // round-tripped without server-side rewrites (publish bypasses the
+    // server-side keypair derivation that `chat` does).
+    const { Database } = await import("bun:sqlite");
+    const { join } = await import("node:path");
+    const relayDb = new Database(join(RELAY_DIR, "relay.db"));
+    try {
+      const row = relayDb
+        .query<{ sig: string; public_key: string }, [string]>(
+          "SELECT sig, public_key FROM frames WHERE ref_id = ?",
+        )
+        .get(refId);
+      expect(row?.sig).toBe(sigBytes);
+      expect(row?.public_key).toBe(kp.publicKey);
+    } finally {
+      relayDb.close();
+    }
   },
   20_000,
 );

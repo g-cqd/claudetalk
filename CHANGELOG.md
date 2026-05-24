@@ -6,6 +6,98 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.5] — 2026-05-24
+
+**Phase N1b-tools-5 — full stdio tool surface on the HTTP-MCP path.**
+The relay now exposes all 18 stdio MCP tools (whoami, discover,
+ask/answer, inbox, notifications_reset, chat, groupchat, read, react,
+status_set/clear, search, mute, nickname_set/clear/in_chat,
+nicknames_list, wait_for_messages) over `POST/GET /mcp`, plus the
+relay-specific `publish`. claude.ai Connectors and Agent SDK
+instances can now do everything a local Claude Code session can do.
+
+### Architecture
+
+The swap uses the ALS-scoped identity Proxy from v0.10.4. Each HTTP
+request:
+1. Authorize via HMAC bearer (401 on miss)
+2. TOFU-bind pseudonym → bearer pubkey (403 on conflict)
+3. `INSERT OR IGNORE` into `instances` so `touchInstance` finds a row
+4. Derive a server-side keypair for this pseudonym
+   (`http-relay:<pseudonym>`, cached per process)
+5. Build per-request `Identity { pseudonym, path: "(http)", keyPair,
+   bearerPublicKey }`
+6. `identityContext.run(identity, () => transport.handleRequest(req))`
+
+Inside the request, `me.pseudonym` / `me.keyPair` etc. on every
+register* function transparently resolve to this Identity via the
+`dynamicIdentity` Proxy.
+
+### Loopback Publisher
+
+The relay process now sets a `Publisher` in `src/relay-singleton.ts`
+that wraps `publishFrameAndBroadcast`. When `chat-tools` calls
+`getRelayClient()?.publishMessage(...)`, the call routes through this
+loopback: encrypt body with namespace key, build ClientFrame using
+the per-request identity from ALS (sender + pubkey), broadcast via
+the same path as WS-originated frames. WS clients in the namespace
+receive HTTP-originated messages identically to other-machine WS
+ones.
+
+### Identity extension
+
+`Identity.bearerPublicKey?: string` — HTTP MCP only, the pubkey from
+the bearer token. The `publish` tool (client-signed path) forwards
+this verbatim so receivers verify against the caller's actual key,
+not the server-derived signing key that `chat`/`ask` use.
+
+### Trade-off: relay sees plaintext for HTTP-originated chat content
+
+When `chat`/`groupchat` is called via HTTP MCP, `chat-tools.postAndRead`
+calls `insertMessage` which writes the **plaintext** body into the
+materialised `messages` table. The loopback Publisher encrypts only
+for the wire frame (which lives in the `frames` table) and the WS
+broadcast envelope. So:
+
+| Table | HTTP chat content | WS chat content |
+|---|---|---|
+| `messages` (materialised schema) | plaintext | encrypted (ct1:) — relay sees only the frame body, materialised by `materialiseMessageFrame` from the encrypted frame |
+| `frames` (relay log) | encrypted (ct1:) | encrypted (ct1:) |
+
+**Net effect:** the relay operator can read content sent via HTTP MCP
+`chat`/`groupchat`. WS-originated content remains end-to-end
+encrypted. HTTP clients who need N2-strength confidentiality at the
+relay must use `publish` with a pre-encrypted body
+(`relay-crypto.encryptBody` callable from any TS environment with the
+shared secret).
+
+This trade-off is the cost of running `chat-tools` unmodified inside
+the relay process. A future N2b iteration could insert plaintext
+into a memory-only buffer and write only ciphertext to disk — left as
+follow-up.
+
+### Tests
+
+- **`test/integration/http-mcp.test.ts`** — rewrote test expectations
+  to match the real `registerTools` output formats (vs the v0.10.0
+  alpha's custom shapes). All 6 tests pass against the full tool
+  surface.
+- Schema-materialisation test now also queries the `frames` table to
+  confirm the encrypted form is present alongside the plaintext
+  message row.
+- Publish test verifies the bearer's pubkey (not the server-derived
+  one) is what's stored on the frame.
+- 232 pass / 0 fail.
+
+### Open follow-ups
+
+- **N2b**: in-memory-only plaintext for HTTP `chat`/`groupchat` so
+  the relay disk holds only ciphertext for HTTP content too.
+- **N1b-oauth**: still blocked on live Connector probing.
+- **Threading on the relay**: `parent_id` propagation for HTTP-
+  originated messages currently lost (RelayClient.ingestFrame
+  parameter passes null).
+
 ## [0.10.4] — 2026-05-24
 
 Phase N1b-tools-4 infrastructure — every existing tool registration

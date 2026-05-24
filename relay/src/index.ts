@@ -35,6 +35,9 @@ import { verifyToken } from "../../src/relay-auth.ts";
 import { messageSigningPayload, verify } from "../../src/keys.ts";
 import { migrate } from "../../src/migrations.ts";
 import { _setDb } from "../../src/db.ts";
+import { type Publisher, setRelayClient } from "../../src/relay-singleton.ts";
+import { encryptBody } from "../../src/relay-crypto.ts";
+import { identityContext } from "../../src/identity-context.ts";
 import { buildHttpMcpHandler } from "./mcp-http.ts";
 
 const PORT = Number(process.env.RELAY_PORT ?? 7878);
@@ -108,6 +111,53 @@ migrate(db);
 // to use their own per-machine ~/.claudetalk/db.sqlite — those
 // processes never import _setDb.
 _setDb(db);
+
+// Phase N1b-tools-5: a loopback Publisher so chat-tools' chat /
+// groupchat — when called from inside the relay process via HTTP MCP
+// — publishes through this relay's own broadcast pipeline (frames
+// table + WS subscribers + schema materialisation) instead of failing
+// because getRelayClient() returned null.
+//
+// publishMessage gets the PLAINTEXT body (chat-tools signed it before
+// calling). We encrypt + frame here, mirroring what RelayClient does
+// in the stdio MCP process. The signature was computed over the
+// plaintext body, so receivers can decrypt and verify the same way as
+// any WS-published frame.
+const loopbackPublisher: Publisher = {
+  async publishMessage({ messageId, chatId, body, createdAt, signature }) {
+    // The HTTP MCP handler wraps every request in identityContext.run
+    // with the per-request Identity. chat-tools' postAndRead already
+    // signed `body` with that Identity's keyPair. Pull the same
+    // sender + pubkey from ALS so the broadcast envelope matches —
+    // WS recipients verify against `frame.public_key`.
+    const me = identityContext.getStore();
+    if (!me) {
+      // Shouldn't happen — chat tool only runs inside the ALS scope.
+      // Be defensive: skip the broadcast rather than corrupt with
+      // wrong identity. Local insert already happened via insertMessage.
+      log("loopback: no identity in ALS; skipping broadcast");
+      return null;
+    }
+    const encrypted = await encryptBody(SHARED_SECRET, body);
+    const frame: ClientFrame = {
+      v: PROTOCOL_VERSION,
+      kind: "msg",
+      sender: me.pseudonym,
+      public_key: me.keyPair?.publicKey ?? "",
+      target: chatId,
+      ref_id: messageId,
+      body: encrypted,
+      ts: createdAt,
+      sig: signature,
+    };
+    const frameId = publishFrameAndBroadcast(namespaceForToken(SHARED_SECRET), frame);
+    return frameId;
+  },
+  close(): void {
+    /* loopback; nothing to close */
+  },
+};
+setRelayClient(loopbackPublisher);
 
 interface FrameRow {
   frame_id: number;

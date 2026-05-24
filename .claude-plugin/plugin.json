@@ -1,6 +1,6 @@
 {
   "name": "claudetalk",
   "description": "Inter-Claude messaging over MCP — also exposes the claude/channel capability so peer messages push into your session in real time (no hook polling).",
-  "version": "0.10.4",
+  "version": "0.10.5",
   "keywords": ["claudetalk", "channel", "mcp", "claude-code", "bun"]
 }
