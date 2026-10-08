@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/agora-core", "crates/agora-store", "crates/agora-cli", "crates/agora-crypto"]
+members = ["crates/agora-core", "crates/agora-store", "crates/agora-cli", "crates/agora-crypto", "crates/agora-deliver"]
 
 [workspace.package]
 version = "0.1.0"

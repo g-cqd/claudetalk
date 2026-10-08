@@ -41,6 +41,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "agora-deliver"
+version = "0.1.0"
+
+[[package]]
 name = "agora-store"
 version = "0.1.0"
 dependencies = [
