@@ -226,6 +226,7 @@ mod tests {
         assert_eq!(Harness::from_client_name("github-copilot-cli"), Harness::CopilotCli);
         assert_eq!(Harness::from_client_name("antigravity-cli"), Harness::Antigravity);
         assert_eq!(Harness::from_client_name("agy"), Harness::Antigravity);
+        assert_eq!(Harness::from_client_name("antigravity-client"), Harness::Antigravity);
         // Legacy Gemini CLI clients are treated as Antigravity.
         assert_eq!(Harness::from_client_name("gemini-cli-mcp-client"), Harness::Antigravity);
         assert_eq!(Harness::from_client_name("mystery"), Harness::Unknown);
