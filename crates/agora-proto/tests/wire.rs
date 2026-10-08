@@ -239,6 +239,13 @@ fn every_request() -> Vec<(&'static str, Req)> {
                 limit: 5,
             },
         ),
+        (
+            "subscribe",
+            Req::Subscribe {
+                channels: vec!["ch-1".into()],
+            },
+        ),
+        ("online", Req::Online),
     ]
 }
 
@@ -352,7 +359,30 @@ fn every_reply() -> Vec<(&'static str, Reply)> {
                 }],
             },
         ),
+        (
+            "subscribed",
+            Reply::Subscribed {
+                channels: vec!["ch-1".into()],
+            },
+        ),
+        (
+            "online",
+            Reply::Online {
+                pubkeys: vec![sender_hex()],
+            },
+        ),
     ]
+}
+
+/// Exact JSON in both directions: the value serializes to `expected`, and `expected`
+/// parses back to the value.
+fn assert_wire<T>(value: &T, expected: serde_json::Value)
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+{
+    assert_eq!(serde_json::to_value(value).expect("serializes"), expected);
+    let back: T = serde_json::from_value(expected).expect("deserializes");
+    assert_eq!(&back, value);
 }
 
 // ---------------------------------------------------------------- exact shapes
@@ -494,6 +524,101 @@ fn welcome_frame_is_tagged_welcome() {
 }
 
 #[test]
+fn subscribe_request_with_no_channels_is_flat_with_an_empty_list() {
+    assert_wire(
+        &Request {
+            id: 3,
+            req: Req::Subscribe { channels: vec![] },
+        },
+        json!({"id": 3, "req": "subscribe", "channels": []}),
+    );
+}
+
+#[test]
+fn subscribe_request_lists_its_channels_as_a_json_array() {
+    assert_wire(
+        &Request {
+            id: 5,
+            req: Req::Subscribe {
+                channels: vec!["general".into(), "ops".into()],
+            },
+        },
+        json!({"id": 5, "req": "subscribe", "channels": ["general", "ops"]}),
+    );
+}
+
+#[test]
+fn online_request_is_flat_with_only_its_tag() {
+    assert_wire(
+        &Request {
+            id: 4,
+            req: Req::Online,
+        },
+        json!({"id": 4, "req": "online"}),
+    );
+}
+
+#[test]
+fn subscribed_reply_is_tagged_inside_an_ok_frame() {
+    assert_wire(
+        &ServerFrame::Ok {
+            id: 3,
+            reply: Reply::Subscribed {
+                channels: vec!["general".into(), "ops".into()],
+            },
+        },
+        json!({
+            "t": "ok",
+            "id": 3,
+            "reply": {"type": "subscribed", "channels": ["general", "ops"]}
+        }),
+    );
+}
+
+#[test]
+fn online_reply_is_tagged_inside_an_ok_frame() {
+    assert_wire(
+        &ServerFrame::Ok {
+            id: 4,
+            reply: Reply::Online {
+                pubkeys: vec![sender_hex()],
+            },
+        },
+        json!({
+            "t": "ok",
+            "id": 4,
+            "reply": {"type": "online", "pubkeys": [sender_hex()]}
+        }),
+    );
+}
+
+#[test]
+fn lagged_event_frame_has_the_exact_shape() {
+    assert_wire(
+        &ServerFrame::Event {
+            event: Event::Lagged { dropped: 3 },
+        },
+        json!({"t": "event", "event": {"event": "lagged", "dropped": 3}}),
+    );
+}
+
+#[test]
+fn message_appended_event_frame_has_the_exact_shape() {
+    assert_wire(
+        &ServerFrame::Event {
+            event: Event::MessageAppended {
+                channel: "ch-1".into(),
+                seq: 5,
+            },
+        },
+        json!({
+            "t": "event",
+            "event": {"event": "message_appended", "channel": "ch-1", "seq": 5}
+        }),
+    );
+}
+
+#[test]
 fn every_request_variant_is_tagged_with_its_snake_case_name() {
     for (tag, req) in every_request() {
         let value = serde_json::to_value(Request { id: 1, req }).expect("serializes");
@@ -538,6 +663,12 @@ fn request_with_an_unknown_req_tag_is_rejected() {
 #[test]
 fn request_without_an_id_is_rejected() {
     serde_json::from_str::<Request>(r#"{"req":"ping"}"#).expect_err("missing id");
+}
+
+#[test]
+fn subscribe_with_a_non_array_channels_field_is_rejected() {
+    serde_json::from_str::<Request>(r#"{"id":1,"req":"subscribe","channels":"general"}"#)
+        .expect_err("channels must be an array");
 }
 
 // ---------------------------------------------------------------- conversions
@@ -776,6 +907,31 @@ async fn frame_whose_payload_is_not_json_is_a_json_error() {
         .await
         .expect_err("malformed payload");
     assert!(matches!(err, ProtoError::Json(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn lagged_event_frame_is_length_prefixed_json_and_decodes_back() {
+    let frame = ServerFrame::Event {
+        event: Event::Lagged { dropped: 3 },
+    };
+    let json: &[u8] = br#"{"t":"event","event":{"event":"lagged","dropped":3}}"#;
+    let mut wire = Vec::new();
+    write_json(&mut wire, &frame).await.expect("write frame");
+
+    let mut expected = u32::try_from(json.len())
+        .expect("fits u32")
+        .to_be_bytes()
+        .to_vec();
+    expected.extend_from_slice(json);
+    assert_eq!(wire, expected);
+
+    let mut reader = wire.as_slice();
+    let payload = read_frame(&mut reader, MAX_FRAME)
+        .await
+        .expect("read frame")
+        .expect("one frame");
+    let back: ServerFrame = serde_json::from_slice(&payload).expect("decodes");
+    assert_eq!(back, frame);
 }
 
 // ---------------------------------------------------------------- handshake

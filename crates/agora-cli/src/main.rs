@@ -5,19 +5,19 @@
 //! from the machine seed), signs every op locally and wraps/unwraps channel keys
 //! locally: the daemon never sees a private key or a channel key.
 
-mod client;
 mod cmd_board;
 mod cmd_chat;
+mod cmd_mcp;
 mod cmd_org;
-mod identity;
-mod ops;
 
-use agora_crypto::{CryptoError, Identity};
+pub use agora_client::ClientError as CliError;
+pub use agora_client::{Ctx, Out};
+
+use agora_client::identity;
 use agora_daemon::{DaemonConfig, Paths};
-use agora_proto::{ErrorBody, ProtoError};
-use agora_store::StoreError;
 use clap::{Args, Parser, Subcommand};
-use std::path::PathBuf;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[derive(Parser, Debug)]
@@ -40,7 +40,10 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
     /// Run the daemon in the foreground (logs to stderr; AGORA_LOG sets the filter).
-    Daemon,
+    Daemon(DaemonArgs),
+    /// MCP server for agent harnesses: stdio by default, `--http ADDR` for HTTP,
+    /// `token` to manage the HTTP bearer tokens.
+    Mcp(McpArgs),
     /// Stop the running daemon (no-op when none runs; never spawns one).
     Stop,
     /// Create this folder's identity and register it (--owner: bootstrap the owner).
@@ -71,6 +74,62 @@ pub enum Cmd {
     Role(RoleCmd),
     /// Revoke an identity (controller or owner).
     Revoke(RevokeArgs),
+}
+
+/// Options of `agora daemon`.
+#[derive(Args, Debug)]
+pub struct DaemonArgs {
+    /// Also serve MCP over HTTP on ADDR (e.g. 127.0.0.1:8765), inside the daemon process.
+    #[arg(long, value_name = "ADDR")]
+    pub mcp_http: Option<SocketAddr>,
+    /// Allow --mcp-http to bind a non-loopback address (no TLS: put a TLS proxy in front).
+    #[arg(long, requires = "mcp_http")]
+    pub allow_remote: bool,
+    /// Extra browser origin allowed to call the HTTP endpoint (repeatable).
+    #[arg(long = "allow-origin", value_name = "URL", requires = "mcp_http")]
+    pub allow_origin: Vec<String>,
+    /// Bearer-token file for --mcp-http (default: $AGORA_HOME/mcp-tokens.json).
+    #[arg(long, value_name = "PATH", requires = "mcp_http")]
+    pub token_file: Option<PathBuf>,
+}
+
+/// Options of `agora mcp`: stdio unless `--http` is given.
+#[derive(Args, Debug)]
+pub struct McpArgs {
+    #[command(subcommand)]
+    pub cmd: Option<McpCmd>,
+    /// Serve MCP over HTTP on ADDR (e.g. 127.0.0.1:8765) instead of stdio.
+    #[arg(long, value_name = "ADDR")]
+    pub http: Option<SocketAddr>,
+    /// Allow --http to bind a non-loopback address (no TLS: put a TLS proxy in front).
+    #[arg(long, requires = "http")]
+    pub allow_remote: bool,
+    /// Extra browser origin allowed to call the HTTP endpoint (repeatable).
+    #[arg(long = "allow-origin", value_name = "URL", requires = "http")]
+    pub allow_origin: Vec<String>,
+    /// Bearer-token file for --http and `token` (default: $AGORA_HOME/mcp-tokens.json).
+    #[arg(long, value_name = "PATH", global = true)]
+    pub token_file: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum McpCmd {
+    /// Manage HTTP bearer tokens.
+    #[command(subcommand)]
+    Token(TokenCmd),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TokenCmd {
+    /// Create a token (printed once) bound to a fresh server-held identity.
+    Add {
+        #[arg(long)]
+        label: String,
+    },
+    /// List tokens (ids, labels, public keys; never secrets).
+    List,
+    /// Revoke a token by id.
+    Revoke { id: String },
 }
 
 #[derive(Args, Debug)]
@@ -287,62 +346,6 @@ pub struct RevokeArgs {
     pub pk: String,
 }
 
-/// What every command needs.
-pub struct Ctx {
-    pub paths: Paths,
-    /// This folder's identity.
-    pub identity: Identity,
-    /// Folder name, used as the handshake/registration label.
-    pub label: String,
-    pub json: bool,
-}
-
-/// A command's result: `json` is printed with --json, `text` otherwise.
-pub struct Out {
-    pub json: serde_json::Value,
-    pub text: String,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum CliError {
-    #[error("{0}")]
-    Remote(ErrorBody),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error(transparent)]
-    Proto(#[from] ProtoError),
-    #[error(transparent)]
-    Crypto(#[from] CryptoError),
-    #[error(transparent)]
-    Store(#[from] StoreError),
-    #[error("{0}")]
-    Usage(String),
-    #[error("daemon unavailable: {0}")]
-    Daemon(String),
-    #[error("unexpected reply from daemon")]
-    UnexpectedReply,
-}
-
-impl CliError {
-    /// Stable machine code for --json: the daemon's ErrorCode (snake_case) for Remote,
-    /// else "io" | "proto" | "crypto" | "store" | "usage" | "daemon" | "unexpected_reply".
-    pub fn code(&self) -> String {
-        match self {
-            CliError::Remote(b) => serde_json::to_value(b.code)
-                .ok()
-                .and_then(|v| v.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "internal".into()),
-            CliError::Io(_) => "io".into(),
-            CliError::Proto(_) => "proto".into(),
-            CliError::Crypto(_) => "crypto".into(),
-            CliError::Store(_) => "store".into(),
-            CliError::Usage(_) => "usage".into(),
-            CliError::Daemon(_) => "daemon".into(),
-            CliError::UnexpectedReply => "unexpected_reply".into(),
-        }
-    }
-}
-
 fn home_of(cli: &Cli) -> PathBuf {
     match &cli.home {
         Some(h) if !h.as_os_str().is_empty() => h.clone(),
@@ -350,7 +353,7 @@ fn home_of(cli: &Cli) -> PathBuf {
     }
 }
 
-fn run_daemon(home: PathBuf) -> Result<(), String> {
+fn run_daemon(home: PathBuf, args: DaemonArgs) -> Result<(), String> {
     let filter = tracing_subscriber::EnvFilter::try_from_env("AGORA_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt()
@@ -358,12 +361,60 @@ fn run_daemon(home: PathBuf) -> Result<(), String> {
         .with_writer(std::io::stderr)
         .init();
     let config = DaemonConfig::load(&home).map_err(|e| e.to_string())?;
-    agora_daemon::run_blocking(config).map_err(|e| e.to_string())
+    match args.mcp_http {
+        Some(addr) => run_daemon_with_mcp(config, &home, addr, args),
+        None => agora_daemon::run_blocking(config).map_err(|e| e.to_string()),
+    }
+}
+
+/// `agora daemon --mcp-http ADDR`: the daemon and the MCP HTTP front-end in one process, on
+/// one runtime. The front-end talks to the daemon like any client would (the daemon's own
+/// shutdown token stops both). If the front-end fails, the daemon is stopped too.
+fn run_daemon_with_mcp(
+    config: DaemonConfig,
+    home: &Path,
+    addr: SocketAddr,
+    args: DaemonArgs,
+) -> Result<(), String> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    rt.block_on(async move {
+        // Bind the MCP port and check the token file before the daemon touches its socket,
+        // so a refused address or token file leaves no daemon behind.
+        let listener = agora_mcp::http::bind(addr, args.allow_remote)
+            .await
+            .map_err(|e| e.to_string())?;
+        let paths = Paths::new(home);
+        let opts = cmd_mcp::http_options(&paths, args.token_file, args.allow_origin);
+        cmd_mcp::check_tokens(&opts.token_file)?;
+        let daemon = agora_daemon::Daemon::bind(config)
+            .await
+            .map_err(|e| e.to_string())?;
+        let token = daemon.shutdown_token();
+        let local = listener.local_addr().map_err(|e| e.to_string())?;
+        eprintln!("agora daemon: MCP over HTTP on http://{local}/mcp");
+        let engine = agora_mcp::engine::Engine::new(agora_mcp::engine::EngineConfig::http());
+        let serving = agora_mcp::http::serve(listener, opts, engine, token.clone());
+        let mcp = async move {
+            let result = serving.await;
+            if result.is_err() {
+                token.cancel();
+            }
+            result.map_err(|e| e.to_string())
+        };
+        let (daemon_result, mcp_result) = tokio::join!(daemon.run(), mcp);
+        daemon_result.map_err(|e| e.to_string())?;
+        mcp_result
+    })
 }
 
 async fn dispatch(ctx: &Ctx, cmd: Cmd) -> Result<Out, CliError> {
     match cmd {
-        Cmd::Daemon => Err(CliError::Usage("daemon is handled before dispatch".into())),
+        Cmd::Daemon(_) | Cmd::Mcp(_) => Err(CliError::Usage(
+            "daemon and mcp are handled before dispatch".into(),
+        )),
         Cmd::Stop => cmd_org::stop(ctx).await,
         Cmd::Init(a) => cmd_org::init(ctx, a).await,
         Cmd::Whoami => cmd_org::whoami(ctx).await,
@@ -382,33 +433,47 @@ async fn dispatch(ctx: &Ctx, cmd: Cmd) -> Result<Out, CliError> {
     }
 }
 
+/// Exit code of a long-running server command (`daemon`, `mcp`): its error goes to stderr.
+fn finish_server(name: &str, result: Result<(), String>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("agora: {name}: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let home = home_of(&cli);
     let json = cli.json;
-    if matches!(cli.cmd, Cmd::Daemon) {
-        return match run_daemon(home) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("agora: daemon: {e}");
-                ExitCode::FAILURE
-            }
-        };
-    }
-    let result = (|| -> Result<Out, CliError> {
-        let paths = Paths::new(&home);
-        let (identity, label) = identity::load_identity(&paths)?;
-        let ctx = Ctx {
-            paths,
-            identity,
-            label,
-            json,
-        };
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        rt.block_on(dispatch(&ctx, cli.cmd))
-    })();
+    let result = match cli.cmd {
+        Cmd::Daemon(a) => return finish_server("daemon", run_daemon(home, a)),
+        Cmd::Mcp(McpArgs {
+            cmd: Some(McpCmd::Token(c)),
+            token_file,
+            http: None,
+            ..
+        }) => cmd_mcp::token(home, json, token_file, c),
+        Cmd::Mcp(McpArgs { cmd: Some(_), .. }) => Err(CliError::Usage(
+            "--http cannot be combined with `mcp token`".into(),
+        )),
+        Cmd::Mcp(a) => return finish_server("mcp", cmd_mcp::run(home, a)),
+        cmd => (|| -> Result<Out, CliError> {
+            let paths = Paths::new(&home);
+            let (identity, label) = identity::load_identity(&paths)?;
+            let ctx = Ctx {
+                paths,
+                identity,
+                label,
+            };
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(dispatch(&ctx, cmd))
+        })(),
+    };
     match result {
         Ok(out) => {
             if json {
@@ -429,5 +494,61 @@ fn main() -> ExitCode {
             }
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|a| a.to_string()).collect()
+    }
+
+    /// Parses `agora ARGS...` exactly as `main` does.
+    fn parse(args: &[String]) -> Cli {
+        Cli::try_parse_from(std::iter::once("agora".to_string()).chain(args.iter().cloned()))
+            .expect("parses")
+    }
+
+    #[test]
+    fn token_file_writes_to_its_file_before_or_after_the_token_subcommand() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let home = dir.path().join("home");
+        let file = dir.path().join("tokens.json");
+        let f = file.display().to_string();
+        let orders = [
+            strings(&["mcp", "--token-file", &f, "token", "add", "--label", "l"]),
+            strings(&["mcp", "token", "add", "--label", "l", "--token-file", &f]),
+        ];
+        for args in orders {
+            let cli = parse(&args);
+            let Cmd::Mcp(McpArgs {
+                cmd: Some(McpCmd::Token(c)),
+                token_file,
+                http: None,
+                ..
+            }) = cli.cmd
+            else {
+                panic!("not a token command: {args:?}");
+            };
+            assert_eq!(token_file.as_deref(), Some(file.as_path()), "{args:?}");
+            cmd_mcp::token(home.clone(), false, token_file, c).expect("token add");
+            assert!(file.exists(), "{args:?}");
+            std::fs::remove_file(&file).expect("reset");
+        }
+        assert!(!agora_mcp::tokens::default_path(&Paths::new(&home)).exists());
+    }
+
+    #[test]
+    fn token_file_without_http_is_refused_by_the_stdio_server() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let f = dir.path().join("tokens.json").display().to_string();
+        let cli = parse(&strings(&["mcp", "--token-file", f.as_str()]));
+        let Cmd::Mcp(args) = cli.cmd else {
+            panic!("not mcp");
+        };
+        let err = cmd_mcp::run(dir.path().to_path_buf(), args).expect_err("refused");
+        assert_eq!(err, "--token-file needs --http");
     }
 }

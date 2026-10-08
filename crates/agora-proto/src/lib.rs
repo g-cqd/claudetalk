@@ -13,6 +13,11 @@
 //! * Concurrency: requests on one connection are processed concurrently, so replies
 //!   may arrive in any order. A client must await a reply before it sends a request
 //!   that depends on that reply.
+//! * Subscriptions: after [`Req::Subscribe`] the server also pushes
+//!   [`ServerFrame::Event`] frames (no id) on that connection, each only after the
+//!   commit it reports. Events are notifications, not the source of truth: a slow
+//!   subscriber gets [`Event::Lagged`] and re-reads its inbox, whose cursor never
+//!   loses a message.
 
 mod convert;
 mod frame;
@@ -270,6 +275,19 @@ pub enum Req {
         timeout_ms: u64,
         limit: i64,
     },
+    /// Start receiving [`ServerFrame::Event`] frames on this connection. Empty
+    /// `channels` means every channel the connection key is a member of, now and
+    /// later; otherwise exactly the listed channels, each of which must be a current
+    /// membership (else `not_member` naming the first offending id, the same error
+    /// for a missing channel). The key must be active. A connection subscribes at
+    /// most once (a second request is `invalid`). Answered with [`Reply::Subscribed`]
+    /// before any event; every event committed after that reply is delivered.
+    Subscribe {
+        channels: Vec<String>,
+    },
+    /// Hex keys that are online (hold a subscribed connection) and share at least one
+    /// channel with the caller, plus the caller itself if online. Never anyone else.
+    Online,
     Ack {
         channel: String,
         seq: i64,
@@ -395,6 +413,14 @@ pub enum Reply {
         cursor: i64,
         timed_out: bool,
     },
+    /// The effective channel set of the subscription, sorted.
+    Subscribed {
+        channels: Vec<String>,
+    },
+    /// Sorted hex keys, see [`Req::Online`].
+    Online {
+        pubkeys: Vec<String>,
+    },
     Counts {
         counts: Vec<EmojiCount>,
     },
@@ -480,7 +506,8 @@ pub enum ServerFrame {
         id: u64,
         error: ErrorBody,
     },
-    /// Reserved for subscriptions (M3); the M2 daemon never sends it.
+    /// Sent only on a subscribed connection (see [`Req::Subscribe`]), and only after
+    /// the commit the event reports. Carries no request id.
     Event {
         event: Event,
     },
@@ -526,4 +553,87 @@ pub enum Event {
     BlobStored {
         hash: String,
     },
+    /// Never published on the bus; sent only to a subscriber whose events were
+    /// dropped (slow consumer or bus overflow). Means "you missed some
+    /// notifications; re-read your inbox". The inbox cursor is the source of truth,
+    /// so dropped notifications never lose messages.
+    Lagged {
+        dropped: u64,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn roundtrip<T>(value: &T, expected: serde_json::Value)
+    where
+        T: Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+    {
+        assert_eq!(serde_json::to_value(value).expect("serialize"), expected);
+        let back: T = serde_json::from_value(expected).expect("deserialize");
+        assert_eq!(&back, value);
+    }
+
+    #[test]
+    fn subscribe_request_wire_shape() {
+        roundtrip(
+            &Request {
+                id: 1,
+                req: Req::Subscribe { channels: vec![] },
+            },
+            json!({"id": 1, "req": "subscribe", "channels": []}),
+        );
+        roundtrip(
+            &Request {
+                id: 2,
+                req: Req::Subscribe {
+                    channels: vec!["general".into(), "ops".into()],
+                },
+            },
+            json!({"id": 2, "req": "subscribe", "channels": ["general", "ops"]}),
+        );
+    }
+
+    #[test]
+    fn online_request_wire_shape() {
+        roundtrip(
+            &Request {
+                id: 3,
+                req: Req::Online,
+            },
+            json!({"id": 3, "req": "online"}),
+        );
+    }
+
+    #[test]
+    fn subscribed_and_online_reply_wire_shapes() {
+        roundtrip(
+            &Reply::Subscribed {
+                channels: vec!["a".into(), "b".into()],
+            },
+            json!({"type": "subscribed", "channels": ["a", "b"]}),
+        );
+        roundtrip(
+            &Reply::Online {
+                pubkeys: vec!["ab".repeat(32)],
+            },
+            json!({"type": "online", "pubkeys": ["ab".repeat(32)]}),
+        );
+    }
+
+    #[test]
+    fn lagged_event_wire_shape_inside_a_frame() {
+        roundtrip(
+            &Event::Lagged { dropped: 3 },
+            json!({"event": "lagged", "dropped": 3}),
+        );
+        roundtrip(
+            &ServerFrame::Event {
+                event: Event::Lagged { dropped: 7 },
+            },
+            json!({"t": "event", "event": {"event": "lagged", "dropped": 7}}),
+        );
+    }
 }

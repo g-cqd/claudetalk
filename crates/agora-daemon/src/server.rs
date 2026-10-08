@@ -1,21 +1,25 @@
 //! Socket lifecycle: home dir, single-instance lock, stale-socket cleanup, accept
 //! loop, per-connection handshake and request loop, graceful shutdown.
 
-use crate::{BUS_CAPACITY, Conn, DaemonConfig, DaemonError, Paths, Shared, actor, auth, dispatch};
+use crate::{
+    BUS_CAPACITY, Conn, DaemonConfig, DaemonError, Paths, Shared, actor, auth, dispatch, push,
+};
 use agora_proto::{
     ClientHello, ErrorBody, ErrorCode, Event, MAX_FRAME, PROTO_VERSION, ProtoError, Req, Request,
     ServerFrame, ServerHello, Welcome, b64, read_frame, write_json,
 };
 use agora_store::{Store, hex};
+use std::future::Future;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 
 /// A reply queued for the connection's writer, with the in-flight permit it holds.
@@ -164,6 +168,7 @@ impl Daemon {
             writer,
             reader,
             bus,
+            presence: Default::default(),
             config: Arc::new(config),
             daemon_uid,
             shutdown: token.clone(),
@@ -325,6 +330,12 @@ pub async fn serve_conn(sh: Shared, mut stream: UnixStream) {
     let window = sh.config.max_inflight_per_conn.max(1);
     let sem = Arc::new(Semaphore::new(window));
     let (tx, rx) = mpsc::channel::<Outgoing>(window);
+    // Events for this connection, from its forwarder (see `push`). The writer sends them
+    // after any queued reply.
+    let (ev_tx, ev_rx) = mpsc::channel::<Event>(push::EVENT_QUEUE);
+    // Set when a Subscribe is accepted, so a second one is refused. The subscribe task
+    // clears it again when the subscription fails.
+    let subscribed = Arc::new(AtomicBool::new(false));
     // Parsed requests from the reader to the dispatcher. One slot: the reader stays
     // at most one request ahead of the window.
     let (req_tx, mut req_rx) = mpsc::channel::<Request>(1);
@@ -334,7 +345,7 @@ pub async fn serve_conn(sh: Shared, mut stream: UnixStream) {
     // Every task this connection starts lives in `tasks`, so dropping it (when the
     // daemon aborts the connection) aborts all of them.
     let mut tasks = JoinSet::new();
-    tasks.spawn(write_loop(wr, rx));
+    tasks.spawn(write_loop(wr, rx, ev_rx));
     // Reads even while the window is full, so a client that closes is noticed at once.
     tasks.spawn(read_requests(
         sh.clone(),
@@ -366,27 +377,94 @@ pub async fn serve_conn(sh: Shared, mut stream: UnixStream) {
                 Err(_) => break,
             },
         };
-        let (sh_req, conn_req, reply_to, ending_req) =
-            (sh.clone(), conn.clone(), tx.clone(), ending.clone());
         let id = req.id;
-        tasks.spawn(async move {
-            let frame = tokio::select! {
-                _ = ending_req.cancelled() => return,
-                frame = answer(sh_req, conn_req, id, req.req) => frame,
-            };
-            tokio::select! {
-                _ = ending_req.cancelled() => {}
-                _ = reply_to.send((frame, Some(permit))) => {}
+        match req.req {
+            Req::Subscribe { channels } => {
+                if subscribed
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+                {
+                    let frame = err_frame(id, ErrorCode::Invalid, "already subscribed");
+                    tasks.spawn(queue_reply(tx.clone(), ending.clone(), frame, permit));
+                } else {
+                    let (sh_sub, conn_sub, reply_to, events, flag, ending_sub) = (
+                        sh.clone(),
+                        conn.clone(),
+                        tx.clone(),
+                        ev_tx.clone(),
+                        Arc::clone(&subscribed),
+                        ending.clone(),
+                    );
+                    tasks.spawn(async move {
+                        // Its own task, so a panic in the setup is answered (see `answer`).
+                        let setup = in_own_task(async move {
+                            push::subscribe(&sh_sub, &conn_sub, channels).await
+                        });
+                        let started = tokio::select! {
+                            _ = ending_sub.cancelled() => return,
+                            started = setup => started,
+                        };
+                        match started {
+                            Ok(Ok((reply, forwarder))) => {
+                                // The reply is queued first, so every event the forwarder
+                                // sends comes after it on the wire.
+                                queue_reply(
+                                    reply_to,
+                                    ending_sub.clone(),
+                                    ServerFrame::Ok { id, reply },
+                                    permit,
+                                )
+                                .await;
+                                forwarder.run(events, ending_sub).await;
+                            }
+                            Ok(Err(error)) => {
+                                // Cleared before the error is queued, so a retry that
+                                // follows the error is not refused as a second subscribe.
+                                flag.store(false, Ordering::Release);
+                                queue_reply(
+                                    reply_to,
+                                    ending_sub,
+                                    ServerFrame::Err { id, error },
+                                    permit,
+                                )
+                                .await;
+                            }
+                            Err(join) => {
+                                tracing::error!(error = %join, "subscribe setup failed");
+                                flag.store(false, Ordering::Release);
+                                queue_reply(
+                                    reply_to,
+                                    ending_sub,
+                                    err_frame(id, ErrorCode::Internal, "internal error"),
+                                    permit,
+                                )
+                                .await;
+                            }
+                        }
+                    });
+                }
             }
-        });
+            other => {
+                let (sh_req, conn_req, reply_to, ending_req) =
+                    (sh.clone(), conn.clone(), tx.clone(), ending.clone());
+                tasks.spawn(async move {
+                    let frame = tokio::select! {
+                        _ = ending_req.cancelled() => return,
+                        frame = answer(sh_req, conn_req, id, other) => frame,
+                    };
+                    queue_reply(reply_to, ending_req, frame, permit).await;
+                });
+            }
+        }
     }
 
     // Stop the request tasks (their handlers are aborted with them) and the reader, then
-    // drop our sender: the writer ends once it has flushed what is queued, or on a
-    // write error.
+    // drop our senders: the writer ends once it has flushed what is queued, or on a
+    // write error. Forwarders hold clones of `ev_tx` and end with `ending`.
     ending.cancel();
     drop(req_rx);
     drop(tx);
+    drop(ev_tx);
     while let Some(joined) = tasks.join_next().await {
         if let Err(e) = joined {
             tracing::error!(error = %e, "connection task failed");
@@ -581,6 +659,15 @@ async fn answer(sh: Shared, conn: Conn, id: u64, req: Req) -> ServerFrame {
     }
 }
 
+/// Runs `fut` in its own task, so a panic inside it comes back as a `JoinError` instead
+/// of unwinding the caller. Dropping the returned future aborts that task.
+async fn in_own_task<T: Send + 'static>(
+    fut: impl Future<Output = T> + Send + 'static,
+) -> Result<T, JoinError> {
+    let mut handle = AbortOnDrop(tokio::spawn(fut));
+    (&mut handle.0).await
+}
+
 /// Aborts the wrapped task when dropped.
 struct AbortOnDrop<T>(JoinHandle<T>);
 
@@ -590,11 +677,46 @@ impl<T> Drop for AbortOnDrop<T> {
     }
 }
 
+/// Queues a reply with the permit of its request, for the writer. Gives up when the
+/// connection ends first; either way the permit is released with the reply.
+async fn queue_reply(
+    reply_to: mpsc::Sender<Outgoing>,
+    ending: CancellationToken,
+    frame: ServerFrame,
+    permit: OwnedSemaphorePermit,
+) {
+    tokio::select! {
+        _ = ending.cancelled() => {}
+        _ = reply_to.send((frame, Some(permit))) => {}
+    }
+}
+
 /// The single writer task of a connection: owns the write half and writes frames in
-/// the order they were queued. Ends on a write error or timeout, which also ends the
-/// request loop (its sender sees the receiver gone).
-async fn write_loop(mut wr: OwnedWriteHalf, mut rx: mpsc::Receiver<Outgoing>) {
-    while let Some((frame, _permit)) = rx.recv().await {
+/// the order they were queued, replies before events. Ends when the reply queue closes,
+/// or on a write error or timeout, which also ends the request loop (its sender sees
+/// the receiver gone). Events alone never keep it alive.
+async fn write_loop(
+    mut wr: OwnedWriteHalf,
+    mut rx: mpsc::Receiver<Outgoing>,
+    mut events: mpsc::Receiver<Event>,
+) {
+    let mut events_open = true;
+    loop {
+        let (frame, _permit) = tokio::select! {
+            biased;
+            queued = rx.recv() => match queued {
+                Some((frame, permit)) => (frame, permit),
+                None => return,
+            },
+            event = events.recv(), if events_open => match event {
+                Some(event) => (ServerFrame::Event { event }, None),
+                // Every sender is gone; replies alone keep the connection going.
+                None => {
+                    events_open = false;
+                    continue;
+                }
+            },
+        };
         match write_bounded(&mut wr, &frame).await {
             Ok(()) => {}
             // Only this reply is lost: answer its id with TooLarge and keep serving.
@@ -667,8 +789,10 @@ pub fn run_blocking(config: DaemonConfig) -> Result<(), DaemonError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::now_ms;
     use agora_crypto::Identity;
-    use agora_proto::{ErrorCode, Reply, write_frame};
+    use agora_proto::{ErrorCode, MessageWire, OpWire, Reply, write_frame};
+    use agora_store::{SignedMessage, SignedOp};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1006,7 +1130,8 @@ mod tests {
         let (server_end, mut client) = UnixStream::pair().expect("socketpair");
         let (_reads, wr) = server_end.into_split();
         let (tx, rx) = mpsc::channel::<Outgoing>(4);
-        let writer = tokio::spawn(write_loop(wr, rx));
+        let (_events, ev_rx) = mpsc::channel::<Event>(4);
+        let writer = tokio::spawn(write_loop(wr, rx, ev_rx));
 
         // Its frame would exceed MAX_FRAME, so nothing for it reaches the wire.
         let oversized = ServerFrame::Ok {
@@ -1044,5 +1169,248 @@ mod tests {
             .await
             .expect("writer ends once its queue is drained")
             .expect("writer task joins");
+    }
+
+    /// A handshaken test connection that numbers its requests.
+    struct TestConn {
+        stream: UnixStream,
+        next: u64,
+    }
+
+    impl TestConn {
+        async fn connect(socket: &Path, id: &Identity) -> Self {
+            Self {
+                stream: connect_as(socket, id).await,
+                next: 1,
+            }
+        }
+
+        /// Writes a request and returns its id.
+        async fn send(&mut self, req: Req) -> u64 {
+            let id = self.next;
+            self.next += 1;
+            write_json(&mut self.stream, &Request { id, req })
+                .await
+                .expect("send request");
+            id
+        }
+
+        /// The next frame the daemon sends, of any kind.
+        async fn frame(&mut self) -> ServerFrame {
+            recv(&mut self.stream).await
+        }
+
+        /// Sends `req` and returns its reply; event frames that arrive first are skipped.
+        async fn call(&mut self, req: Req) -> Result<Reply, ErrorBody> {
+            let id = self.send(req).await;
+            loop {
+                match self.frame().await {
+                    ServerFrame::Ok { id: got, reply } if got == id => return Ok(reply),
+                    ServerFrame::Err { id: got, error } if got == id => return Err(error),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// A running daemon: its socket, shutdown token and run task.
+    struct Running {
+        socket: PathBuf,
+        token: CancellationToken,
+        run: tokio::task::JoinHandle<Result<(), DaemonError>>,
+    }
+
+    async fn start(home: &TestHome) -> Running {
+        let daemon = Daemon::bind(home.config()).await.expect("bind");
+        let socket = daemon.socket_path().to_path_buf();
+        let token = daemon.shutdown_token();
+        Running {
+            socket,
+            token,
+            run: tokio::spawn(daemon.run()),
+        }
+    }
+
+    impl Running {
+        async fn stop(self) {
+            self.token.cancel();
+            tokio::time::timeout(WAIT, self.run)
+                .await
+                .expect("run ends after cancellation")
+                .expect("run task joins")
+                .expect("daemon stops cleanly");
+        }
+    }
+
+    fn ident(seed: u8) -> Identity {
+        Identity::from_seed([seed; 32])
+    }
+
+    /// `author`'s signed operation, for a request that carries one.
+    fn signed_op(author: &Identity, kind: &str, subject: &str, arg: &str) -> OpWire {
+        let signed = SignedOp::new(kind, subject, arg, now_ms(), "test-op").sign(author);
+        OpWire::from_op(&signed)
+    }
+
+    /// A plaintext message `msg_id` in `channel`, signed by `author`, ready to post.
+    fn post_msg(author: &Identity, msg_id: &str, channel: &str) -> MessageWire {
+        let msg = SignedMessage {
+            id: msg_id.to_string(),
+            channel: channel.to_string(),
+            thread_of: None,
+            sender: [0; 32],
+            ts: now_ms(),
+            encrypted: false,
+            epoch: 0,
+            body: b"hello".to_vec(),
+            attachments: vec![],
+            sig: vec![],
+        }
+        .sign(author);
+        MessageWire::from_message(&msg)
+    }
+
+    /// Bootstraps the owner (seed 1), registers alice (3), bob (4) and carol (7), and has
+    /// the owner create group channel "g" holding alice and bob.
+    async fn setup_group(socket: &Path) {
+        let owner = ident(1);
+        let mut conn = TestConn::connect(socket, &owner).await;
+        assert_eq!(
+            conn.call(Req::BootstrapOwner)
+                .await
+                .expect("bootstrap owner"),
+            Reply::Unit
+        );
+        for (seed, label) in [(3, "alice"), (4, "bob"), (7, "carol")] {
+            let mut member = TestConn::connect(socket, &ident(seed)).await;
+            let reply = member
+                .call(Req::Register {
+                    label: label.to_string(),
+                })
+                .await
+                .expect("register");
+            assert_eq!(reply, Reply::Unit);
+        }
+        let members = [ident(3), ident(4)]
+            .iter()
+            .map(|m| serde_json::json!({"pk": hex(&m.public()), "role": "member"}))
+            .collect::<Vec<_>>();
+        let arg = serde_json::json!({"kind": "group", "members": members}).to_string();
+        let op = signed_op(&owner, "channel.create", "g", &arg);
+        assert_eq!(
+            conn.call(Req::ChannelCreate { op, keys: vec![] })
+                .await
+                .expect("create channel g"),
+            Reply::Unit
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_connection_that_never_subscribes_receives_no_events() {
+        let home = TestHome::new();
+        let daemon = start(&home).await;
+        setup_group(&daemon.socket).await;
+        let mut alice = TestConn::connect(&daemon.socket, &ident(3)).await;
+        let mut bob = TestConn::connect(&daemon.socket, &ident(4)).await;
+
+        alice
+            .call(Req::Post {
+                msg: post_msg(&ident(3), "m1", "g"),
+            })
+            .await
+            .expect("alice posts in g");
+        // Anything pushed to bob would arrive before this reply, so it must come first.
+        let id = bob.send(Req::Ping).await;
+        assert_eq!(
+            bob.frame().await,
+            ServerFrame::Ok {
+                id,
+                reply: Reply::Pong
+            }
+        );
+        daemon.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn subscribed_member_gets_the_event_after_its_subscribed_reply() {
+        let home = TestHome::new();
+        let daemon = start(&home).await;
+        setup_group(&daemon.socket).await;
+        let mut alice = TestConn::connect(&daemon.socket, &ident(3)).await;
+        let mut bob = TestConn::connect(&daemon.socket, &ident(4)).await;
+
+        let subscribed = bob
+            .call(Req::Subscribe { channels: vec![] })
+            .await
+            .expect("subscribe to every channel of bob");
+        assert_eq!(
+            subscribed,
+            Reply::Subscribed {
+                channels: vec!["g".to_string()]
+            }
+        );
+        let seq = match alice
+            .call(Req::Post {
+                msg: post_msg(&ident(3), "m1", "g"),
+            })
+            .await
+            .expect("alice posts in g")
+        {
+            Reply::Posted { seq } => seq,
+            other => panic!("expected Posted, got {other:?}"),
+        };
+        assert_eq!(
+            bob.frame().await,
+            ServerFrame::Event {
+                event: Event::MessageAppended {
+                    channel: "g".to_string(),
+                    seq,
+                }
+            }
+        );
+        daemon.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_second_subscribe_on_the_same_connection_is_invalid() {
+        let home = TestHome::new();
+        let daemon = start(&home).await;
+        setup_group(&daemon.socket).await;
+        let mut bob = TestConn::connect(&daemon.socket, &ident(4)).await;
+
+        bob.call(Req::Subscribe { channels: vec![] })
+            .await
+            .expect("first subscribe");
+        let error = bob
+            .call(Req::Subscribe { channels: vec![] })
+            .await
+            .expect_err("second subscribe is refused");
+        assert_eq!(error.code, ErrorCode::Invalid);
+        daemon.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn subscribing_to_a_channel_one_is_not_in_is_not_member_and_can_be_retried() {
+        let home = TestHome::new();
+        let daemon = start(&home).await;
+        setup_group(&daemon.socket).await;
+        let mut carol = TestConn::connect(&daemon.socket, &ident(7)).await;
+
+        let error = carol
+            .call(Req::Subscribe {
+                channels: vec!["g".to_string()],
+            })
+            .await
+            .expect_err("carol is not in g");
+        assert_eq!(error.code, ErrorCode::NotMember);
+        // The failure left the connection unsubscribed, so a later subscribe is answered.
+        assert_eq!(
+            carol
+                .call(Req::Subscribe { channels: vec![] })
+                .await
+                .expect("subscribe after a failed subscribe"),
+            Reply::Subscribed { channels: vec![] }
+        );
+        daemon.stop().await;
     }
 }

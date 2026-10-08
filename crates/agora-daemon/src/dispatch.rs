@@ -15,6 +15,11 @@ pub async fn handle(sh: &Shared, conn: &Conn, req: Req) -> Result<Reply, ErrorBo
             timeout_ms,
             limit,
         } => crate::wait::inbox_wait(sh, conn, after, timeout_ms, limit).await,
+        Req::Subscribe { .. } => Err(ErrorBody::new(
+            ErrorCode::Invalid,
+            "subscribe is handled by the connection",
+        )),
+        Req::Online => crate::push::online(sh, conn).await,
         r @ (Req::PutBlob { .. }
         | Req::GetBlob { .. }
         | Req::Post { .. }

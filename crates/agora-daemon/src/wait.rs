@@ -2,16 +2,20 @@
 
 use crate::{Conn, Shared, dispatch};
 use agora_proto::{ErrorBody, ErrorCode, Event, MessageView, Reply};
+use std::collections::HashSet;
 use std::future::Future;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::sync::broadcast::{self, error::RecvError};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 /// The InboxWait request. Clamps timeout to MAX_WAIT_MS, subscribes to the bus
-/// FIRST, then runs `wait_for` with a check that reads `inbox_after(conn.pubkey,
-/// after, limit)` on the reader actor. Returns Reply::Inbox{messages, cursor,
-/// timed_out}; on timeout messages is empty, cursor == after, timed_out true.
+/// FIRST, then runs `wait_for` with a check that reads `list_channels(conn.pubkey)`
+/// and `inbox_after(conn.pubkey, after, limit)` in one reader exec. The channel
+/// ids from that read form the member set that decides which MessageAppended
+/// events wake the waiter. Returns Reply::Inbox{messages, cursor, timed_out}; on
+/// timeout messages is empty, cursor == after, timed_out true.
 pub async fn inbox_wait(
     sh: &Shared,
     conn: &Conn,
@@ -26,17 +30,38 @@ pub async fn inbox_wait(
     let deadline = Instant::now() + timeout;
     let pk = conn.pubkey;
     let reader = sh.reader.clone();
+    // Channels the waiter is a member of, as of the last check.
+    let members = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let check_members = Arc::clone(&members);
     let check = move || {
         let reader = reader.clone();
+        let members = Arc::clone(&check_members);
         async move {
-            let rows = reader
-                .exec(move |s| s.inbox_after(&pk, after, limit))
+            let (chans, rows) = reader
+                .exec(move |s| {
+                    let chans = s.list_channels(&pk)?;
+                    let rows = s.inbox_after(&pk, after, limit)?;
+                    Ok((chans, rows))
+                })
                 .await
                 .map_err(dispatch::daemon_error)?;
+            {
+                let mut set = members.lock().unwrap_or_else(PoisonError::into_inner);
+                *set = chans.into_iter().map(|c| c.id).collect();
+            }
             Ok(if rows.is_empty() { None } else { Some(rows) })
         }
     };
-    match wait_for(rx, deadline, &sh.shutdown, check).await? {
+    let relevant_members = Arc::clone(&members);
+    let relevant = move |e: &Event| match e {
+        Event::MessageAppended { channel, .. } => relevant_members
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(channel),
+        Event::ChannelChanged { .. } | Event::IdentityChanged { .. } => true,
+        _ => false,
+    };
+    match wait_for(rx, deadline, &sh.shutdown, relevant, check).await? {
         Some(rows) => {
             let cursor = rows.iter().map(|(_, r)| r.seq).fold(after, i64::max);
             let messages = rows.iter().map(|(_, r)| MessageView::from_row(r)).collect();
@@ -68,21 +93,26 @@ pub fn wakes_inbox(e: &Event) -> bool {
 /// Core loop, generic for unit tests. `rx` MUST have been subscribed before this is
 /// called. Loop: `check().await?` -> Some(v) => return Ok(Some(v)); None => wait
 /// for the next event, the deadline, or cancellation:
-///   relevant event (wakes_inbox) or Err(Lagged) -> check again;
-///   irrelevant event -> keep waiting (no re-check);
+///   event for which `relevant` returns true, or Err(Lagged) -> check again;
+///   irrelevant event (`relevant` false) -> keep waiting (no re-check);
 ///   deadline -> one final check, Some(v) => Ok(Some(v)), None => Ok(None);
 ///   cancellation or Err(Closed) -> Err(ShuttingDown).
-pub async fn wait_for<T, C, Fut>(
+/// `inbox_wait` passes a predicate that accepts MessageAppended only for the
+/// waiter's own channels; tests may pass `wakes_inbox`.
+pub async fn wait_for<T, R, C, Fut>(
     rx: broadcast::Receiver<Event>,
     deadline: tokio::time::Instant,
     shutdown: &CancellationToken,
+    relevant: R,
     check: C,
 ) -> Result<Option<T>, ErrorBody>
 where
+    R: FnMut(&Event) -> bool,
     C: FnMut() -> Fut,
     Fut: Future<Output = Result<Option<T>, ErrorBody>>,
 {
     let mut rx = rx;
+    let mut relevant = relevant;
     let mut check = check;
     loop {
         if let Some(v) = check().await? {
@@ -97,8 +127,11 @@ where
                     return check().await;
                 }
                 r = rx.recv() => match r {
-                    Ok(e) if wakes_inbox(&e) => break,
-                    Ok(_) => continue,
+                    Ok(e) => {
+                        if relevant(&e) {
+                            break;
+                        }
+                    }
                     Err(RecvError::Lagged(_)) => break,
                     Err(RecvError::Closed) => return Err(shutting_down()),
                 },
@@ -162,7 +195,7 @@ mod tests {
         };
         let got = tokio::time::timeout(
             Duration::from_secs(5),
-            wait_for(rx, deadline, &shutdown, check),
+            wait_for(rx, deadline, &shutdown, wakes_inbox, check),
         )
         .await
         .expect("wait_for must not hang");
@@ -201,7 +234,7 @@ mod tests {
         };
         let got = tokio::time::timeout(
             Duration::from_secs(5),
-            wait_for(rx, deadline, &shutdown, check),
+            wait_for(rx, deadline, &shutdown, wakes_inbox, check),
         )
         .await
         .expect("wait_for must not hang");
@@ -209,6 +242,62 @@ mod tests {
         // The initial check and the final check at the deadline; the irrelevant
         // events in between cause no check.
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn event_rejected_by_predicate_does_not_recheck() {
+        let (tx, _keep) = broadcast::channel::<Event>(16);
+        let rx = tx.subscribe();
+        // A MessageAppended is an inbox event, but the predicate rejects it.
+        let _ = tx.send(appended(1));
+        let calls = AtomicUsize::new(0);
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let shutdown = CancellationToken::new();
+        let check = || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Ok(None::<i64>) }
+        };
+        let got = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for(rx, deadline, &shutdown, |_: &Event| false, check),
+        )
+        .await
+        .expect("wait_for must not hang");
+        assert_eq!(got, Ok(None));
+        // The initial check and the final check at the deadline; the rejected event
+        // causes no check in between.
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn relevant_event_rechecks_and_returns_the_found_value() {
+        let (tx, _keep) = broadcast::channel::<Event>(16);
+        let rx = tx.subscribe();
+        // Another channel's message is not relevant; the one in "general" is.
+        let _ = tx.send(Event::MessageAppended {
+            channel: "other".into(),
+            seq: 1,
+        });
+        let _ = tx.send(appended(2));
+        let calls = AtomicUsize::new(0);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let shutdown = CancellationToken::new();
+        let relevant =
+            |e: &Event| matches!(e, Event::MessageAppended { channel, .. } if channel == "general");
+        let check = || {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            async move { Ok(if n == 0 { None } else { Some(5i64) }) }
+        };
+        let got = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for(rx, deadline, &shutdown, relevant, check),
+        )
+        .await
+        .expect("wait_for must not hang");
+        assert_eq!(got, Ok(Some(5)));
+        // The initial check, then one re-check woken by the relevant event only.
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(Instant::now() < deadline, "woke by event, not by deadline");
     }
 
     #[tokio::test]
@@ -220,7 +309,7 @@ mod tests {
         let check = || async { Ok(None::<i64>) };
         let got = tokio::time::timeout(
             Duration::from_secs(5),
-            wait_for(rx, deadline, &shutdown, check),
+            wait_for(rx, deadline, &shutdown, wakes_inbox, check),
         )
         .await
         .expect("wait_for must not hang");
@@ -245,7 +334,7 @@ mod tests {
         };
         let got = tokio::time::timeout(
             Duration::from_secs(5),
-            wait_for(rx, deadline, &shutdown, check),
+            wait_for(rx, deadline, &shutdown, wakes_inbox, check),
         )
         .await
         .expect("wait_for must not hang");
@@ -263,7 +352,7 @@ mod tests {
         let check = || async { Ok(None::<i64>) };
         let got = tokio::time::timeout(
             Duration::from_secs(5),
-            wait_for(rx, deadline, &shutdown, check),
+            wait_for(rx, deadline, &shutdown, wakes_inbox, check),
         )
         .await
         .expect("wait_for must not hang");
@@ -287,7 +376,7 @@ mod tests {
         };
         let got = tokio::time::timeout(
             Duration::from_secs(5),
-            wait_for(rx, deadline, &shutdown, check),
+            wait_for(rx, deadline, &shutdown, wakes_inbox, check),
         )
         .await
         .expect("wait_for must not hang");
@@ -306,7 +395,7 @@ mod tests {
         let check = || async { Ok(None::<i64>) };
         let got = tokio::time::timeout(
             Duration::from_secs(5),
-            wait_for(rx, deadline, &shutdown, check),
+            wait_for(rx, deadline, &shutdown, wakes_inbox, check),
         )
         .await
         .expect("wait_for must not hang");

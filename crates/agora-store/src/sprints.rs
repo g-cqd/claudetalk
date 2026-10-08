@@ -144,7 +144,10 @@ impl Store {
         Ok(tx.commit()?)
     }
 
+    /// Totals of the cards in `sprint`. Fails with `NotFound` when no such sprint exists,
+    /// rather than reporting zero counts for it.
     pub fn sprint_summary(&self, sprint: &str) -> Result<SprintSummary, StoreError> {
+        sprint_state(&self.conn, sprint)?;
         let mut st = self.conn.prepare_cached(
             "SELECT c.state, COUNT(*) FROM sprint_cards s JOIN cards c ON c.id=s.card WHERE s.sprint=? GROUP BY c.state",
         )?;
@@ -201,7 +204,7 @@ fn parse_create_arg(arg: &str) -> Result<(String, String, i64, i64), StoreError>
     Ok((name.to_owned(), goal.to_owned(), starts, ends))
 }
 
-/// State of an existing sprint. Runs inside the caller's transaction.
+/// State of an existing sprint, or `NotFound`. Works inside a transaction or on the connection.
 fn sprint_state(conn: &Connection, id: &str) -> Result<String, StoreError> {
     let state: Option<String> = conn
         .query_row("SELECT state FROM sprints WHERE id=?", [id], |r| r.get(0))

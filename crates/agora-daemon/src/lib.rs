@@ -14,6 +14,8 @@ pub mod chat;
 pub mod config;
 pub mod dispatch;
 pub mod org;
+pub mod presence;
+pub mod push;
 pub mod server;
 pub mod wait;
 
@@ -53,6 +55,8 @@ pub struct Shared {
     pub writer: actor::Writer,
     pub reader: actor::Reader,
     pub bus: broadcast::Sender<Event>,
+    /// Identities that currently hold a subscribed connection.
+    pub presence: presence::Presence,
     pub config: Arc<DaemonConfig>,
     /// Effective uid of the daemon process.
     pub daemon_uid: u32,

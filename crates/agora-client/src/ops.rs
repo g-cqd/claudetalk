@@ -1,10 +1,14 @@
 //! Signing and channel-crypto glue shared by the commands. All key material stays here.
 
-use crate::CliError;
+use crate::ClientError;
 use crate::client::Client;
 use agora_crypto::{ChannelKey, Identity, body_aad, random_bytes};
 use agora_proto::{MessageView, MessageWire, OpWire, Reply, Req, unb64, unhex_pk};
 use agora_store::{Attachment, Pub, SignedMessage, SignedOp, hex, unhex32};
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::Path;
 
 /// Wall clock in ms.
 pub fn now_ms() -> i64 {
@@ -65,7 +69,7 @@ pub fn sealed_message(
     key: &ChannelKey,
     body: &[u8],
     attachments: Vec<Attachment>,
-) -> Result<MessageWire, CliError> {
+) -> Result<MessageWire, ClientError> {
     let msg_id = new_id("m");
     let sealed = key.seal(&body_aad(channel, epoch, &msg_id), body)?;
     let msg = SignedMessage {
@@ -90,10 +94,10 @@ pub fn wrap_for(
     epoch: i64,
     key: &ChannelKey,
     members: &[Pub],
-) -> Result<Vec<(Pub, Vec<u8>)>, CliError> {
+) -> Result<Vec<(Pub, Vec<u8>)>, ClientError> {
     members
         .iter()
-        .map(|pk| -> Result<(Pub, Vec<u8>), CliError> {
+        .map(|pk| -> Result<(Pub, Vec<u8>), ClientError> {
             Ok((*pk, id.wrap_key(pk, channel, epoch, key)?))
         })
         .collect()
@@ -101,7 +105,7 @@ pub fn wrap_for(
 
 /// Decrypt an encrypted message body with the key of its epoch
 /// (aad = body_aad(view.msg.channel, view.msg.epoch, view.msg.id)).
-pub fn open_body(key: &ChannelKey, view: &MessageView) -> Result<Vec<u8>, CliError> {
+pub fn open_body(key: &ChannelKey, view: &MessageView) -> Result<Vec<u8>, ClientError> {
     let blob = unb64(&view.msg.body, "body")?;
     let aad = body_aad(&view.msg.channel, view.msg.epoch, &view.msg.id);
     Ok(key.open(&aad, &blob)?)
@@ -134,9 +138,38 @@ pub fn sanitize(s: &str) -> String {
     out
 }
 
+/// Write `data` to `path` as a private file: created 0600, never through a symlink
+/// (O_NOFOLLOW), and only a regular file. `overwrite` truncates an existing file;
+/// without it an existing file is an error (create_new). I/O failures name the path.
+pub fn write_private_file(path: &Path, data: &[u8], overwrite: bool) -> Result<(), ClientError> {
+    let at = |e: std::io::Error| ClientError::Usage(format!("{}: {e}", path.display()));
+    let mut options = OpenOptions::new();
+    options.write(true);
+    if overwrite {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut file = options
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(at)?;
+    let meta = file.metadata().map_err(at)?;
+    if !meta.is_file() {
+        return Err(ClientError::Usage(format!(
+            "{}: not a regular file",
+            path.display()
+        )));
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(at)?;
+    file.write_all(data).map_err(at)
+}
+
 /// Exactly 64 lowercase hex -> Pub, else Usage("invalid public key: <s>").
-pub fn parse_pk(s: &str) -> Result<Pub, CliError> {
-    unhex32(s).ok_or_else(|| CliError::Usage(format!("invalid public key: {s}")))
+pub fn parse_pk(s: &str) -> Result<Pub, ClientError> {
+    unhex32(s).ok_or_else(|| ClientError::Usage(format!("invalid public key: {s}")))
 }
 
 /// Ask the daemon for our wrapped key (Req::ChannelKey) and unwrap it with
@@ -146,7 +179,7 @@ pub async fn channel_key(
     id: &Identity,
     channel: &str,
     epoch: Option<i64>,
-) -> Result<(i64, ChannelKey), CliError> {
+) -> Result<(i64, ChannelKey), ClientError> {
     let reply = client
         .call(Req::ChannelKey {
             channel: channel.to_string(),
@@ -159,11 +192,11 @@ pub async fn channel_key(
         wrapped,
     } = reply
     else {
-        return Err(CliError::UnexpectedReply);
+        return Err(ClientError::UnexpectedReply);
     };
     // A specific epoch was asked for: any other epoch is not the key we wanted.
     if epoch.is_some_and(|want| want != got) {
-        return Err(CliError::UnexpectedReply);
+        return Err(ClientError::UnexpectedReply);
     }
     let epoch = got;
     let wrapper = unhex_pk(&wrapper, "wrapper")?;
@@ -291,5 +324,70 @@ mod tests {
     fn sanitize_escapes_bidi_and_invisible_characters() {
         assert!(sanitize("a\u{202E}b").contains("\\u{202e}"));
         assert!(sanitize("x\u{200B}y").contains("\\u{200b}"));
+    }
+
+    #[test]
+    fn write_private_file_creates_a_private_file_and_truncates_an_existing_one() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("out.bin");
+        write_private_file(&path, b"a much longer first write", true).expect("create");
+        write_private_file(&path, b"short", true).expect("truncate");
+        assert_eq!(std::fs::read(&path).expect("read"), b"short");
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn write_private_file_tightens_an_existing_world_readable_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("loose.bin");
+        std::fs::write(&path, b"old").expect("create");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        write_private_file(&path, b"secret", true).expect("write");
+        assert_eq!(std::fs::read(&path).expect("read"), b"secret");
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn write_private_file_refuses_a_fifo_without_blocking() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let fifo = dir.path().join("pipe.bin");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo");
+        assert!(status.success());
+        let err = write_private_file(&fifo, b"x", true).expect_err("fifo refused");
+        assert!(matches!(err, ClientError::Usage(m) if m.contains("pipe.bin")));
+    }
+
+    #[test]
+    fn write_private_file_refuses_to_follow_a_symlink() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let victim = dir.path().join("victim.txt");
+        let link = dir.path().join("link.bin");
+        std::fs::write(&victim, b"keep").expect("write victim");
+        std::os::unix::fs::symlink(&victim, &link).expect("symlink");
+        let err = write_private_file(&link, b"overwrite", true).expect_err("symlink refused");
+        assert!(matches!(err, ClientError::Usage(m) if m.contains("link.bin")));
+        assert_eq!(std::fs::read(&victim).expect("read victim"), b"keep");
+    }
+
+    #[test]
+    fn write_private_file_without_overwrite_refuses_an_existing_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("exists.bin");
+        write_private_file(&path, b"first", false).expect("create");
+        let err = write_private_file(&path, b"second", false).expect_err("exists");
+        assert!(matches!(err, ClientError::Usage(m) if m.contains("exists.bin")));
+        assert_eq!(std::fs::read(&path).expect("read"), b"first");
+    }
+
+    #[test]
+    fn write_private_file_failures_name_the_path() {
+        let missing = Path::new("/nonexistent-agora-dir/file.bin");
+        let err = write_private_file(missing, b"x", true).expect_err("missing dir");
+        assert!(matches!(err, ClientError::Usage(m) if m.contains("file.bin:")));
     }
 }

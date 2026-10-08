@@ -344,6 +344,13 @@ fn start_unknown_sprint_is_not_found() {
 }
 
 #[test]
+fn sprint_summary_of_an_unknown_sprint_is_not_found() {
+    let w = world();
+    let err = w.s.sprint_summary("ghost").unwrap_err();
+    assert!(matches!(err, StoreError::NotFound(ref id) if id == "ghost"));
+}
+
+#[test]
 fn adding_the_same_card_twice_counts_it_once() {
     let mut w = world();
     make_card(&mut w, "c1");

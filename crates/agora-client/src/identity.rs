@@ -4,7 +4,7 @@
 //! info = canonical absolute folder path bytes), so the same folder always gets the
 //! same key and different folders get unrelated keys.
 
-use crate::CliError;
+use crate::ClientError;
 use agora_crypto::Identity;
 use agora_daemon::Paths;
 use std::fs::{DirBuilder, OpenOptions, Permissions};
@@ -23,7 +23,7 @@ pub const FOLDER_SALT: &[u8] = b"agora/folder-identity/v1";
 /// partly written seed: if the link finds the seed already present (AlreadyExists),
 /// a concurrent process won and its complete seed is read. The temp file is removed
 /// either way. A file that is not exactly 32 bytes -> Usage("corrupt machine seed at <path>").
-pub fn load_or_create_machine_seed(paths: &Paths) -> Result<[u8; 32], CliError> {
+pub fn load_or_create_machine_seed(paths: &Paths) -> Result<[u8; 32], ClientError> {
     DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -33,7 +33,7 @@ pub fn load_or_create_machine_seed(paths: &Paths) -> Result<[u8; 32], CliError> 
 
     match read_seed(&paths.machine_seed) {
         Ok(seed) => return Ok(seed),
-        Err(CliError::Io(e)) if e.kind() == ErrorKind::NotFound => {}
+        Err(ClientError::Io(e)) if e.kind() == ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
 
@@ -58,7 +58,7 @@ fn publish_seed(
     dir: &Path,
     target: &Path,
     seed: &[u8; 32],
-) -> Result<[u8; 32], CliError> {
+) -> Result<[u8; 32], ClientError> {
     {
         let mut file = OpenOptions::new()
             .write(true)
@@ -74,7 +74,7 @@ fn publish_seed(
             Ok(*seed)
         }
         Err(e) if e.kind() == ErrorKind::AlreadyExists => read_seed(target),
-        Err(e) => Err(CliError::Usage(format!(
+        Err(e) => Err(ClientError::Usage(format!(
             "cannot create machine seed {}: {e}; the filesystem must support hard links",
             target.display()
         ))),
@@ -84,15 +84,15 @@ fn publish_seed(
 /// Read exactly 32 bytes, then require that no group or other user can read the file.
 /// At most 33 bytes are read, so an oversized file is rejected without being loaded
 /// whole. The mode is taken from the open file, so it is the file that was read.
-fn read_seed(path: &Path) -> Result<[u8; 32], CliError> {
+fn read_seed(path: &Path) -> Result<[u8; 32], ClientError> {
     let file = std::fs::File::open(path)?;
     let mode = file.metadata()?.permissions().mode();
     let mut bytes = Vec::with_capacity(33);
     file.take(33).read_to_end(&mut bytes)?;
     let seed = <[u8; 32]>::try_from(bytes.as_slice())
-        .map_err(|_| CliError::Usage(format!("corrupt machine seed at {}", path.display())))?;
+        .map_err(|_| ClientError::Usage(format!("corrupt machine seed at {}", path.display())))?;
     if mode & 0o077 != 0 {
-        return Err(CliError::Usage(format!(
+        return Err(ClientError::Usage(format!(
             "machine seed {} is accessible by other users; chmod 600",
             path.display()
         )));
@@ -110,13 +110,13 @@ pub fn folder_seed(machine: &[u8; 32], folder: &Path) -> [u8; 32] {
 }
 
 /// `$AGORA_FOLDER` if set and non-empty, else the current directory; canonicalized.
-pub fn current_folder() -> Result<PathBuf, CliError> {
+pub fn current_folder() -> Result<PathBuf, ClientError> {
     let raw = match std::env::var_os("AGORA_FOLDER") {
         Some(v) if !v.is_empty() => PathBuf::from(v),
         _ => std::env::current_dir()?,
     };
     raw.canonicalize().map_err(|e| {
-        CliError::Io(std::io::Error::new(
+        ClientError::Io(std::io::Error::new(
             e.kind(),
             format!("{}: {e}", raw.display()),
         ))
@@ -124,7 +124,7 @@ pub fn current_folder() -> Result<PathBuf, CliError> {
 }
 
 /// (identity for current_folder(), label = the folder's file name or "root").
-pub fn load_identity(paths: &Paths) -> Result<(Identity, String), CliError> {
+pub fn load_identity(paths: &Paths) -> Result<(Identity, String), ClientError> {
     let machine = load_or_create_machine_seed(paths)?;
     let folder = current_folder()?;
     let identity = Identity::from_seed(folder_seed(&machine, &folder));
@@ -251,7 +251,7 @@ mod tests {
         std::fs::set_permissions(&paths.machine_seed, Permissions::from_mode(0o644))
             .expect("chmod seed");
         let err = load_or_create_machine_seed(&paths).expect_err("0644 seed must be rejected");
-        assert!(matches!(err, CliError::Usage(_)), "got {err:?}");
+        assert!(matches!(err, ClientError::Usage(_)), "got {err:?}");
     }
 
     #[test]
@@ -260,6 +260,6 @@ mod tests {
         let paths = Paths::new(t.path());
         std::fs::write(&paths.machine_seed, [9u8; 31]).expect("write short seed");
         let err = load_or_create_machine_seed(&paths).expect_err("31 bytes must be rejected");
-        assert!(matches!(err, CliError::Usage(_)), "got {err:?}");
+        assert!(matches!(err, ClientError::Usage(_)), "got {err:?}");
     }
 }

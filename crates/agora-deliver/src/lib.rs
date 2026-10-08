@@ -41,6 +41,20 @@ impl Harness {
             Self::Unknown
         }
     }
+
+    /// Stable lowercase identifier used in logs and tool output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude_code",
+            Self::Codex => "codex",
+            Self::CopilotCli => "copilot_cli",
+            Self::CopilotVsCode => "copilot_vscode",
+            Self::OpenCode => "opencode",
+            Self::Cursor => "cursor",
+            Self::Antigravity => "antigravity",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// A way to get the agent to look at its inbox, strongest first.
@@ -69,6 +83,19 @@ impl Mechanism {
             self,
             Self::ChannelPush | Self::ModSubmit | Self::AsyncRewakeHook | Self::OwnedSessionApi
         )
+    }
+
+    /// Stable lowercase identifier used in logs and tool output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ChannelPush => "channel_push",
+            Self::ModSubmit => "mod_submit",
+            Self::AsyncRewakeHook => "async_rewake_hook",
+            Self::OwnedSessionApi => "owned_session_api",
+            Self::StopContinue => "stop_continue",
+            Self::HookInject => "hook_inject",
+            Self::WaitTool => "wait_tool",
+        }
     }
 }
 
@@ -296,5 +323,38 @@ mod tests {
             Harness::Antigravity
         );
         assert_eq!(Harness::from_client_name("mystery"), Harness::Unknown);
+    }
+
+    #[test]
+    fn harness_identifiers_are_stable() {
+        let all = [
+            (Harness::ClaudeCode, "claude_code"),
+            (Harness::Codex, "codex"),
+            (Harness::CopilotCli, "copilot_cli"),
+            (Harness::CopilotVsCode, "copilot_vscode"),
+            (Harness::OpenCode, "opencode"),
+            (Harness::Cursor, "cursor"),
+            (Harness::Antigravity, "antigravity"),
+            (Harness::Unknown, "unknown"),
+        ];
+        for (h, s) in all {
+            assert_eq!(h.as_str(), s);
+        }
+    }
+
+    #[test]
+    fn mechanism_identifiers_are_stable() {
+        let all = [
+            (ChannelPush, "channel_push"),
+            (ModSubmit, "mod_submit"),
+            (AsyncRewakeHook, "async_rewake_hook"),
+            (OwnedSessionApi, "owned_session_api"),
+            (StopContinue, "stop_continue"),
+            (HookInject, "hook_inject"),
+            (WaitTool, "wait_tool"),
+        ];
+        for (m, s) in all {
+            assert_eq!(m.as_str(), s);
+        }
     }
 }
