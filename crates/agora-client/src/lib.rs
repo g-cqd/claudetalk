@@ -3,8 +3,10 @@
 //! both front-ends run the same implementation and print the same JSON.
 
 pub mod api;
+pub mod capabilities;
 pub mod client;
 pub mod error;
+pub mod heartbeat;
 pub mod identity;
 pub mod ops;
 

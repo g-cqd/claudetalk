@@ -7,6 +7,7 @@
 use crate::ClientError;
 use agora_crypto::Identity;
 use agora_daemon::Paths;
+use std::ffi::OsString;
 use std::fs::{DirBuilder, OpenOptions, Permissions};
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -109,12 +110,25 @@ pub fn folder_seed(machine: &[u8; 32], folder: &Path) -> [u8; 32] {
     out
 }
 
-/// `$AGORA_FOLDER` if set and non-empty, else the current directory; canonicalized.
+/// `$AGORA_FOLDER` if set, non-empty and not containing `${` (an unexpanded placeholder such as
+/// `${CLAUDE_PROJECT_DIR}` is ignored), else the current directory; canonicalized.
 pub fn current_folder() -> Result<PathBuf, ClientError> {
-    let raw = match std::env::var_os("AGORA_FOLDER") {
-        Some(v) if !v.is_empty() => PathBuf::from(v),
-        _ => std::env::current_dir()?,
+    let raw = match folder_override(std::env::var_os("AGORA_FOLDER")) {
+        Some(folder) => folder,
+        None => std::env::current_dir()?,
     };
+    canonicalize_folder(&raw)
+}
+
+/// The `AGORA_FOLDER` value to use: absent, empty, or containing `${` (a placeholder the host did
+/// not expand) gives None. Pure, so the rule is tested without touching the process environment.
+fn folder_override(v: Option<OsString>) -> Option<PathBuf> {
+    v.filter(|v| !v.is_empty() && !v.as_bytes().windows(2).any(|w| w == b"${"))
+        .map(PathBuf::from)
+}
+
+/// `raw` made absolute with symlinks resolved; an error names the path.
+fn canonicalize_folder(raw: &Path) -> Result<PathBuf, ClientError> {
     raw.canonicalize().map_err(|e| {
         ClientError::Io(std::io::Error::new(
             e.kind(),
@@ -123,16 +137,46 @@ pub fn current_folder() -> Result<PathBuf, ClientError> {
     })
 }
 
+/// The folder's file name, or "root" when it has none.
+fn folder_label(folder: &Path) -> String {
+    folder
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "root".to_owned())
+}
+
 /// (identity for current_folder(), label = the folder's file name or "root").
 pub fn load_identity(paths: &Paths) -> Result<(Identity, String), ClientError> {
     let machine = load_or_create_machine_seed(paths)?;
     let folder = current_folder()?;
     let identity = Identity::from_seed(folder_seed(&machine, &folder));
-    let label = folder
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "root".to_owned());
-    Ok((identity, label))
+    Ok((identity, folder_label(&folder)))
+}
+
+/// Like `load_identity` for an explicit `folder`, but never creates anything: the machine seed
+/// must already exist and pass the same checks as `load_or_create_machine_seed` (exactly 32
+/// bytes, not readable by group/other). A missing seed ->
+/// `ClientError::Usage("no machine seed; run an agora command first")`. `folder` is
+/// canonicalized here; the label is the folder's file name, or "root" (as in `load_identity`).
+/// Used by the Claude Code hooks, which must never create state.
+pub fn load_existing_identity(
+    paths: &Paths,
+    folder: &Path,
+) -> Result<(Identity, String), ClientError> {
+    // The same checks as load_or_create_machine_seed (read_seed), but a missing seed is an error
+    // here: nothing is created, not even the home directory.
+    let machine = match read_seed(&paths.machine_seed) {
+        Ok(seed) => seed,
+        Err(ClientError::Io(e)) if e.kind() == ErrorKind::NotFound => {
+            return Err(ClientError::Usage(
+                "no machine seed; run an agora command first".into(),
+            ));
+        }
+        Err(e) => return Err(e),
+    };
+    let folder = canonicalize_folder(folder)?;
+    let identity = Identity::from_seed(folder_seed(&machine, &folder));
+    Ok((identity, folder_label(&folder)))
 }
 
 #[cfg(test)]
@@ -261,5 +305,87 @@ mod tests {
         std::fs::write(&paths.machine_seed, [9u8; 31]).expect("write short seed");
         let err = load_or_create_machine_seed(&paths).expect_err("31 bytes must be rejected");
         assert!(matches!(err, ClientError::Usage(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn load_existing_identity_without_seed_is_usage_error_and_creates_nothing() {
+        let t = TempDir::new("no-seed");
+        let paths = Paths::new(&t.path().join("home"));
+        let err = load_existing_identity(&paths, t.path())
+            .map(|_| ())
+            .expect_err("no seed must be an error");
+        assert!(matches!(err, ClientError::Usage(_)), "got {err:?}");
+        assert!(!paths.home.exists(), "home must not be created");
+        assert!(!paths.machine_seed.exists(), "seed must not be created");
+    }
+
+    #[test]
+    fn load_existing_identity_matches_folder_seed_and_label() {
+        let t = TempDir::new("existing");
+        let paths = Paths::new(&t.path().join("home"));
+        let seed = load_or_create_machine_seed(&paths).expect("create seed");
+        let folder = t.path().join("project");
+        std::fs::create_dir_all(&folder).expect("create folder");
+        let canonical = folder.canonicalize().expect("canonicalize folder");
+        let (identity, label) = load_existing_identity(&paths, &folder).expect("load identity");
+        let expected = Identity::from_seed(folder_seed(&seed, &canonical));
+        assert_eq!(identity.public(), expected.public());
+        assert_eq!(label, "project");
+    }
+
+    #[test]
+    fn non_canonical_and_symlinked_folder_paths_give_the_canonical_key() {
+        let t = TempDir::new("noncanonical");
+        let paths = Paths::new(&t.path().join("home"));
+        let seed = load_or_create_machine_seed(&paths).expect("create seed");
+        let folder = t.path().join("project");
+        std::fs::create_dir_all(&folder).expect("create folder");
+        let canonical = folder.canonicalize().expect("canonicalize folder");
+        let expected = Identity::from_seed(folder_seed(&seed, &canonical)).public();
+
+        let dotted = folder.join(".");
+        let (dotted_identity, _) = load_existing_identity(&paths, &dotted).expect("dotted path");
+        assert_eq!(dotted_identity.public(), expected);
+
+        let link = t.path().join("link");
+        std::os::unix::fs::symlink(&folder, &link).expect("create symlink");
+        let (link_identity, link_label) =
+            load_existing_identity(&paths, &link).expect("symlinked path");
+        assert_eq!(link_identity.public(), expected);
+        assert_eq!(link_label, "project");
+    }
+
+    #[test]
+    fn load_existing_identity_missing_folder_is_io_error() {
+        let t = TempDir::new("missing-folder");
+        let paths = Paths::new(&t.path().join("home"));
+        load_or_create_machine_seed(&paths).expect("create seed");
+        let err = load_existing_identity(&paths, &t.path().join("nope"))
+            .map(|_| ())
+            .expect_err("missing folder must be an error");
+        assert!(matches!(err, ClientError::Io(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn folder_override_treats_unset_and_empty_as_absent() {
+        assert_eq!(folder_override(None), None);
+        assert_eq!(folder_override(Some(OsString::new())), None);
+    }
+
+    #[test]
+    fn folder_override_ignores_unexpanded_placeholder() {
+        assert_eq!(
+            folder_override(Some(OsString::from("${CLAUDE_PROJECT_DIR}"))),
+            None
+        );
+        assert_eq!(folder_override(Some(OsString::from("/work/${X}/a"))), None);
+    }
+
+    #[test]
+    fn folder_override_keeps_plain_path() {
+        assert_eq!(
+            folder_override(Some(OsString::from("/work/a"))),
+            Some(PathBuf::from("/work/a"))
+        );
     }
 }

@@ -77,6 +77,31 @@ pub enum Mechanism {
 }
 
 impl Mechanism {
+    /// Every mechanism, in enum (strongest-first) order.
+    pub const ALL: [Mechanism; 7] = [
+        Self::ChannelPush,
+        Self::ModSubmit,
+        Self::AsyncRewakeHook,
+        Self::OwnedSessionApi,
+        Self::StopContinue,
+        Self::HookInject,
+        Self::WaitTool,
+    ];
+
+    /// Inverse of `as_str`: `Some(m)` iff `m.as_str() == s` exactly (case-sensitive), else `None`.
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.as_str() == s)
+    }
+
+    /// Pull rungs prove liveness by heartbeat files written by the plugin's hooks and mod:
+    /// `ModSubmit`, `AsyncRewakeHook`, `StopContinue`, `HookInject`. All other rungs are not pull.
+    pub fn is_pull(self) -> bool {
+        matches!(
+            self,
+            Self::ModSubmit | Self::AsyncRewakeHook | Self::StopContinue | Self::HookInject
+        )
+    }
+
     /// Can this rung start work in a session that is idle right now?
     pub fn wakes_idle(self) -> bool {
         matches!(
@@ -356,5 +381,62 @@ mod tests {
         for (m, s) in all {
             assert_eq!(m.as_str(), s);
         }
+    }
+
+    #[test]
+    fn parse_round_trips_every_mechanism() {
+        for m in Mechanism::ALL {
+            assert_eq!(Mechanism::parse(m.as_str()), Some(m), "{m:?}");
+        }
+    }
+
+    #[test]
+    fn parse_rejects_unknown_empty_and_case_variants() {
+        for s in [
+            "",
+            "unknown",
+            "CHANNEL_PUSH",
+            "Channel_Push",
+            "mod-submit",
+            " mod_submit",
+            "mod_submit ",
+            "wait_tool\n",
+            "channel_push_x",
+        ] {
+            assert_eq!(Mechanism::parse(s), None, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn is_pull_truth_table() {
+        let table = [
+            (ChannelPush, false),
+            (ModSubmit, true),
+            (AsyncRewakeHook, true),
+            (OwnedSessionApi, false),
+            (StopContinue, true),
+            (HookInject, true),
+            (WaitTool, false),
+        ];
+        for (m, pull) in table {
+            assert_eq!(m.is_pull(), pull, "{m:?}");
+        }
+    }
+
+    #[test]
+    fn all_has_seven_distinct_entries_in_enum_order() {
+        assert_eq!(
+            Mechanism::ALL,
+            [
+                ChannelPush,
+                ModSubmit,
+                AsyncRewakeHook,
+                OwnedSessionApi,
+                StopContinue,
+                HookInject,
+                WaitTool
+            ]
+        );
+        assert!(Mechanism::ALL.windows(2).all(|w| w[0] < w[1]));
     }
 }

@@ -3,7 +3,11 @@
 //! An event link is started for EVERY stdio session once the first request identifies the
 //! client: `Client::connect(ctx)` then `subscribe(vec![])` (it marks the agent online and
 //! feeds delivery bookkeeping). Link failure is logged at warn and retried with backoff 1 s,
-//! 2 s, 4 s ... max 30 s. Pushing itself is enabled iff `Peer::push_enabled`.
+//! 2 s, 4 s ... max 30 s. Pushing itself is enabled iff `Engine::push_enabled`.
+//!
+//! Before each delivery tick `Engine::sync_delivery` reads the files and the harness outside the
+//! tracker lock, reconfigures the tracker only if its ladder differs, and returns the pull rungs
+//! armed by heartbeats that are fresh at that tick (M4). The tick then fires with those.
 
 use crate::delivery::Tracker;
 use crate::engine::{Engine, Notifier, Peer, PushConfig};
@@ -60,8 +64,9 @@ const MAX_SLEEP_MS: u64 = 24 * 60 * 60 * 1000;
 /// notification per batch (`build_notification`), rate limited by a `Bucket` (`burst`, one
 /// token per `refill_ms`; without a token the batch keeps coalescing until the next token
 /// time), and `tracker.on_pushed` for each message in it. `Acked{reader==me}` events ->
-/// `tracker.on_acked`. After each tracker change sleep until `tracker.next_due()`, then
-/// `tracker.tick(now)`; fired rungs other than ChannelPush are only recorded.
+/// `tracker.on_acked`. After each tracker change sleep until `tracker.next_due()`, then `tick`
+/// (`Engine::sync_delivery`, then `tracker.tick_with`); fired rungs other than ChannelPush are
+/// only recorded.
 /// Permission relay (`claude/channel/permission`) is not declared in M3.
 pub fn start(engine: Arc<Engine>, peer: Arc<Peer>, notifier: Notifier) {
     tokio::spawn(run(engine, peer, notifier));
@@ -459,7 +464,7 @@ impl Push {
     /// Afterwards the tracker and the queue keep only what is still unacked: acks missed while
     /// the link was down are reconciled.
     async fn load_backlog(&mut self) -> Result<(), ClientError> {
-        let push = self.linked_before && self.peer.push_enabled(&self.engine);
+        let push = self.linked_before && self.engine.push_enabled(&self.peer);
         let mut after = 0;
         let mut keys: BTreeSet<(String, i64)> = BTreeSet::new();
         loop {
@@ -538,7 +543,7 @@ impl Push {
                 let mut json = out.json;
                 let messages = messages_of(&mut json);
                 let full = i64::try_from(messages.len()).is_ok_and(|n| n >= FETCH_LIMIT);
-                let push = self.peer.push_enabled(&self.engine);
+                let push = self.engine.push_enabled(&self.peer);
                 let advanced = self.absorb(messages, push);
                 if full && advanced {
                     self.mark_dirty();
@@ -607,9 +612,14 @@ impl Push {
         }
     }
 
-    /// Fire the delivery rungs that are due.
+    /// Fire the delivery rungs that are due. `Engine::sync_delivery` reads the files and the
+    /// harness with no lock held, reconfigures the tracker when its ladder changed, and returns
+    /// the pull rungs armed by heartbeats fresh at `now`; the tracker then fires with them, so a
+    /// pull rung is armed only by a fresh heartbeat and only if it is on the ladder.
     fn tick(&self) {
-        let fired = delivery(&self.peer).tick(now_ms());
+        let now = now_ms();
+        let armed = self.engine.sync_delivery(&self.peer, now);
+        let fired = delivery(&self.peer).tick_with(now, &armed);
         if !fired.is_empty() {
             tracing::debug!(count = fired.len(), "delivery rungs fired");
         }

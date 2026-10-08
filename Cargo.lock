@@ -18,9 +18,12 @@ version = "0.1.0"
 dependencies = [
  "agora-client",
  "agora-daemon",
+ "agora-deliver",
+ "agora-hooks",
  "agora-mcp",
  "assert_cmd",
  "clap",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -34,6 +37,7 @@ version = "0.1.0"
 dependencies = [
  "agora-crypto",
  "agora-daemon",
+ "agora-deliver",
  "agora-proto",
  "agora-store",
  "hkdf",
@@ -87,6 +91,24 @@ dependencies = [
 [[package]]
 name = "agora-deliver"
 version = "0.1.0"
+
+[[package]]
+name = "agora-hooks"
+version = "0.1.0"
+dependencies = [
+ "agora-client",
+ "agora-daemon",
+ "agora-deliver",
+ "agora-mcp",
+ "agora-store",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "agora-mcp"

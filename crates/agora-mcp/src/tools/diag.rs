@@ -2,12 +2,14 @@
 
 use super::args::*;
 use super::{ToolCx, ToolError, ToolOutput, ToolResult};
-use crate::clients::{ClientRecord, harness_of, ladder_for, ladder_json};
-use crate::engine::{Peer, Transport};
+use crate::clients::{ClientRecord, ladder_json};
+use crate::engine::{Engine, Peer, Transport, ladder_for_peer};
 use crate::framing::{UNTRUSTED_DATA_NOTICE, escape_line};
 use agora_client::ClientError;
 use agora_client::api::org;
 use agora_client::client::Client;
+use agora_client::ops::now_ms;
+use agora_deliver::{Harness, Mechanism};
 use agora_proto::{ChannelView, MemberView, ProtoError, Reply, Req};
 use agora_store::unhex32;
 use serde_json::{Map, Value, json};
@@ -19,16 +21,24 @@ const MEMBER_CHANNEL_LIMIT: usize = 50;
 /// One channel of the listing and its members, when they were fetched.
 type Listed = (ChannelView, Option<Vec<MemberView>>);
 
-/// `api::org::whoami` json plus `client` (the caller's `ClientRecord`), `signing` (`Peer::signing`), `harness` and `ladder` (`clients::ladder_for`). Text: a short human summary.
+/// `api::org::whoami` json plus `client` (the caller's `ClientRecord`), `signing` (`Peer::signing`), `harness` (`Engine::peer_harness`), `push_enabled` (`Engine::push_enabled`) and `ladder` (`engine::ladder_for_peer` with the same harness and push flag, so it is the ladder `initialize` and the push task use). Text: a short human summary.
 pub async fn whoami(cx: &ToolCx<'_>, _a: WhoamiArgs) -> ToolResult {
     let api = org::whoami(&cx.peer.ctx).await?.json;
     let record = cx.engine.clients.last_for(cx.peer.token_id.as_deref());
     let transport = transport_str(cx.peer.transport);
     let signing = cx.peer.signing();
-    let push = cx.peer.push_enabled(cx.engine);
+    let (harness, push, ladder) = whoami_facts(cx.engine, cx.peer);
     Ok(ToolOutput {
         text: whoami_text(&api, transport, signing, record.as_ref()),
-        structured: whoami_json(api, transport, signing, record.as_ref(), push),
+        structured: whoami_json(
+            api,
+            transport,
+            signing,
+            record.as_ref(),
+            harness,
+            push,
+            &ladder,
+        ),
     })
 }
 
@@ -72,36 +82,50 @@ pub async fn discover(cx: &ToolCx<'_>, a: DiscoverArgs) -> ToolResult {
     })
 }
 
-/// The caller's `ClientRecord`s (`engine.clients`) and the peer's `Tracker::status_json`. Text: a short human summary.
+/// The caller's `ClientRecord`s (`engine.clients`) and the peer's `Tracker::status_json` after `live_status` (`Engine::sync_delivery`), so the ladder, the `armed` rungs and `heartbeats` are live and an idle session shows the hooks that are armed now. The `harness` and `push_enabled` are `Engine::peer_harness` and `Engine::push_enabled`. Text: a short human summary that names the armed rungs.
 pub async fn delivery_status(cx: &ToolCx<'_>, _a: DeliveryStatusArgs) -> ToolResult {
     let record = cx.engine.clients.last_for(cx.peer.token_id.as_deref());
     let transport = transport_str(cx.peer.transport);
-    let push = cx.peer.push_enabled(cx.engine);
-    let status = tracker_status(cx.peer);
+    let harness = cx.engine.peer_harness(cx.peer);
+    let push = cx.engine.push_enabled(cx.peer);
+    let status = live_status(cx.engine, cx.peer, now_ms());
     Ok(ToolOutput {
         text: delivery_text(&status, push),
-        structured: delivery_json(status, transport, push, record.as_ref()),
+        structured: delivery_json(status, transport, harness, push, record.as_ref()),
     })
 }
 
+/// The harness, the push flag and the ladder `whoami` reports for `peer`. The push flag is
+/// `Engine::push_enabled`, and the ladder is `ladder_for_peer` for that harness and flag, so it is
+/// the ladder `initialize` and the push task use.
+fn whoami_facts(engine: &Engine, peer: &Peer) -> (Harness, bool, Vec<Mechanism>) {
+    let harness = engine.peer_harness(peer);
+    let push = engine.push_enabled(peer);
+    let ladder = ladder_for_peer(peer, harness, push);
+    (harness, push, ladder)
+}
+
 /// The `whoami` structured output: the api json plus the transport, the signing mode, the
-/// caller's client record (null when none), its harness and the ladder expected for it.
+/// caller's client record (null when none), the `harness` and `push_enabled` passed in, and the
+/// `ladder` passed in (the ladder for that harness and push flag, as `engine::ladder_for_peer`
+/// computes it). Pure: no I/O.
 fn whoami_json(
     api: Value,
     transport: &str,
     signing: &str,
     record: Option<&ClientRecord>,
+    harness: Harness,
     push_enabled: bool,
+    ladder: &[Mechanism],
 ) -> Value {
-    let ladder = ladder_for(harness_of(record_name(record)), push_enabled);
     with_fields(
         api,
         [
             ("transport", json!(transport)),
             ("signing", json!(signing)),
             ("client", json!(record)),
-            ("harness", json!(harness_str(record))),
-            ("ladder", ladder_json(&ladder)),
+            ("harness", json!(harness.as_str())),
+            ("ladder", ladder_json(ladder)),
             ("push_enabled", json!(push_enabled)),
         ],
     )
@@ -255,10 +279,11 @@ fn untrusted_block(lines: &[String]) -> String {
     )
 }
 
-/// The tracker's status merged with the peer's transport, push flag, client record and harness.
+/// The tracker's status merged with the peer's transport, harness, push flag and client record.
 fn delivery_json(
     status: Value,
     transport: &str,
+    harness: Harness,
     push_enabled: bool,
     record: Option<&ClientRecord>,
 ) -> Value {
@@ -266,15 +291,16 @@ fn delivery_json(
         status,
         [
             ("transport", json!(transport)),
+            ("harness", json!(harness.as_str())),
             ("push_enabled", json!(push_enabled)),
             ("client", json!(record)),
-            ("harness", json!(harness_str(record))),
         ],
     )
 }
 
-/// `push <on|off>; N pending, M escalations recorded; pushed P, acked A`. The status carries
-/// the most recent escalations only, so M is at most 50.
+/// `push <on|off>; N pending, M escalations recorded; pushed P, acked A; armed: <rungs|none>`,
+/// where the rungs are the `armed` list of the status (the rungs armed at the last tick). The
+/// status carries the most recent escalations only, so M is at most 50.
 fn delivery_text(status: &Value, push_enabled: bool) -> String {
     let push = if push_enabled { "on" } else { "off" };
     let pending = status
@@ -287,13 +313,28 @@ fn delivery_text(status: &Value, push_enabled: bool) -> String {
         .map_or(0, Vec::len);
     let pushed = status.get("pushed").and_then(Value::as_u64).unwrap_or(0);
     let acked = status.get("acked").and_then(Value::as_u64).unwrap_or(0);
+    let armed: Vec<&str> = status
+        .get("armed")
+        .and_then(Value::as_array)
+        .map_or_else(Vec::new, |rungs| {
+            rungs.iter().filter_map(Value::as_str).collect()
+        });
+    let armed = if armed.is_empty() {
+        "none".to_owned()
+    } else {
+        armed.join(", ")
+    };
     format!(
-        "push {push}; {pending} pending, {escalations} escalations recorded; pushed {pushed}, acked {acked}"
+        "push {push}; {pending} pending, {escalations} escalations recorded; pushed {pushed}, acked {acked}; armed: {armed}"
     )
 }
 
-/// The tracker's `status_json`, read under a short lock (a poisoned lock keeps its data).
-fn tracker_status(peer: &Peer) -> Value {
+/// The peer's tracker status after `Engine::sync_delivery` at `now_ms`, so the ladder, the armed
+/// rungs and the heartbeats are the live ones, identical to what the push task uses. A stdio
+/// peer's heartbeats are read from this host (its hooks run here); an HTTP peer has none. A
+/// poisoned lock keeps its data.
+fn live_status(engine: &Engine, peer: &Peer, now_ms: i64) -> Value {
+    engine.sync_delivery(peer, now_ms);
     let tracker = peer
         .delivery
         .lock()
@@ -307,16 +348,6 @@ fn transport_str(transport: Transport) -> &'static str {
         Transport::Stdio => "stdio",
         Transport::Http => "http",
     }
-}
-
-/// The record's `clientInfo.name`, or "" without a record.
-fn record_name(record: Option<&ClientRecord>) -> &str {
-    record.map_or("", |r| r.name.as_str())
-}
-
-/// The record's harness, or "unknown" without a record.
-fn harness_str(record: Option<&ClientRecord>) -> &'static str {
-    record.map_or("unknown", |r| r.harness)
 }
 
 /// `base` (an object) with `fields` inserted over it.
@@ -339,12 +370,60 @@ fn unexpected() -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clients::{harness_of, ladder_for};
     use crate::delivery::Tracker;
+    use crate::engine::EngineConfig;
     use crate::framing::UNTRUSTED_DATA_NOTICE;
-    use agora_deliver::Harness;
+    use crate::version::{ClientInfo, Era};
+    use agora_client::Ctx;
+    use agora_client::heartbeat;
+    use agora_crypto::Identity;
+    use agora_daemon::Paths;
+    use agora_store::hex;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    const NOW: i64 = 1_800_000_000_000;
 
     fn pk(seed: u8) -> String {
         agora_store::hex(&[seed; 32])
+    }
+
+    fn ctx(home: &tempfile::TempDir) -> Arc<Ctx> {
+        Arc::new(Ctx {
+            paths: Paths::new(home.path()),
+            identity: Identity::from_seed([7; 32]),
+            label: "t".into(),
+        })
+    }
+
+    /// A stdio peer of an engine whose `channel_push` is on, with no session initialized.
+    fn stdio_peer(home: &tempfile::TempDir) -> (Arc<Engine>, Arc<Peer>) {
+        let engine = Engine::new(EngineConfig::stdio());
+        let peer = Arc::new(Peer::new(ctx(home), Transport::Stdio, None));
+        (engine, peer)
+    }
+
+    /// Records a modern (no `initialize`) claude-code request on `token`, as a stateless request
+    /// does, and returns the record.
+    fn observe_modern_claude_code(
+        engine: &Engine,
+        token: Option<&str>,
+        transport: Transport,
+    ) -> ClientRecord {
+        engine.clients.observe(
+            token,
+            &ClientInfo {
+                name: "claude-code".into(),
+                version: "2.1".into(),
+            },
+            "2026-07-28",
+            Era::Modern,
+            transport,
+            "tools/call",
+            &json!({}),
+            NOW,
+        )
     }
 
     fn record(name: &str) -> ClientRecord {
@@ -385,7 +464,16 @@ mod tests {
     #[test]
     fn whoami_json_without_a_record_has_null_client_and_unknown_harness() {
         let api = json!({"pseudonym": "p", "role": "worker", "registered": true});
-        let v = whoami_json(api, "http", "server-held", None, false);
+        let ladder = ladder_for(Harness::Unknown, false);
+        let v = whoami_json(
+            api,
+            "http",
+            "server-held",
+            None,
+            Harness::Unknown,
+            false,
+            &ladder,
+        );
         assert!(v["client"].is_null());
         assert_eq!(v["harness"], "unknown");
         assert_eq!(v["transport"], "http");
@@ -393,20 +481,67 @@ mod tests {
         assert_eq!(v["push_enabled"], false);
         assert_eq!(v["role"], "worker", "api fields are kept");
         assert_eq!(v["registered"], true);
-        assert_eq!(
-            v["ladder"],
-            ladder_json(&ladder_for(Harness::Unknown, false))
-        );
+        assert_eq!(v["ladder"], ladder_json(&ladder));
     }
 
     #[test]
     fn whoami_json_with_a_claude_code_record_and_push_has_the_push_ladder() {
         let rec = record("claude-code");
-        let v = whoami_json(json!({}), "stdio", "local", Some(&rec), true);
+        let ladder = ladder_for(Harness::ClaudeCode, true);
+        let v = whoami_json(
+            json!({}),
+            "stdio",
+            "local",
+            Some(&rec),
+            Harness::ClaudeCode,
+            true,
+            &ladder,
+        );
         assert_eq!(v["client"]["name"], "claude-code");
         assert_eq!(v["harness"], "claude_code");
         assert_eq!(v["ladder"], json!(["channel_push", "wait_tool"]));
         assert_eq!(v["push_enabled"], true);
+    }
+
+    #[test]
+    fn whoami_harness_is_the_one_passed_in_not_the_record_name() {
+        let rec = record("claude-code");
+        let ladder = ladder_for(Harness::Unknown, false);
+        let v = whoami_json(
+            json!({}),
+            "stdio",
+            "local",
+            Some(&rec),
+            Harness::Unknown,
+            false,
+            &ladder,
+        );
+        assert_eq!(v["client"]["name"], "claude-code");
+        assert_eq!(v["harness"], "unknown");
+    }
+
+    #[test]
+    fn whoami_json_ladder_for_a_claude_code_record_is_the_ladder_passed_in() {
+        let rec = record("claude-code");
+        let ladder = vec![
+            Mechanism::ModSubmit,
+            Mechanism::AsyncRewakeHook,
+            Mechanism::WaitTool,
+        ];
+        let v = whoami_json(
+            json!({}),
+            "stdio",
+            "local",
+            Some(&rec),
+            Harness::ClaudeCode,
+            false,
+            &ladder,
+        );
+        assert_eq!(v["ladder"], ladder_json(&ladder));
+        assert_eq!(
+            v["ladder"],
+            json!(["mod_submit", "async_rewake_hook", "wait_tool"])
+        );
     }
 
     #[test]
@@ -548,7 +683,13 @@ mod tests {
         let mut tracker = Tracker::new(ladder_for(Harness::ClaudeCode, true), true);
         tracker.on_seen("general", 1);
         let rec = record("claude-code");
-        let v = delivery_json(tracker.status_json(), "stdio", true, Some(&rec));
+        let v = delivery_json(
+            tracker.status_json(),
+            "stdio",
+            Harness::ClaudeCode,
+            true,
+            Some(&rec),
+        );
         assert_eq!(v["pending"].as_array().map(Vec::len), Some(1));
         assert_eq!(v["ladder"], json!(["channel_push", "wait_tool"]));
         assert_eq!(v["pushed"], 0);
@@ -561,7 +702,7 @@ mod tests {
     #[test]
     fn delivery_json_without_a_record_has_null_client() {
         let tracker = Tracker::new(ladder_for(Harness::Unknown, false), false);
-        let v = delivery_json(tracker.status_json(), "http", false, None);
+        let v = delivery_json(tracker.status_json(), "http", Harness::Unknown, false, None);
         assert!(v["client"].is_null());
         assert_eq!(v["harness"], "unknown");
         assert_eq!(v["transport"], "http");
@@ -577,11 +718,116 @@ mod tests {
         tracker.on_acked("g", 1);
         assert_eq!(
             delivery_text(&tracker.status_json(), true),
-            "push on; 2 pending, 1 escalations recorded; pushed 1, acked 1"
+            "push on; 2 pending, 1 escalations recorded; pushed 1, acked 1; armed: none"
         );
         assert_eq!(
             delivery_text(&tracker.status_json(), false),
-            "push off; 2 pending, 1 escalations recorded; pushed 1, acked 1"
+            "push off; 2 pending, 1 escalations recorded; pushed 1, acked 1; armed: none"
+        );
+    }
+
+    #[test]
+    fn delivery_text_lists_the_armed_rungs_of_the_last_tick() {
+        let ladder = vec![
+            Mechanism::ModSubmit,
+            Mechanism::AsyncRewakeHook,
+            Mechanism::WaitTool,
+        ];
+        let mut tracker = Tracker::new(ladder, false);
+        tracker.on_seen("general", 1);
+        let beats = BTreeMap::from([
+            (Mechanism::ModSubmit, 15_000),
+            (Mechanism::AsyncRewakeHook, 15_000),
+        ]);
+        tracker.set_heartbeats(beats);
+        let armed: BTreeSet<Mechanism> = [Mechanism::AsyncRewakeHook, Mechanism::ModSubmit]
+            .into_iter()
+            .collect();
+        tracker.tick_with(15_000, &armed);
+        let status = tracker.status_json();
+        assert_eq!(
+            delivery_text(&status, false),
+            "push off; 1 pending, 1 escalations recorded; pushed 0, acked 0; armed: mod_submit, async_rewake_hook"
+        );
+        let v = delivery_json(status, "stdio", Harness::ClaudeCode, false, None);
+        assert_eq!(v["armed"], json!(["mod_submit", "async_rewake_hook"]));
+        assert_eq!(
+            v["heartbeats"],
+            json!({"mod_submit": 15_000, "async_rewake_hook": 15_000})
+        );
+    }
+
+    #[test]
+    fn whoami_of_a_modern_claude_code_session_is_not_push_enabled_and_has_no_channel_push() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (engine, peer) = stdio_peer(&home);
+        let rec = observe_modern_claude_code(&engine, None, Transport::Stdio);
+        let (harness, push, ladder) = whoami_facts(&engine, &peer);
+        assert_eq!(harness, Harness::ClaudeCode);
+        assert!(
+            !push,
+            "a modern session never initializes, so it is not push-enabled"
+        );
+        assert!(!ladder.contains(&Mechanism::ChannelPush), "{ladder:?}");
+        let v = whoami_json(
+            json!({}),
+            "stdio",
+            "local",
+            Some(&rec),
+            harness,
+            push,
+            &ladder,
+        );
+        assert_eq!(v["push_enabled"], false);
+        assert_eq!(v["harness"], "claude_code");
+        assert_eq!(v["ladder"], ladder_json(&ladder));
+        assert!(!v["ladder"].to_string().contains("channel_push"), "{v}");
+    }
+
+    #[test]
+    fn delivery_status_on_an_idle_session_shows_the_live_heartbeats() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path());
+        let (engine, peer) = stdio_peer(&home);
+        observe_modern_claude_code(&engine, None, Transport::Stdio);
+        let key = hex(&peer.ctx.identity.public());
+        heartbeat::beat(&paths, &key, Mechanism::StopContinue, NOW - 1_000).expect("beat");
+        // No tick has run: `sync_delivery` alone sets the ladder and the armed rungs.
+        let status = live_status(&engine, &peer, NOW);
+        let v = delivery_json(status, "stdio", Harness::ClaudeCode, false, None);
+        assert!(
+            v["ladder"]
+                .as_array()
+                .is_some_and(|l| l.contains(&json!("stop_continue"))),
+            "{v}"
+        );
+        assert_eq!(v["armed"], json!(["stop_continue"]));
+        assert_eq!(v["heartbeats"], json!({"stop_continue": NOW - 1_000}));
+        assert_eq!(v["pending"], json!([]));
+    }
+
+    #[test]
+    fn delivery_status_for_an_http_peer_ignores_the_heartbeats_on_this_host() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path());
+        let engine = Engine::new(EngineConfig::http());
+        let peer = Arc::new(Peer::new(
+            ctx(&home),
+            Transport::Http,
+            Some("t_00000001".into()),
+        ));
+        observe_modern_claude_code(&engine, Some("t_00000001"), Transport::Http);
+        let key = hex(&peer.ctx.identity.public());
+        heartbeat::beat(&paths, &key, Mechanism::StopContinue, NOW - 1_000).expect("beat");
+        let status = live_status(&engine, &peer, NOW);
+        let v = delivery_json(status, "http", Harness::ClaudeCode, false, None);
+        assert_eq!(v["armed"], json!([]));
+        assert_eq!(v["heartbeats"], json!({}));
+        assert!(
+            !v["ladder"]
+                .as_array()
+                .is_some_and(|l| l.contains(&json!("stop_continue"))),
+            "{v}"
         );
     }
 }

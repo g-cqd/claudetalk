@@ -7,8 +7,10 @@
 
 mod cmd_board;
 mod cmd_chat;
+mod cmd_hook;
 mod cmd_mcp;
 mod cmd_org;
+mod install;
 
 pub use agora_client::ClientError as CliError;
 pub use agora_client::{Ctx, Out};
@@ -16,6 +18,7 @@ pub use agora_client::{Ctx, Out};
 use agora_client::identity;
 use agora_daemon::{DaemonConfig, Paths};
 use clap::{Args, Parser, Subcommand};
+use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -74,6 +77,12 @@ pub enum Cmd {
     Role(RoleCmd),
     /// Revoke an identity (controller or owner).
     Revoke(RevokeArgs),
+    /// Claude Code hook entry points (used by the plugin; always exit 0 except rewake's wake).
+    Hook(HookArgs),
+    /// Install the Agora MCP server, hooks and mod into an agent client (M4: `--client claude`).
+    Install(InstallArgs),
+    /// Undo `install`: remove only what `install` added.
+    Uninstall(InstallArgs),
 }
 
 /// Options of `agora daemon`.
@@ -346,9 +355,89 @@ pub struct RevokeArgs {
     pub pk: String,
 }
 
+/// Options of `agora hook`.
+#[derive(Args, Debug)]
+pub struct HookArgs {
+    #[command(subcommand)]
+    pub cmd: HookCmd,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HookCmd {
+    /// asyncRewake long-poll (Stop) or --quick check (SessionStart).
+    Rewake {
+        /// SessionStart variant: one short non-waiting check, no ownership.
+        #[arg(long)]
+        quick: bool,
+        /// Stop waiting after SECS (default: just under the hook timeout).
+        #[arg(long)]
+        max_wait_secs: Option<u64>,
+    },
+    /// additionalContext for UserPromptSubmit / PostToolUse / PostToolBatch.
+    Context {
+        /// Cap on the characters handed to Claude Code.
+        #[arg(long)]
+        max_chars: Option<usize>,
+    },
+    /// Stop: block while the inbox has undelivered messages (capped).
+    Stop {
+        /// Most consecutive blocks before Claude may stop.
+        #[arg(long)]
+        max_blocks: Option<u32>,
+        /// Cap on the characters handed to Claude Code.
+        #[arg(long)]
+        max_chars: Option<usize>,
+    },
+    /// SessionStart: identity, unread summary, instructions.
+    SessionStart,
+    /// Called by the plugin mod: one JSON line {count, text?}.
+    Poll {
+        /// Claude session id.
+        #[arg(long)]
+        session: String,
+        /// Project folder whose identity polls.
+        #[arg(long)]
+        folder: PathBuf,
+    },
+}
+
+/// Options of `agora install` / `agora uninstall`.
+#[derive(Args, Debug)]
+pub struct InstallArgs {
+    /// Agent client to configure (M4: `claude`).
+    #[arg(long)]
+    pub client: String,
+    /// user: ~/.claude; project: the current directory's .claude and .mcp.json.
+    #[arg(long, value_enum, default_value_t = ScopeArg::User)]
+    pub scope: ScopeArg,
+    /// plugin: install the Agora plugin (MCP, hooks and mod); entries: plain MCP entry and hooks.
+    #[arg(long, value_enum, default_value_t = ModeArg::Plugin)]
+    pub mode: ModeArg,
+    /// Probe the installed client's version and flags and record them in capabilities.json.
+    #[arg(long)]
+    pub probe: bool,
+    /// Show what would change; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScopeArg {
+    User,
+    Project,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModeArg {
+    Plugin,
+    Entries,
+}
+
+/// The data directory: `--home`/`AGORA_HOME` when set. An empty value, or an unexpanded
+/// placeholder such as `${AGORA_HOME:-}` (a plugin `.mcp.json` variable), counts as unset.
 fn home_of(cli: &Cli) -> PathBuf {
     match &cli.home {
-        Some(h) if !h.as_os_str().is_empty() => h.clone(),
+        Some(h) if !h.as_os_str().is_empty() && !h.to_string_lossy().contains("${") => h.clone(),
         _ => DaemonConfig::default_home(),
     }
 }
@@ -412,9 +501,11 @@ fn run_daemon_with_mcp(
 
 async fn dispatch(ctx: &Ctx, cmd: Cmd) -> Result<Out, CliError> {
     match cmd {
-        Cmd::Daemon(_) | Cmd::Mcp(_) => Err(CliError::Usage(
-            "daemon and mcp are handled before dispatch".into(),
-        )),
+        Cmd::Daemon(_) | Cmd::Mcp(_) | Cmd::Hook(_) | Cmd::Install(_) | Cmd::Uninstall(_) => {
+            Err(CliError::Usage(
+                "daemon, mcp, hook, install and uninstall are handled before dispatch".into(),
+            ))
+        }
         Cmd::Stop => cmd_org::stop(ctx).await,
         Cmd::Init(a) => cmd_org::init(ctx, a).await,
         Cmd::Whoami => cmd_org::whoami(ctx).await,
@@ -444,8 +535,41 @@ fn finish_server(name: &str, result: Result<(), String>) -> ExitCode {
     }
 }
 
+/// Whether the invocation is a `hook` one: the first argument after argv[0] that is not one of
+/// the global options `--json`, `--home <v>` or `--home=<v>` equals `hook`.
+fn is_hook_invocation(args: &[OsString]) -> bool {
+    let mut rest = args.iter().skip(1);
+    while let Some(arg) = rest.next() {
+        if arg.as_os_str() == "--json" || arg.as_encoded_bytes().starts_with(b"--home=") {
+            continue;
+        }
+        if arg.as_os_str() == "--home" {
+            rest.next();
+            continue;
+        }
+        return arg.as_os_str() == "hook";
+    }
+    false
+}
+
+/// A parse error of a hook invocation exits 0 silently (clap's own exit 2 would block a Stop or
+/// UserPromptSubmit). Help and version still print, as they do for every command.
+fn hook_parse_error_is_silent(kind: clap::error::ErrorKind, args: &[OsString]) -> bool {
+    use clap::error::ErrorKind;
+    is_hook_invocation(args) && !matches!(kind, ErrorKind::DisplayHelp | ErrorKind::DisplayVersion)
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            let args: Vec<OsString> = std::env::args_os().collect();
+            if hook_parse_error_is_silent(e.kind(), &args) {
+                return ExitCode::SUCCESS;
+            }
+            e.exit();
+        }
+    };
     let home = home_of(&cli);
     let json = cli.json;
     let result = match cli.cmd {
@@ -460,6 +584,9 @@ fn main() -> ExitCode {
             "--http cannot be combined with `mcp token`".into(),
         )),
         Cmd::Mcp(a) => return finish_server("mcp", cmd_mcp::run(home, a)),
+        Cmd::Hook(a) => return cmd_hook::run(home, a),
+        Cmd::Install(a) => install::install(home, a),
+        Cmd::Uninstall(a) => install::uninstall(home, a),
         cmd => (|| -> Result<Out, CliError> {
             let paths = Paths::new(&home);
             let (identity, label) = identity::load_identity(&paths)?;
@@ -550,5 +677,132 @@ mod tests {
         };
         let err = cmd_mcp::run(dir.path().to_path_buf(), args).expect_err("refused");
         assert_eq!(err, "--token-file needs --http");
+    }
+
+    fn os(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(|a| OsString::from(*a)).collect()
+    }
+
+    #[test]
+    fn hook_invocation_skips_global_options() {
+        for args in [
+            vec!["agora", "hook", "context"],
+            vec!["agora", "--json", "hook", "stop"],
+            vec!["agora", "--home", "/x", "hook", "stop"],
+            vec!["agora", "--home=/x", "hook"],
+        ] {
+            assert!(is_hook_invocation(&os(&args)), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn other_invocations_are_not_hooks() {
+        for args in [
+            vec!["agora", "inbox"],
+            vec!["agora", "chat", "hook"],
+            vec!["agora"],
+        ] {
+            assert!(!is_hook_invocation(&os(&args)), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn hook_parse_errors_are_silent_except_help_and_version() {
+        let missing = Cli::try_parse_from(["agora", "hook"]).expect_err("no subcommand");
+        assert!(hook_parse_error_is_silent(
+            missing.kind(),
+            &os(&["agora", "hook"])
+        ));
+        let help = Cli::try_parse_from(["agora", "hook", "--help"]).expect_err("help");
+        assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+        assert!(!hook_parse_error_is_silent(
+            help.kind(),
+            &os(&["agora", "hook", "--help"])
+        ));
+        let bad = Cli::try_parse_from(["agora", "inbox", "--bogus"]).expect_err("bad flag");
+        assert!(!hook_parse_error_is_silent(
+            bad.kind(),
+            &os(&["agora", "inbox", "--bogus"])
+        ));
+    }
+
+    #[test]
+    fn hook_rewake_quick_parses() {
+        let cli = parse(&strings(&["hook", "rewake", "--quick"]));
+        let Cmd::Hook(HookArgs {
+            cmd:
+                HookCmd::Rewake {
+                    quick,
+                    max_wait_secs,
+                },
+        }) = cli.cmd
+        else {
+            panic!("not a rewake hook");
+        };
+        assert!(quick);
+        assert_eq!(max_wait_secs, None);
+    }
+
+    #[test]
+    fn hook_poll_parses_session_and_folder() {
+        let cli = parse(&strings(&[
+            "hook",
+            "poll",
+            "--session",
+            "s",
+            "--folder",
+            "/tmp",
+        ]));
+        let Cmd::Hook(HookArgs {
+            cmd: HookCmd::Poll { session, folder },
+        }) = cli.cmd
+        else {
+            panic!("not a poll hook");
+        };
+        assert_eq!(session, "s");
+        assert_eq!(folder, PathBuf::from("/tmp"));
+    }
+
+    #[test]
+    fn install_parses_scope_mode_and_flags() {
+        let cli = parse(&strings(&[
+            "install",
+            "--client",
+            "claude",
+            "--scope",
+            "project",
+            "--mode",
+            "entries",
+            "--probe",
+            "--dry-run",
+        ]));
+        let Cmd::Install(a) = cli.cmd else {
+            panic!("not install");
+        };
+        assert_eq!(a.client, "claude");
+        assert_eq!(a.scope, ScopeArg::Project);
+        assert_eq!(a.mode, ModeArg::Entries);
+        assert!(a.probe);
+        assert!(a.dry_run);
+    }
+
+    #[test]
+    fn uninstall_defaults_to_user_scope_and_plugin_mode() {
+        let cli = parse(&strings(&["uninstall", "--client", "claude"]));
+        let Cmd::Uninstall(a) = cli.cmd else {
+            panic!("not uninstall");
+        };
+        assert_eq!(a.scope, ScopeArg::User);
+        assert_eq!(a.mode, ModeArg::Plugin);
+        assert!(!a.probe);
+        assert!(!a.dry_run);
+    }
+
+    #[test]
+    fn unexpanded_placeholder_home_is_treated_as_unset() {
+        let cli = parse(&strings(&["--home", "${AGORA_HOME:-}", "whoami"]));
+        assert_eq!(home_of(&cli), DaemonConfig::default_home());
+        let cli = parse(&strings(&["--home", "/x/home", "whoami"]));
+        assert_eq!(home_of(&cli), PathBuf::from("/x/home"));
     }
 }

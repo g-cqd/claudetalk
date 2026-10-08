@@ -11,10 +11,12 @@ use crate::version::{self, ClientInfo, Era, RequestMeta};
 use crate::{SERVER_NAME, SERVER_VERSION};
 use agora_client::Ctx;
 use agora_client::api::org::{self, InitParams};
+use agora_client::heartbeat;
 use agora_client::ops::now_ms;
 use agora_deliver::{Harness, Mechanism};
+use agora_store::hex;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::{OnceCell, mpsc};
@@ -189,21 +191,6 @@ impl Peer {
             .await
             .map(|_| ())
     }
-
-    /// Channel push is enabled: stdio transport, initialized legacy session, harness
-    /// ClaudeCode (from the session's clientInfo), and `engine.config.channel_push`.
-    pub fn push_enabled(&self, engine: &Engine) -> bool {
-        if self.transport != Transport::Stdio || !engine.config.channel_push {
-            return false;
-        }
-        let session = lock(&self.session);
-        session.initialized
-            && session.version.is_some()
-            && session
-                .client
-                .as_ref()
-                .is_some_and(|c| clients::harness_of(&c.name) == Harness::ClaudeCode)
-    }
 }
 
 /// Transport facts the HTTP layer extracted from headers (for the modern header checks and
@@ -228,6 +215,74 @@ impl Engine {
             config,
             clients: clients::Registry::new(),
         })
+    }
+
+    /// The harness of `peer`'s client: the name in its session's `clientInfo` when the session has
+    /// one (legacy `initialize`), else the name of the last registry record of its token (modern
+    /// requests, HTTP tokens), else `Harness::Unknown`.
+    pub fn peer_harness(&self, peer: &Peer) -> Harness {
+        let session_name = lock(&peer.session).client.as_ref().map(|c| c.name.clone());
+        let name = match session_name {
+            Some(name) => Some(name),
+            None => self
+                .clients
+                .last_for(peer.token_id.as_deref())
+                .map(|record| record.name),
+        };
+        name.map_or(Harness::Unknown, |name| clients::harness_of(&name))
+    }
+
+    /// Channel push is possible for `peer` whose client is `harness`: stdio transport,
+    /// `config.channel_push`, and `Harness::ClaudeCode`. The session's initialization is not
+    /// checked here (`Engine::push_enabled` adds it).
+    pub fn push_capable(&self, peer: &Peer, harness: Harness) -> bool {
+        peer.transport == Transport::Stdio
+            && self.config.channel_push
+            && harness == Harness::ClaudeCode
+    }
+
+    /// Channel push is on for `peer`: its legacy session is initialized and has a version, and
+    /// `push_capable` holds for its harness (`peer_harness`). The session lock is released before
+    /// the harness is read, since reading it locks the session again.
+    pub fn push_enabled(&self, peer: &Peer) -> bool {
+        let initialized = {
+            let s = lock(&peer.session);
+            s.initialized && s.version.is_some()
+        };
+        initialized && self.push_capable(peer, self.peer_harness(peer))
+    }
+
+    /// Refreshes the delivery state of `peer` from what its ladder depends on, and returns the
+    /// rungs that are armed at `now_ms`. The file reads come first, with no lock held:
+    /// `capabilities.json` and the heartbeats (stdio only; an HTTP peer's hooks are not on this
+    /// host), then the harness (`peer_harness`) and the push flag (`push_enabled`). The delivery
+    /// lock is taken once, at the end: the tracker is reconfigured only when its ladder differs
+    /// from the new one, and then `refresh` stores the heartbeats and the armed rungs (kept to the
+    /// ladder) so `status_json` shows live values. Used by the push tick before `tick_with`, and by
+    /// `delivery_status` before `status_json`.
+    pub fn sync_delivery(&self, peer: &Peer, now_ms: i64) -> BTreeSet<Mechanism> {
+        let (caps, beats) = if peer.transport == Transport::Stdio {
+            let pk = hex(&peer.ctx.identity.public());
+            (
+                agora_client::capabilities::load(&peer.ctx.paths),
+                heartbeat::read_all(&peer.ctx.paths, &pk),
+            )
+        } else {
+            (None, BTreeMap::new())
+        };
+        let harness = self.peer_harness(peer);
+        let push = self.push_enabled(peer);
+        let ladder = ladder_from(peer, harness, push, caps.as_ref(), &beats, now_ms);
+        let mut armed = heartbeat::armed(&beats, now_ms);
+        armed.retain(|m| ladder.contains(m));
+        {
+            let mut tracker = lock(&peer.delivery);
+            if tracker.ladder() != ladder.as_slice() {
+                tracker.reconfigure(ladder, push);
+            }
+            tracker.refresh(beats, armed.clone());
+        }
+        armed
     }
 
     /// Route one incoming message and return the response to send (None for notifications,
@@ -322,14 +377,18 @@ impl Engine {
         let outcome = match method {
             "initialize" => Some(self.initialize(peer, params)),
             "server/discover" => Some(if modern {
-                Ok(discover_result())
+                Ok(cacheable(discover_result()))
             } else {
                 Err(RpcError::invalid_params(
                     "server/discover requires io.modelcontextprotocol/protocolVersion in _meta",
                 ))
             }),
             "ping" => Some(Ok(json!({}))),
-            "tools/list" => Some(legacy_gate(peer, modern).map(|()| tools::list_json())),
+            "tools/list" => Some(
+                legacy_gate(peer, modern)
+                    .map(|()| tools::list_json())
+                    .map(|list| if modern { cacheable(list) } else { list }),
+            ),
             "tools/call" => match legacy_gate(peer, modern) {
                 Ok(()) => self.tools_call(peer, id, params, notifier).await,
                 Err(e) => Some(Err(e)),
@@ -340,7 +399,9 @@ impl Engine {
     }
 
     /// `initialize` (legacy): negotiate, store the session on stdio, reconfigure the delivery
-    /// ladder, and answer the capabilities with `claude/channel` iff push is capable.
+    /// ladder (`ladder_for_peer`: the installed `capabilities.json` and the peer's heartbeats
+    /// decide which hook and mod rungs are in it), and answer the capabilities with
+    /// `claude/channel` iff push is capable.
     fn initialize(&self, peer: &Peer, params: &Value) -> Result<Value, RpcError> {
         let requested = params
             .get("protocolVersion")
@@ -350,9 +411,7 @@ impl Engine {
         let client = params.get("clientInfo").and_then(version::client_info_from);
         let caps = capabilities_of(params);
         let harness = clients::harness_of(client.as_ref().map_or("", |c| c.name.as_str()));
-        let push_capable = peer.transport == Transport::Stdio
-            && self.config.channel_push
-            && harness == Harness::ClaudeCode;
+        let push_capable = self.push_capable(peer, harness);
         if peer.transport == Transport::Stdio {
             {
                 let mut session = lock(&peer.session);
@@ -360,8 +419,9 @@ impl Engine {
                 session.client = client;
                 session.capabilities = caps;
             }
-            lock(&peer.delivery)
-                .reconfigure(clients::ladder_for(harness, push_capable), push_capable);
+            // The ladder reads files, so it is computed before the delivery lock is taken (N6).
+            let ladder = ladder_for_peer(peer, harness, push_capable);
+            lock(&peer.delivery).reconfigure(ladder, push_capable);
         }
         let capabilities = if push_capable {
             json!({"tools": {"listChanged": false}, "experimental": {"claude/channel": {}}})
@@ -498,6 +558,50 @@ pub fn release_inflight(peer: &Peer, id: &Value) {
     lock(&peer.inflight).remove(&id.to_string());
 }
 
+/// The delivery ladder for `peer` whose client is `harness`, from the given install-time
+/// capabilities `caps` (`capabilities.json`, `None` when absent) and heartbeats `beats` of the
+/// peer's identity, at `now_ms`: `clients::ladder_for_caps` on the Claude capabilities of `caps`.
+/// An HTTP peer's hooks are not on this host, so for it `caps` is ignored and `beats` is treated
+/// as empty (R4-5). Pure apart from reading `peer.transport`.
+pub fn ladder_from(
+    peer: &Peer,
+    harness: Harness,
+    push_enabled: bool,
+    caps: Option<&agora_client::capabilities::CapabilitiesFile>,
+    beats: &BTreeMap<Mechanism, i64>,
+    now_ms: i64,
+) -> Vec<Mechanism> {
+    let stdio = peer.transport == Transport::Stdio;
+    let caps = if stdio { caps } else { None };
+    let no_beats = BTreeMap::new();
+    let beats = if stdio { beats } else { &no_beats };
+    clients::ladder_for_caps(
+        harness,
+        push_enabled,
+        caps.and_then(|f| f.claude.as_ref()),
+        beats,
+        now_ms,
+    )
+}
+
+/// The delivery ladder for `peer` whose client is `harness`: `ladder_from` with the installed
+/// `$AGORA_HOME/capabilities.json` (`capabilities::load`; a missing or unreadable file counts as
+/// none) and the heartbeats of the peer's identity (`heartbeat::read_all`), at the current time.
+/// Only a stdio peer reads those files (its hooks run on this host). Callers that need the ladder
+/// `initialize` uses (for example `whoami`) should call this rather than recompute it.
+pub fn ladder_for_peer(peer: &Peer, harness: Harness, push_enabled: bool) -> Vec<Mechanism> {
+    let (caps, beats) = if peer.transport == Transport::Stdio {
+        let pk = hex(&peer.ctx.identity.public());
+        (
+            agora_client::capabilities::load(&peer.ctx.paths),
+            heartbeat::read_all(&peer.ctx.paths, &pk),
+        )
+    } else {
+        (None, BTreeMap::new())
+    };
+    ladder_from(peer, harness, push_enabled, caps.as_ref(), &beats, now_ms())
+}
+
 /// Untrusted text cut to at most `max` bytes at a char boundary, for log fields (R3-8).
 fn log_text(s: &str, max: usize) -> &str {
     let mut end = s.len().min(max);
@@ -537,6 +641,26 @@ fn discover_result() -> Value {
         "capabilities": {"tools": {"listChanged": false}},
         "instructions": INSTRUCTIONS,
     })
+}
+
+/// `ttlMs` on modern `tools/list` and `server/discover` results: how long, in milliseconds, a
+/// client may reuse the result. Modern `CacheableResult` (MCP 2026-07-28, SEP-2549) requires it
+/// as an integer >= 0. The tool list is fixed for the process and identical for every caller,
+/// so one hour is safe.
+const CACHE_TTL_MS: u64 = 3_600_000;
+
+/// `cacheScope` on modern `tools/list` and `server/discover` results: `"public"` means every
+/// caller gets the same answer, so a shared cache may hold it (MCP 2026-07-28, SEP-2549).
+const CACHE_SCOPE_PUBLIC: &str = "public";
+
+/// Add the modern `CacheableResult` fields (`CACHE_TTL_MS`, `CACHE_SCOPE_PUBLIC`) to a result
+/// object; a non-object result is returned unchanged. Legacy results never get them.
+fn cacheable(mut result: Value) -> Value {
+    if let Some(map) = result.as_object_mut() {
+        map.insert("ttlMs".to_owned(), json!(CACHE_TTL_MS));
+        map.insert("cacheScope".to_owned(), json!(CACHE_SCOPE_PUBLIC));
+    }
+    result
 }
 
 /// The request's `capabilities` object, or `{}` when absent or not an object.
@@ -765,7 +889,7 @@ mod tests {
             None,
         )
         .await;
-        assert!(!peer.push_enabled(&engine), "not initialized yet");
+        assert!(!engine.push_enabled(&peer), "not initialized yet");
         let none = send(
             &engine,
             &peer,
@@ -774,7 +898,7 @@ mod tests {
         )
         .await;
         assert!(none.is_none());
-        assert!(peer.push_enabled(&engine));
+        assert!(engine.push_enabled(&peer));
 
         let (engine, peer) = stdio_peer(&home, EngineConfig::stdio());
         send(&engine, &peer, initialize(1, "2025-11-25", "codex"), None).await;
@@ -785,7 +909,7 @@ mod tests {
             None,
         )
         .await;
-        assert!(!peer.push_enabled(&engine), "not claude-code");
+        assert!(!engine.push_enabled(&peer), "not claude-code");
     }
 
     #[tokio::test]
@@ -907,6 +1031,42 @@ mod tests {
             SERVER_NAME
         );
         assert!(r["result"]["tools"].is_array());
+    }
+
+    #[tokio::test]
+    async fn modern_tools_list_carries_the_cache_hints() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (engine, peer) = http_peer(&home);
+        let r = send(&engine, &peer, modern(1, "tools/list"), None)
+            .await
+            .expect("a response");
+        assert_eq!(r["result"]["resultType"], "complete");
+        assert_eq!(r["result"]["ttlMs"].as_u64(), Some(3_600_000));
+        assert_eq!(r["result"]["cacheScope"], "public");
+    }
+
+    #[tokio::test]
+    async fn modern_discover_carries_the_cache_hints() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (engine, peer) = http_peer(&home);
+        let r = send(&engine, &peer, modern(1, "server/discover"), None)
+            .await
+            .expect("a response");
+        assert_eq!(r["result"]["resultType"], "complete");
+        assert_eq!(r["result"]["ttlMs"].as_u64(), Some(3_600_000));
+        assert_eq!(r["result"]["cacheScope"], "public");
+    }
+
+    #[tokio::test]
+    async fn legacy_tools_list_has_no_cache_hints() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (engine, peer) = http_peer(&home);
+        let r = send(&engine, &peer, request(1, "tools/list", json!({})), None)
+            .await
+            .expect("a response");
+        assert!(r["result"]["tools"].is_array());
+        assert!(r["result"]["ttlMs"].is_null(), "{r}");
+        assert!(r["result"]["cacheScope"].is_null(), "{r}");
     }
 
     #[tokio::test]
@@ -1068,6 +1228,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claude_code_initialize_ladder_includes_installed_hook_rungs() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let file = agora_client::capabilities::CapabilitiesFile {
+            claude: Some(agora_client::capabilities::ClaudeCapabilities {
+                stop_hook: true,
+                context_hook: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        agora_client::capabilities::save(&Paths::new(home.path()), &file)
+            .expect("save capabilities.json");
+        let (engine, peer) = stdio_peer(&home, EngineConfig::stdio());
+        send(
+            &engine,
+            &peer,
+            initialize(1, "2025-11-25", "claude-code"),
+            None,
+        )
+        .await;
+        let status = lock(&peer.delivery).status_json();
+        let ladder: Vec<&str> = status["ladder"]
+            .as_array()
+            .expect("ladder array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        let wait = ladder
+            .iter()
+            .position(|m| *m == "wait_tool")
+            .expect("wait_tool is in the ladder");
+        for rung in ["stop_continue", "hook_inject"] {
+            assert!(
+                ladder
+                    .iter()
+                    .position(|m| *m == rung)
+                    .is_some_and(|i| i < wait),
+                "{rung} must come before wait_tool: {ladder:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn http_legacy_request_with_a_modern_header_is_a_header_mismatch() {
         let home = tempfile::tempdir().expect("tempdir");
         let (engine, peer) = http_peer(&home);
@@ -1088,5 +1291,287 @@ mod tests {
             r["error"]["message"],
             "Header mismatch: MCP-Protocol-Version"
         );
+    }
+
+    /// The "now" of the ladder and harness tests.
+    const NOW: i64 = 1_000_000_000;
+
+    /// Every Claude Code rung installed by `capabilities.json`.
+    fn full_caps() -> agora_client::capabilities::CapabilitiesFile {
+        agora_client::capabilities::CapabilitiesFile {
+            claude: Some(agora_client::capabilities::ClaudeCapabilities {
+                mods: true,
+                async_rewake: true,
+                stop_hook: true,
+                context_hook: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ladder_from_http_peer_is_wait_tool_whatever_the_caps_and_beats() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_engine, peer) = http_peer(&home);
+        let beats: BTreeMap<Mechanism, i64> = Mechanism::ALL.iter().map(|m| (*m, NOW)).collect();
+        let ladder = ladder_from(
+            &peer,
+            Harness::ClaudeCode,
+            false,
+            Some(&full_caps()),
+            &beats,
+            NOW,
+        );
+        assert_eq!(ladder, vec![Mechanism::WaitTool]);
+    }
+
+    #[test]
+    fn ladder_from_stdio_peer_includes_the_installed_hook_rungs() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_engine, peer) = stdio_peer(&home, EngineConfig::stdio());
+        let ladder = ladder_from(
+            &peer,
+            Harness::ClaudeCode,
+            false,
+            Some(&full_caps()),
+            &BTreeMap::new(),
+            NOW,
+        );
+        assert_eq!(
+            ladder,
+            vec![
+                Mechanism::ModSubmit,
+                Mechanism::AsyncRewakeHook,
+                Mechanism::StopContinue,
+                Mechanism::HookInject,
+                Mechanism::WaitTool,
+            ]
+        );
+    }
+
+    #[test]
+    fn ladder_from_stdio_peer_counts_a_recent_heartbeat_without_the_file() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_engine, peer) = stdio_peer(&home, EngineConfig::stdio());
+        let beats = BTreeMap::from([(Mechanism::StopContinue, NOW)]);
+        let ladder = ladder_from(&peer, Harness::ClaudeCode, false, None, &beats, NOW);
+        assert_eq!(ladder, vec![Mechanism::StopContinue, Mechanism::WaitTool]);
+    }
+
+    #[test]
+    fn peer_harness_is_the_session_client_then_the_token_record_then_unknown() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (engine, peer) = http_peer(&home);
+        assert_eq!(engine.peer_harness(&peer), Harness::Unknown, "nothing seen");
+
+        let codex = ClientInfo {
+            name: "codex-mcp-client".into(),
+            version: "1.0".into(),
+        };
+        engine.clients.observe(
+            peer.token_id.as_deref(),
+            &codex,
+            "2025-11-25",
+            Era::Legacy,
+            Transport::Http,
+            "tools/call",
+            &json!({}),
+            NOW,
+        );
+        assert_eq!(
+            engine.peer_harness(&peer),
+            Harness::Codex,
+            "from the token's last record"
+        );
+
+        // Another token's record does not count for this peer.
+        let claude = ClientInfo {
+            name: "claude-code".into(),
+            version: "1.0".into(),
+        };
+        engine.clients.observe(
+            Some("t_00000002"),
+            &claude,
+            "2025-11-25",
+            Era::Legacy,
+            Transport::Http,
+            "tools/call",
+            &json!({}),
+            NOW,
+        );
+        assert_eq!(engine.peer_harness(&peer), Harness::Codex);
+
+        lock(&peer.session).client = Some(ClientInfo {
+            name: "claude-code".into(),
+            version: "2.0".into(),
+        });
+        assert_eq!(
+            engine.peer_harness(&peer),
+            Harness::ClaudeCode,
+            "the session's client wins over the record"
+        );
+    }
+
+    #[test]
+    fn peer_harness_of_a_stdio_session_client_claude_code_is_claude_code() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (engine, peer) = stdio_peer(&home, EngineConfig::stdio());
+        lock(&peer.session).client = Some(ClientInfo {
+            name: "claude-code".into(),
+            version: "2.0".into(),
+        });
+        assert_eq!(engine.peer_harness(&peer), Harness::ClaudeCode);
+    }
+
+    #[tokio::test]
+    async fn engine_push_enabled_needs_an_initialized_claude_code_stdio_session() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (engine, peer) = stdio_peer(&home, EngineConfig::stdio());
+        assert!(!engine.push_enabled(&peer), "before initialize");
+        send(
+            &engine,
+            &peer,
+            initialize(1, "2025-11-25", "claude-code"),
+            None,
+        )
+        .await;
+        assert!(
+            !engine.push_enabled(&peer),
+            "initialize alone is not initialized"
+        );
+        send(
+            &engine,
+            &peer,
+            notification_body("notifications/initialized", json!({})),
+            None,
+        )
+        .await;
+        assert!(
+            engine.push_enabled(&peer),
+            "claude-code over stdio with channel_push"
+        );
+
+        let (engine, peer) = http_peer(&home);
+        send(
+            &engine,
+            &peer,
+            initialize(1, "2025-11-25", "claude-code"),
+            None,
+        )
+        .await;
+        send(
+            &engine,
+            &peer,
+            notification_body("notifications/initialized", json!({})),
+            None,
+        )
+        .await;
+        assert!(!engine.push_enabled(&peer), "http never pushes");
+    }
+
+    #[tokio::test]
+    async fn sync_delivery_arms_the_installed_rung_with_a_fresh_heartbeat() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path());
+        let file = agora_client::capabilities::CapabilitiesFile {
+            claude: Some(agora_client::capabilities::ClaudeCapabilities {
+                stop_hook: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        agora_client::capabilities::save(&paths, &file).expect("save capabilities.json");
+        let (engine, peer) = stdio_peer(&home, EngineConfig::stdio());
+        send(
+            &engine,
+            &peer,
+            initialize(1, "2025-11-25", "claude-code"),
+            None,
+        )
+        .await;
+        let pk = hex(&peer.ctx.identity.public());
+        heartbeat::beat(&paths, &pk, Mechanism::StopContinue, NOW).expect("beat");
+
+        let armed = engine.sync_delivery(&peer, NOW);
+        assert_eq!(armed, BTreeSet::from([Mechanism::StopContinue]));
+        let tracker = lock(&peer.delivery);
+        assert!(tracker.ladder().contains(&Mechanism::StopContinue));
+        let status = tracker.status_json();
+        assert!(
+            status["ladder"]
+                .as_array()
+                .is_some_and(|l| l.contains(&json!("stop_continue"))),
+            "{status}"
+        );
+        assert_eq!(status["armed"], json!(["stop_continue"]), "{status}");
+        assert_eq!(
+            status["heartbeats"]["stop_continue"],
+            json!(NOW),
+            "{status}"
+        );
+    }
+
+    #[test]
+    fn sync_delivery_ignores_files_and_beats_for_an_http_peer() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path());
+        let file = agora_client::capabilities::CapabilitiesFile {
+            claude: Some(agora_client::capabilities::ClaudeCapabilities {
+                stop_hook: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        agora_client::capabilities::save(&paths, &file).expect("save capabilities.json");
+        let (engine, peer) = http_peer(&home);
+        engine.clients.observe(
+            peer.token_id.as_deref(),
+            &ClientInfo {
+                name: "claude-code".into(),
+                version: "2.0".into(),
+            },
+            "2025-11-25",
+            Era::Legacy,
+            Transport::Http,
+            "tools/call",
+            &json!({}),
+            NOW,
+        );
+        let pk = hex(&peer.ctx.identity.public());
+        heartbeat::beat(&paths, &pk, Mechanism::StopContinue, NOW).expect("beat");
+
+        let armed = engine.sync_delivery(&peer, NOW);
+        assert!(armed.is_empty(), "{armed:?}");
+        assert_eq!(
+            lock(&peer.delivery).ladder().to_vec(),
+            vec![Mechanism::WaitTool]
+        );
+    }
+
+    #[test]
+    fn push_capable_is_stdio_with_channel_push_and_claude_code() {
+        let home = tempfile::tempdir().expect("tempdir");
+        for transport in [Transport::Stdio, Transport::Http] {
+            for channel_push in [true, false] {
+                let mut config = match transport {
+                    Transport::Stdio => EngineConfig::stdio(),
+                    Transport::Http => EngineConfig::http(),
+                };
+                config.channel_push = channel_push;
+                let engine = Engine::new(config);
+                let peer = Peer::new(ctx(&home), transport, None);
+                for harness in [Harness::ClaudeCode, Harness::Codex, Harness::Unknown] {
+                    let expected = transport == Transport::Stdio
+                        && channel_push
+                        && harness == Harness::ClaudeCode;
+                    assert_eq!(
+                        engine.push_capable(&peer, harness),
+                        expected,
+                        "{transport:?} channel_push={channel_push} {harness:?}"
+                    );
+                }
+            }
+        }
     }
 }

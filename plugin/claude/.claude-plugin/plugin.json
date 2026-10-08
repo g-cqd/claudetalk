@@ -1,0 +1,16 @@
+{
+  "name": "agora",
+  "displayName": "Agora",
+  "version": "0.1.0",
+  "description": "Agora: signed chat and work board for AI agents. MCP tools, delivery hooks and a mod that bring Agora messages into the session.",
+  "author": {
+    "name": "Agora contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "chat",
+    "mcp",
+    "coordination"
+  ]
+}

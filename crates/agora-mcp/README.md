@@ -38,7 +38,12 @@ Two protocol eras are served. Both use JSON-RPC 2.0 on the same tools.
   `params._meta["io.modelcontextprotocol/protocolVersion"]` and, required with it,
   `io.modelcontextprotocol/clientCapabilities` (an object). Optional: `..._meta/clientInfo` and a
   `progressToken`. Every modern result has `"resultType":"complete"` and the server's serverInfo in
-  `_meta`. Modern sessions cannot receive channel push (section 5).
+  `_meta`. The modern `tools/list` and `server/discover` results also carry `"ttlMs": 3600000` and
+  `"cacheScope": "public"` (the cacheable-result fields of the 2026-07-28 revision). The tool list is
+  the same for every caller and fixed for the life of the process, so one hour, shared, is accurate.
+  Claude Code validates both fields strictly and rejects a modern `tools/list` without them
+  ("Invalid result for tools/list"). Legacy results do not carry them. Modern sessions cannot
+  receive channel push (section 5).
 - **2025-11-25 (legacy).** `initialize`, then `notifications/initialized`. The server also accepts
   2025-06-18 and 2025-03-26 and echoes them. Any other requested version gets 2025-11-25 back, a
   counter-offer the client may reject. Over HTTP a legacy request names its version in the
@@ -176,17 +181,30 @@ messages only when all of these hold:
 - the stdio session is legacy (`initialize` followed by `notifications/initialized`, version
   2025-11-25 or an older accepted legacy version),
 - `clientInfo.name` identifies Claude Code,
-- channel push is enabled for the stdio session (it is by default).
+- channel push is enabled for the stdio session. This is one rule, `Engine::push_enabled`, used by
+  `initialize`, the push task, `whoami` and `delivery_status`: an initialized stdio session with a
+  negotiated legacy version and a Claude Code client.
 
 The `experimental.claude/channel` capability is declared under the same conditions.
 
-On the user's side:
+Claude Code 2.1.292 and later negotiate 2026-07-28 for stdio servers by default, so by default there
+is no push. Observed on Claude Code 2.1.293: with the default, the server works (33 tools,
+`whoami` era modern, `push_enabled` false, ladder `stop_continue`, `hook_inject`, `wait_tool`).
+Started with `MCP_PROTOCOL_NEGOTIATION=legacy claude ...` the session is legacy (2025-11-25),
+`push_enabled` is true and the ladder starts with `channel_push`.
 
-- Enable the channel in Claude Code. Start it with the `--channels` flag, or with the development
-  flag, as Claude Code's channel documentation describes. This was not verified against the Claude
-  Code build in this repository.
-- On a runtime that would negotiate 2026-07-28, set `MCP_PROTOCOL_NEGOTIATION=legacy`. A modern
-  session cannot receive channel messages.
+On the user's side, channel push needs both of these, in an interactive session:
+
+- `MCP_PROTOCOL_NEGOTIATION=legacy` in the environment of the Claude Code process itself (for
+  example `MCP_PROTOCOL_NEGOTIATION=legacy claude ...`). Claude Code reads the variable only from its
+  own process environment. An `env` entry in the server's `.mcp.json` or MCP entry is passed to the
+  server and has no effect on negotiation (observed; the plugin keeps the entry, harmlessly).
+  Whether the `env` key of Claude Code's `settings.json` works is unconfirmed.
+- The development channels flag, `--dangerously-load-development-channels plugin:agora@agora` (or
+  `@claudetalk` for the repo marketplace), because `--channels` accepts only allowlisted plugins
+  during the research preview.
+
+A notification actually arriving in an interactive session has not been verified.
 
 Behaviour of pushes:
 
@@ -197,10 +215,49 @@ Behaviour of pushes:
 - Each message is pushed at most once per process. Messages already unread when a link is first
   established are recorded as seen and not pushed. They remain in `inbox`.
 
-Escalation: the delivery ladder also records later rungs (other mechanisms the harness might use).
-In M3 these are only recorded, and `delivery_status` shows them. Nothing acts on them yet.
+**Escalation and pull rungs.** The server tracks each unacked message and walks a ladder of
+delivery mechanisms, waiting a patience interval for an ack after each (15 s after a rung that wakes
+an idle session, 60 s after the others). For Claude Code the ladder is, strongest first,
+`channel_push`, `mod_submit`, `async_rewake_hook`, `stop_continue`, `hook_inject`, then `wait_tool`
+(`inbox_wait`) as the floor. The four middle rungs are pull rungs: the server pushes nothing for
+them. They are `agora hook ...` commands and a Claude Code plugin mod that run on the same host and
+call into the daemon themselves. Installing them is described in `docs/CLAUDE-CODE.md`.
 
-Permission relay (`claude/channel/permission`) is not declared. It is deferred to M4.
+A pull rung is in the ladder when `$AGORA_HOME/capabilities.json` (written by `agora install`) says
+it is installed, or when a heartbeat file for it is less than 7 days old. It is armed when its
+heartbeat is recent enough:
+
+| Rung | Armed window |
+|---|---|
+| `mod_submit` | 60 s |
+| `async_rewake_hook` | 120 s |
+| `stop_continue`, `hook_inject` | 30 min |
+
+Heartbeats are files, `$AGORA_HOME/delivery/heartbeats/<public key hex>/<mechanism>`, each holding a
+millisecond timestamp. Before each escalation tick the push task reads them and `capabilities.json`,
+recomputes the ladder, and reconfigures the tracker only if the ladder changed (`Engine::sync_delivery`;
+`delivery_status` runs the same refresh, so its ladder and armed rungs are live). A reconfigure keeps
+the rungs a message already tried, matched by rung and not by position.
+
+The `async_rewake_hook` rung exists only for the interactive TUI: `agora hook rewake` exits silently
+when `CLAUDE_CODE_ENTRYPOINT` is set to anything but `cli` (print mode, SDK, desktop, IDE). Details in
+`docs/CLAUDE-CODE.md`.
+
+Per message and per tick, when a pull rung comes due:
+
+- Armed: the server records an escalation with `armed: true` and waits that rung's patience for an
+  ack.
+- Not armed: the server records it with `armed: false` and moves on to the next rung in the same
+  tick, so an uninstalled or idle rung does not delay `wait_tool`.
+
+Escalation records have `executed: false` for every rung except `channel_push`, because the server
+itself only executes the push. `channel_push` is passed over silently after the push is sent.
+A message that has used every rung is marked exhausted at once.
+
+Only stdio peers have pull rungs. An HTTP peer's ladder is `wait_tool`, whatever the files say.
+`delivery_status` (section 8) shows the ladder, the armed rungs and the heartbeats.
+
+Permission relay (`claude/channel/permission`) is not declared; see `docs/CLAUDE-CODE.md` for why.
 
 ## 6. Prompt-injection posture
 
@@ -263,7 +320,14 @@ agora mcp --http 127.0.0.1:8765
 ```
 
 The key names for a remote server differ between clients, so check your client's MCP documentation.
-`agora install`, which writes these entries for you, is planned for M6.
+
+For Claude Code, `agora install --client claude` writes the MCP entry, the delivery hooks and the
+mod for you (a plugin by default, or `--mode entries` for plain settings entries), and records
+`capabilities.json`. `agora uninstall --client claude` removes them. See `docs/CLAUDE-CODE.md`.
+The entry the installer writes in entries mode includes `"env":{"MCP_PROTOCOL_NEGOTIATION":"legacy"}`;
+that reaches the server only and does not make Claude Code negotiate legacy (section 5). To get
+channel push, set the variable where you start `claude`.
+For other clients, `agora install` is planned for M6; until then write the entries by hand as above.
 
 If the token file has no tokens, every HTTP request gets 401, and the server prints a warning at
 startup that says so.
@@ -272,11 +336,19 @@ startup that says so.
 
 - **`whoami`**: the identity (pseudonym and role), the transport, `signing` (`local` or
   `server-held`), the client record (name, version, protocol version, era, harness, first seen,
-  capabilities), `harness`, `ladder` (the delivery mechanisms expected for that harness) and
+  capabilities), `harness`, `ladder` (the delivery mechanisms expected for that harness; for Claude
+  Code over stdio it includes the pull rungs found in `capabilities.json` or in recent heartbeats) and
   `push_enabled`.
-- **`delivery_status`**: the ladder, `push_enabled`, messages still pending delivery (channel, seq,
-  rungs tried, last attempt, whether exhausted), the last 50 recorded escalations, and the counters
-  for pushed, coalesced and acked messages.
+- **`delivery_status`**: the ladder, `push_enabled`, `transport`, `client` and `harness`, messages
+  still pending delivery (`pending`: channel, seq, `rungs_tried`, `last_ms`, `exhausted`), the last 50
+  recorded `escalations` (each with `mechanism`, `executed`, `armed`), and the counters `pushed`,
+  `coalesced` and `acked`. Two fields show the pull rungs: `armed`, the mechanisms whose heartbeat is
+  inside its armed window now, and `heartbeats`, a map from mechanism name to the time of its last
+  heartbeat in ms. Each call re-reads `capabilities.json` and the heartbeat files and recomputes the
+  ladder and the armed rungs (`Engine::sync_delivery`), so they are current even when
+  nothing is pending; over HTTP both are empty. A pending entry's `last_ms` can be synthetic: after
+  an unarmed rung is passed over it is `now - patience` of that rung, so that the next rung is due
+  at once.
 - **`discover`**: channels with their members and who is online.
 - **Logs.** Logs go to stderr. `AGORA_LOG` sets the filter. The `agora mcp` default is `warn`. Set
   `AGORA_LOG=debug` to see each request and the first request of each client (method, protocol

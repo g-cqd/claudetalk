@@ -7,10 +7,12 @@
 
 use crate::engine::Transport;
 use crate::version::{ClientInfo, Era, truncate_at_char_boundary};
+use agora_client::capabilities::ClaudeCapabilities;
+use agora_client::heartbeat;
 use agora_deliver::{Capabilities, Harness, Mechanism, ladder};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Mutex, MutexGuard};
 
 /// Registry capacity; the oldest record is evicted beyond it.
@@ -194,6 +196,43 @@ pub fn ladder_for(h: Harness, push_enabled: bool) -> Vec<Mechanism> {
         Capabilities {
             channels_loaded: push_enabled,
             ..Default::default()
+        },
+    )
+}
+
+/// The ladder for `h` given the install-time `caps` (`capabilities.json`, `None` when the file is
+/// absent) and the heartbeats `beats` of this identity at `now_ms`.
+///
+/// Inclusion rule: a rung is in the ladder when it is installed per `caps` OR its heartbeat was
+/// seen within 7 days (`agora_client::heartbeat::seen`). Only `ClaudeCode` consults these: its
+/// `mods`, `async_rewake`, `stop_hook` and `context_hook` are `caps.<flag> || seen(<rung>)`,
+/// `channels_loaded` is `push_enabled`, and `owned_session` is false. Every other harness: exactly
+/// `ladder_for(h, push_enabled)`.
+///
+/// Arming is not decided here. Whether a pull rung is armed right now (its shorter heartbeat
+/// window) is decided per tick by the delivery tracker, from `heartbeat::armed`.
+pub fn ladder_for_caps(
+    h: Harness,
+    push_enabled: bool,
+    caps: Option<&ClaudeCapabilities>,
+    beats: &BTreeMap<Mechanism, i64>,
+    now_ms: i64,
+) -> Vec<Mechanism> {
+    if h != Harness::ClaudeCode {
+        return ladder_for(h, push_enabled);
+    }
+    let seen = heartbeat::seen(beats, now_ms);
+    ladder(
+        h,
+        Capabilities {
+            channels_loaded: push_enabled,
+            mods: caps.is_some_and(|c| c.mods) || seen.contains(&Mechanism::ModSubmit),
+            async_rewake: caps.is_some_and(|c| c.async_rewake)
+                || seen.contains(&Mechanism::AsyncRewakeHook),
+            stop_hook: caps.is_some_and(|c| c.stop_hook) || seen.contains(&Mechanism::StopContinue),
+            context_hook: caps.is_some_and(|c| c.context_hook)
+                || seen.contains(&Mechanism::HookInject),
+            owned_session: false,
         },
     )
 }
@@ -484,5 +523,100 @@ mod tests {
         let l = ladder_for(Harness::ClaudeCode, true);
         assert_eq!(ladder_json(&l), json!(["channel_push", "wait_tool"]));
         assert_eq!(ladder_json(&[]), json!([]));
+    }
+
+    const NOW: i64 = 1_800_000_000_000;
+    const HOUR_MS: i64 = 60 * 60 * 1000;
+
+    fn full_caps() -> ClaudeCapabilities {
+        ClaudeCapabilities {
+            mods: true,
+            async_rewake: true,
+            stop_hook: true,
+            context_hook: true,
+            ..Default::default()
+        }
+    }
+
+    fn beats_of(m: Mechanism, t: i64) -> BTreeMap<Mechanism, i64> {
+        BTreeMap::from([(m, t)])
+    }
+
+    #[test]
+    fn claude_without_caps_or_beats_is_the_m3_ladder() {
+        let none = BTreeMap::new();
+        for push in [true, false] {
+            assert_eq!(
+                ladder_for_caps(Harness::ClaudeCode, push, None, &none, NOW),
+                ladder_for(Harness::ClaudeCode, push)
+            );
+        }
+    }
+
+    #[test]
+    fn full_caps_yield_every_claude_rung_in_order() {
+        let none = BTreeMap::new();
+        assert_eq!(
+            ladder_for_caps(Harness::ClaudeCode, true, Some(&full_caps()), &none, NOW),
+            [
+                Mechanism::ChannelPush,
+                Mechanism::ModSubmit,
+                Mechanism::AsyncRewakeHook,
+                Mechanism::StopContinue,
+                Mechanism::HookInject,
+                Mechanism::WaitTool,
+            ]
+        );
+    }
+
+    #[test]
+    fn push_disabled_drops_channel_push_even_with_caps() {
+        let none = BTreeMap::new();
+        let l = ladder_for_caps(Harness::ClaudeCode, false, Some(&full_caps()), &none, NOW);
+        assert!(!l.contains(&Mechanism::ChannelPush));
+        assert_eq!(l.last(), Some(&Mechanism::WaitTool));
+        assert_eq!(l.len(), 5);
+    }
+
+    #[test]
+    fn a_recent_beat_includes_its_rung_without_caps() {
+        let beats = beats_of(Mechanism::HookInject, NOW - HOUR_MS);
+        assert_eq!(
+            ladder_for_caps(Harness::ClaudeCode, false, None, &beats, NOW),
+            [Mechanism::HookInject, Mechanism::WaitTool]
+        );
+    }
+
+    #[test]
+    fn a_beat_older_than_seven_days_is_ignored() {
+        let beats = beats_of(Mechanism::HookInject, NOW - heartbeat::SEEN_WINDOW_MS - 1);
+        assert_eq!(
+            ladder_for_caps(Harness::ClaudeCode, false, None, &beats, NOW),
+            [Mechanism::WaitTool]
+        );
+    }
+
+    #[test]
+    fn a_beat_from_the_future_beyond_skew_is_ignored() {
+        let beats = beats_of(Mechanism::HookInject, NOW + 61_000);
+        assert_eq!(
+            ladder_for_caps(Harness::ClaudeCode, false, None, &beats, NOW),
+            [Mechanism::WaitTool]
+        );
+    }
+
+    #[test]
+    fn codex_ignores_caps_and_beats() {
+        let beats = BTreeMap::from([
+            (Mechanism::HookInject, NOW),
+            (Mechanism::StopContinue, NOW),
+            (Mechanism::OwnedSessionApi, NOW),
+        ]);
+        for push in [true, false] {
+            assert_eq!(
+                ladder_for_caps(Harness::Codex, push, Some(&full_caps()), &beats, NOW),
+                ladder_for(Harness::Codex, push)
+            );
+        }
     }
 }

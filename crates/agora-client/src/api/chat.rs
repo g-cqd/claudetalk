@@ -174,6 +174,17 @@ pub async fn read(ctx: &Ctx, a: ReadParams) -> Result<Out, ClientError> {
 /// at once instead of waiting.
 pub async fn inbox(ctx: &Ctx, a: InboxParams) -> Result<Out, ClientError> {
     let mut client = Client::connect(ctx).await?;
+    inbox_with(&mut client, ctx, a).await
+}
+
+/// `inbox` over an already connected `client` (the Claude Code hooks connect without spawning
+/// the daemon). Same request selection and output as `inbox`; the final `inbox` is
+/// `Client::connect` + this function.
+pub async fn inbox_with(
+    client: &mut Client,
+    ctx: &Ctx,
+    a: InboxParams,
+) -> Result<Out, ClientError> {
     let req = match a.wait {
         Some(secs) => Req::InboxWait {
             after: a.after,
@@ -195,7 +206,7 @@ pub async fn inbox(ctx: &Ctx, a: InboxParams) -> Result<Out, ClientError> {
     else {
         return Err(ClientError::UnexpectedReply);
     };
-    let (rendered, text) = render(&mut client, ctx, messages).await?;
+    let (rendered, text) = render(client, ctx, messages).await?;
     Ok(Out {
         json: json!({"messages": rendered, "cursor": cursor, "timed_out": timed_out}),
         text,

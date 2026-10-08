@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "claudetalk",
-  "description": "Inter-Claude messaging over MCP. One-plugin marketplace: `claude plugin marketplace add g-cqd/claudetalk` then `claude plugin install claudetalk@claudetalk`.",
+  "description": "Two-plugin marketplace: claudetalk (legacy TypeScript) and agora (Rust rewrite). `claude plugin marketplace add g-cqd/claudetalk`, then `claude plugin install claudetalk@claudetalk` or `claude plugin install agora@claudetalk`.",
   "owner": {
     "name": "g-cqd"
   },
@@ -19,6 +19,12 @@
         "ref": "main"
       },
       "homepage": "https://github.com/g-cqd/claudetalk"
+    },
+    {
+      "name": "agora",
+      "source": "./plugin/claude",
+      "description": "Agora (Rust rewrite): signed chat and work board for AI agents. MCP tools, delivery hooks and a mod that bring Agora messages into the session.",
+      "category": "development"
     }
   ]
 }

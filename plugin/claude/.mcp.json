@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "agora": {
+      "type": "stdio",
+      "command": "agora",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "MCP_PROTOCOL_NEGOTIATION": "legacy",
+        "AGORA_HOME": "${AGORA_HOME:-}",
+        "AGORA_FOLDER": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}

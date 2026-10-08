@@ -9,6 +9,7 @@ agora-crypto = { path = "../agora-crypto" }
 agora-store = { path = "../agora-store" }
 agora-proto = { path = "../agora-proto" }
 agora-daemon = { path = "../agora-daemon" }
+agora-deliver = { path = "../agora-deliver" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
