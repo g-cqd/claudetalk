@@ -15,6 +15,29 @@ pub enum Role {
     Owner,
 }
 
+impl Role {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Observer => "observer",
+            Self::Worker => "worker",
+            Self::Supervisor => "supervisor",
+            Self::Controller => "controller",
+            Self::Owner => "owner",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "observer" => Self::Observer,
+            "worker" => Self::Worker,
+            "supervisor" => Self::Supervisor,
+            "controller" => Self::Controller,
+            "owner" => Self::Owner,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CardState {
@@ -102,7 +125,10 @@ pub fn check_transition(
             | (Review, Done)
             | (Blocked, Ready)
             | (Backlog | Ready | Claimed | Doing | Review, Blocked)
-            | (Backlog | Ready | Claimed | Doing | Review | Blocked, Cancelled)
+            | (
+                Backlog | Ready | Claimed | Doing | Review | Blocked,
+                Cancelled
+            )
     );
     if !legal {
         return Err(TransitionError::Illegal { from, to });
@@ -130,7 +156,11 @@ pub fn check_transition(
 mod tests {
     use super::*;
 
-    const OK: Gate = Gate { has_evidence: true, independent_approval: true, require_review: true };
+    const OK: Gate = Gate {
+        has_evidence: true,
+        independent_approval: true,
+        require_review: true,
+    };
 
     #[test]
     fn happy_path() {
@@ -149,18 +179,28 @@ mod tests {
     #[test]
     fn promoting_and_cancelling_need_supervisor() {
         assert!(check_transition(CardState::Backlog, CardState::Ready, Role::Worker, OK).is_err());
-        assert!(check_transition(CardState::Backlog, CardState::Ready, Role::Supervisor, OK).is_ok());
-        assert!(check_transition(CardState::Doing, CardState::Cancelled, Role::Worker, OK).is_err());
+        assert!(
+            check_transition(CardState::Backlog, CardState::Ready, Role::Supervisor, OK).is_ok()
+        );
+        assert!(
+            check_transition(CardState::Doing, CardState::Cancelled, Role::Worker, OK).is_err()
+        );
     }
 
     #[test]
     fn done_is_gated() {
-        let no_ev = Gate { has_evidence: false, ..OK };
+        let no_ev = Gate {
+            has_evidence: false,
+            ..OK
+        };
         assert_eq!(
             check_transition(CardState::Review, CardState::Done, Role::Worker, no_ev),
             Err(TransitionError::EvidenceRequired)
         );
-        let no_rev = Gate { independent_approval: false, ..OK };
+        let no_rev = Gate {
+            independent_approval: false,
+            ..OK
+        };
         assert_eq!(
             check_transition(CardState::Review, CardState::Done, Role::Worker, no_rev),
             Err(TransitionError::ReviewRequired)
@@ -174,9 +214,32 @@ mod tests {
     }
 
     #[test]
+    fn role_names_round_trip_and_order() {
+        for r in [
+            Role::Observer,
+            Role::Worker,
+            Role::Supervisor,
+            Role::Controller,
+            Role::Owner,
+        ] {
+            assert_eq!(Role::parse(r.as_str()), Some(r));
+        }
+        assert!(Role::Owner > Role::Controller && Role::Controller > Role::Supervisor);
+        assert_eq!(Role::parse("root"), None);
+    }
+
+    #[test]
     fn state_names_round_trip() {
-        for s in [CardState::Backlog, CardState::Ready, CardState::Claimed, CardState::Doing,
-                  CardState::Review, CardState::Done, CardState::Blocked, CardState::Cancelled] {
+        for s in [
+            CardState::Backlog,
+            CardState::Ready,
+            CardState::Claimed,
+            CardState::Doing,
+            CardState::Review,
+            CardState::Done,
+            CardState::Blocked,
+            CardState::Cancelled,
+        ] {
             assert_eq!(CardState::parse(s.as_str()), Some(s));
         }
     }

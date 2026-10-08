@@ -1,16 +1,39 @@
+CREATE TABLE identities (
+    pubkey     BLOB PRIMARY KEY,
+    label      TEXT NOT NULL DEFAULT '',
+    role       TEXT NOT NULL DEFAULT 'worker',
+    revoked    INTEGER NOT NULL DEFAULT 0,
+    first_seen INTEGER NOT NULL
+);
+CREATE TABLE nonces (
+    actor BLOB NOT NULL,
+    nonce TEXT NOT NULL,
+    ts    INTEGER NOT NULL,
+    PRIMARY KEY (actor, nonce)
+);
+CREATE INDEX nonces_ts ON nonces(ts);
+
 CREATE TABLE channels (
     id      TEXT PRIMARY KEY,
     kind    TEXT NOT NULL CHECK (kind IN ('dm','group','thread','squad','team')),
     name    TEXT NOT NULL DEFAULT '',
     parent  TEXT REFERENCES channels(id),
+    epoch   INTEGER NOT NULL DEFAULT 0,
     created INTEGER NOT NULL
 );
 CREATE TABLE channel_members (
-    channel     TEXT NOT NULL REFERENCES channels(id),
-    pubkey      BLOB NOT NULL,
-    role        TEXT NOT NULL DEFAULT 'worker',
-    wrapped_key BLOB,
+    channel TEXT NOT NULL REFERENCES channels(id),
+    pubkey  BLOB NOT NULL,
+    role    TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin','member')),
     PRIMARY KEY (channel, pubkey)
+);
+-- Wrapped channel key per (epoch, member). Presence of rows == channel is encrypted.
+CREATE TABLE channel_keys (
+    channel TEXT NOT NULL REFERENCES channels(id),
+    epoch   INTEGER NOT NULL,
+    member  BLOB NOT NULL,
+    wrapped BLOB NOT NULL,
+    PRIMARY KEY (channel, epoch, member)
 );
 CREATE TABLE messages (
     id        TEXT PRIMARY KEY,
@@ -20,6 +43,7 @@ CREATE TABLE messages (
     sender    BLOB NOT NULL,
     ts        INTEGER NOT NULL,
     encrypted INTEGER NOT NULL,
+    epoch     INTEGER NOT NULL DEFAULT 0,
     body      BLOB NOT NULL,
     sig       BLOB NOT NULL
 );
