@@ -26,7 +26,8 @@ impl Harness {
             Self::ClaudeCode
         } else if n.contains("codex") {
             Self::Codex
-        } else if n.contains("visual studio code") || n.contains("vscode") || n.contains("vs code") {
+        } else if n.contains("visual studio code") || n.contains("vscode") || n.contains("vs code")
+        {
             Self::CopilotVsCode
         } else if n.contains("copilot") {
             Self::CopilotCli
@@ -64,7 +65,10 @@ pub enum Mechanism {
 impl Mechanism {
     /// Can this rung start work in a session that is idle right now?
     pub fn wakes_idle(self) -> bool {
-        matches!(self, Self::ChannelPush | Self::ModSubmit | Self::AsyncRewakeHook | Self::OwnedSessionApi)
+        matches!(
+            self,
+            Self::ChannelPush | Self::ModSubmit | Self::AsyncRewakeHook | Self::OwnedSessionApi
+        )
     }
 }
 
@@ -96,13 +100,16 @@ pub fn ladder(h: Harness, c: Capabilities) -> Vec<Mechanism> {
             (StopContinue, c.stop_hook),
             (HookInject, c.context_hook),
         ],
-        Harness::CopilotVsCode | Harness::Cursor | Harness::Antigravity => &[
-            (StopContinue, c.stop_hook),
-            (HookInject, c.context_hook),
-        ],
+        Harness::CopilotVsCode | Harness::Cursor | Harness::Antigravity => {
+            &[(StopContinue, c.stop_hook), (HookInject, c.context_hook)]
+        }
         Harness::Unknown => &[],
     };
-    let mut out: Vec<Mechanism> = candidates.iter().filter(|(_, on)| *on).map(|(m, _)| *m).collect();
+    let mut out: Vec<Mechanism> = candidates
+        .iter()
+        .filter(|(_, on)| *on)
+        .map(|(m, _)| *m)
+        .collect();
     out.push(WaitTool);
     out
 }
@@ -119,11 +126,7 @@ pub struct Attempt {
 /// How long to wait for an ack before escalating, per rung (idle-waking rungs
 /// get a shorter patience: if they worked, the ack comes quickly).
 pub fn patience_ms(m: Mechanism) -> i64 {
-    if m.wakes_idle() {
-        15_000
-    } else {
-        60_000
-    }
+    if m.wakes_idle() { 15_000 } else { 60_000 }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -160,33 +163,66 @@ mod tests {
     use Mechanism::*;
 
     const ALL: Capabilities = Capabilities {
-        channels_loaded: true, mods: true, async_rewake: true,
-        owned_session: true, stop_hook: true, context_hook: true,
+        channels_loaded: true,
+        mods: true,
+        async_rewake: true,
+        owned_session: true,
+        stop_hook: true,
+        context_hook: true,
     };
 
     #[test]
     fn claude_uses_every_rung_strongest_first() {
         assert_eq!(
             ladder(Harness::ClaudeCode, ALL),
-            [ChannelPush, ModSubmit, AsyncRewakeHook, StopContinue, HookInject, WaitTool]
+            [
+                ChannelPush,
+                ModSubmit,
+                AsyncRewakeHook,
+                StopContinue,
+                HookInject,
+                WaitTool
+            ]
         );
     }
 
     #[test]
     fn missing_capabilities_degrade_to_next_best() {
-        let c = Capabilities { stop_hook: true, context_hook: true, ..Default::default() };
+        let c = Capabilities {
+            stop_hook: true,
+            context_hook: true,
+            ..Default::default()
+        };
         // Channels not enabled, no mods: falls straight to hooks.
-        assert_eq!(ladder(Harness::ClaudeCode, c), [StopContinue, HookInject, WaitTool]);
+        assert_eq!(
+            ladder(Harness::ClaudeCode, c),
+            [StopContinue, HookInject, WaitTool]
+        );
         // Nothing at all still leaves the guaranteed floor.
-        assert_eq!(ladder(Harness::ClaudeCode, Capabilities::default()), [WaitTool]);
+        assert_eq!(
+            ladder(Harness::ClaudeCode, Capabilities::default()),
+            [WaitTool]
+        );
         assert_eq!(ladder(Harness::Unknown, ALL), [WaitTool]);
     }
 
     #[test]
     fn other_harnesses_never_get_claude_only_rungs() {
-        for h in [Harness::Codex, Harness::CopilotCli, Harness::CopilotVsCode, Harness::Cursor, Harness::Antigravity, Harness::OpenCode] {
+        for h in [
+            Harness::Codex,
+            Harness::CopilotCli,
+            Harness::CopilotVsCode,
+            Harness::Cursor,
+            Harness::Antigravity,
+            Harness::OpenCode,
+        ] {
             let l = ladder(h, ALL);
-            assert!(!l.contains(&ChannelPush) && !l.contains(&ModSubmit) && !l.contains(&AsyncRewakeHook), "{h:?}");
+            assert!(
+                !l.contains(&ChannelPush)
+                    && !l.contains(&ModSubmit)
+                    && !l.contains(&AsyncRewakeHook),
+                "{h:?}"
+            );
             assert_eq!(*l.last().unwrap(), WaitTool);
         }
         assert_eq!(ladder(Harness::Codex, ALL)[0], OwnedSessionApi);
@@ -207,28 +243,58 @@ mod tests {
         let l = ladder(Harness::ClaudeCode, ALL);
         let mut a = Attempt::default();
         assert_eq!(next_action(&l, a, 0), Action::Fire(ChannelPush));
-        a = Attempt { rungs_tried: 1, last_ms: 0 };
+        a = Attempt {
+            rungs_tried: 1,
+            last_ms: 0,
+        };
         assert_eq!(next_action(&l, a, 5_000), Action::Hold { at_ms: 15_000 });
         assert_eq!(next_action(&l, a, 15_000), Action::Fire(ModSubmit));
         // Walk the whole ladder; non-waking rungs wait longer.
-        let a = Attempt { rungs_tried: 4, last_ms: 100_000 };
+        let a = Attempt {
+            rungs_tried: 4,
+            last_ms: 100_000,
+        };
         assert_eq!(next_action(&l, a, 100_001), Action::Hold { at_ms: 160_000 });
         assert_eq!(next_action(&l, a, 160_000), Action::Fire(HookInject));
-        let done = Attempt { rungs_tried: l.len(), last_ms: 0 };
+        let done = Attempt {
+            rungs_tried: l.len(),
+            last_ms: 0,
+        };
         assert_eq!(next_action(&l, done, 10), Action::Exhausted);
     }
 
     #[test]
     fn client_names_map_to_harnesses() {
-        assert_eq!(Harness::from_client_name("claude-code"), Harness::ClaudeCode);
-        assert_eq!(Harness::from_client_name("codex-mcp-client"), Harness::Codex);
-        assert_eq!(Harness::from_client_name("Visual Studio Code"), Harness::CopilotVsCode);
-        assert_eq!(Harness::from_client_name("github-copilot-cli"), Harness::CopilotCli);
-        assert_eq!(Harness::from_client_name("antigravity-cli"), Harness::Antigravity);
+        assert_eq!(
+            Harness::from_client_name("claude-code"),
+            Harness::ClaudeCode
+        );
+        assert_eq!(
+            Harness::from_client_name("codex-mcp-client"),
+            Harness::Codex
+        );
+        assert_eq!(
+            Harness::from_client_name("Visual Studio Code"),
+            Harness::CopilotVsCode
+        );
+        assert_eq!(
+            Harness::from_client_name("github-copilot-cli"),
+            Harness::CopilotCli
+        );
+        assert_eq!(
+            Harness::from_client_name("antigravity-cli"),
+            Harness::Antigravity
+        );
         assert_eq!(Harness::from_client_name("agy"), Harness::Antigravity);
-        assert_eq!(Harness::from_client_name("antigravity-client"), Harness::Antigravity);
+        assert_eq!(
+            Harness::from_client_name("antigravity-client"),
+            Harness::Antigravity
+        );
         // Legacy Gemini CLI clients are treated as Antigravity.
-        assert_eq!(Harness::from_client_name("gemini-cli-mcp-client"), Harness::Antigravity);
+        assert_eq!(
+            Harness::from_client_name("gemini-cli-mcp-client"),
+            Harness::Antigravity
+        );
         assert_eq!(Harness::from_client_name("mystery"), Harness::Unknown);
     }
 }

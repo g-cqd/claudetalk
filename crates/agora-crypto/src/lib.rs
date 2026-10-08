@@ -50,7 +50,10 @@ pub fn canonical(domain: &str, fields: &[&[u8]]) -> Vec<u8> {
 
 pub fn pseudonym(public: &[u8; 32]) -> String {
     let h = blake3::hash(public);
-    h.as_bytes()[..8].iter().map(|b| format!("{b:02x}")).collect()
+    h.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 pub fn content_hash(bytes: &[u8]) -> String {
@@ -67,7 +70,9 @@ impl Identity {
     }
 
     pub fn from_seed(seed: [u8; 32]) -> Self {
-        Self { key: SigningKey::from_bytes(&seed) }
+        Self {
+            key: SigningKey::from_bytes(&seed),
+        }
     }
 
     pub fn public(&self) -> [u8; 32] {
@@ -93,7 +98,11 @@ impl Identity {
         // Bind both identities so the wrap key is direction-independent.
         let (a, b) = {
             let mine = self.public();
-            if mine <= *peer { (mine, *peer) } else { (*peer, mine) }
+            if mine <= *peer {
+                (mine, *peer)
+            } else {
+                (*peer, mine)
+            }
         };
         let mut h = blake3::Hasher::new_derive_key("agora/channel-key-wrap/v1");
         h.update(shared.as_bytes());
@@ -103,20 +112,33 @@ impl Identity {
     }
 
     /// Wrap a channel key for `recipient`. Output: nonce || ciphertext.
-    pub fn wrap_key(&self, recipient: &[u8; 32], channel: &str, key: &ChannelKey) -> Result<Vec<u8>, CryptoError> {
+    pub fn wrap_key(
+        &self,
+        recipient: &[u8; 32],
+        channel: &str,
+        key: &ChannelKey,
+    ) -> Result<Vec<u8>, CryptoError> {
         aead_seal(&self.shared_with(recipient)?, channel.as_bytes(), &key.0)
     }
 
-    pub fn unwrap_key(&self, sender: &[u8; 32], channel: &str, wrapped: &[u8]) -> Result<ChannelKey, CryptoError> {
+    pub fn unwrap_key(
+        &self,
+        sender: &[u8; 32],
+        channel: &str,
+        wrapped: &[u8],
+    ) -> Result<ChannelKey, CryptoError> {
         let raw = aead_open(&self.shared_with(sender)?, channel.as_bytes(), wrapped)?;
-        Ok(ChannelKey(raw.try_into().map_err(|_| CryptoError::Malformed)?))
+        Ok(ChannelKey(
+            raw.try_into().map_err(|_| CryptoError::Malformed)?,
+        ))
     }
 }
 
 pub fn verify(public: &[u8; 32], msg: &[u8], sig: &[u8]) -> Result<(), CryptoError> {
     let vk = VerifyingKey::from_bytes(public).map_err(|_| CryptoError::BadKey)?;
     let sig: [u8; SIG_LEN] = sig.try_into().map_err(|_| CryptoError::BadSignature)?;
-    vk.verify(msg, &Signature::from_bytes(&sig)).map_err(|_| CryptoError::BadSignature)
+    vk.verify(msg, &Signature::from_bytes(&sig))
+        .map_err(|_| CryptoError::BadSignature)
 }
 
 fn aead_seal(key: &[u8; 32], aad: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -168,12 +190,18 @@ mod tests {
         let sig = id.sign(&m);
         assert!(verify(&id.public(), &m, &sig).is_ok());
         let tampered = canonical("msg", &[b"chan", b"hellO"]);
-        assert_eq!(verify(&id.public(), &tampered, &sig), Err(CryptoError::BadSignature));
+        assert_eq!(
+            verify(&id.public(), &tampered, &sig),
+            Err(CryptoError::BadSignature)
+        );
     }
 
     #[test]
     fn canonical_encoding_has_no_boundary_ambiguity() {
-        assert_ne!(canonical("m", &[b"ab", b"c"]), canonical("m", &[b"a", b"bc"]));
+        assert_ne!(
+            canonical("m", &[b"ab", b"c"]),
+            canonical("m", &[b"a", b"bc"])
+        );
         assert_ne!(canonical("m", &[b"x"]), canonical("n", &[b"x"]));
     }
 
