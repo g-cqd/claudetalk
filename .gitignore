@@ -24,3 +24,4 @@ stryker.log
 
 # Safe-write backups of user config (never commit these — they contain personal data)
 *.bak.*
+target/
