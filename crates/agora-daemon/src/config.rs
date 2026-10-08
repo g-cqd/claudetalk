@@ -71,6 +71,14 @@ pub struct DaemonConfig {
     pub handshake_timeout_ms: u64,
     /// Install SIGINT/SIGTERM handlers in `Daemon::run`. Default true (tests: false).
     pub handle_signals: bool,
+    /// Run the work scheduler: job admission, timers and the reconciler. Default true. When false the
+    /// daemon starts none of them (the work queue can still be written, but nothing starts or fires).
+    pub work_enabled: bool,
+    /// The command that starts a job supervisor; `--job-dir <dir>` is appended. Never read from
+    /// `config.json`. `None` means `[current_exe, "_supervise"]` (see [`DaemonConfig::supervisor_command`]);
+    /// tests set it to the `agora-supervise` binary.
+    #[serde(skip)]
+    pub supervisor_argv: Option<Vec<String>>,
 }
 
 impl Default for DaemonConfig {
@@ -85,6 +93,8 @@ impl Default for DaemonConfig {
             max_inflight_per_conn: 32,
             handshake_timeout_ms: 10_000,
             handle_signals: true,
+            work_enabled: true,
+            supervisor_argv: None,
         }
     }
 }
@@ -146,7 +156,28 @@ impl DaemonConfig {
                 self.max_blob_bytes
             )));
         }
+        if let Some(argv) = &self.supervisor_argv
+            && argv.first().is_none_or(|program| program.is_empty())
+        {
+            return Err(DaemonError::Config(
+                "supervisor_argv must start with a non-empty program".into(),
+            ));
+        }
         Ok(())
+    }
+
+    /// The supervisor command without its `--job-dir` argument: `supervisor_argv`, else
+    /// `[current_exe, "_supervise"]`.
+    pub fn supervisor_command(&self) -> std::io::Result<Vec<String>> {
+        if let Some(argv) = &self.supervisor_argv {
+            return Ok(argv.clone());
+        }
+        let exe = std::env::current_exe()?;
+        let exe = exe
+            .into_os_string()
+            .into_string()
+            .map_err(|_| std::io::Error::other("the daemon executable path is not valid UTF-8"))?;
+        Ok(vec![exe, "_supervise".into()])
     }
 
     pub fn paths(&self) -> Paths {

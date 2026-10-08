@@ -1,0 +1,111 @@
+{
+ "candidate": "cand",
+ "cpus": 16.0,
+ "expected": {
+  "cause": "idle",
+  "reason": "the CPU is 19% idle; jobs start at 20% idle or more"
+ },
+ "kind": "blocker",
+ "name": "blocker-013",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.43,
+   "pred_duration_p90": 408.3,
+   "pred_rss_p90": 1169016,
+   "quiet_until": null,
+   "rss": 558565,
+   "started": 99314.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.11,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99208.0,
+   "weight": 0.5
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.26,
+   "pred_duration_p90": 255.3,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 51844,
+   "started": 99489.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r3",
+   "pred_cores": 0.32,
+   "pred_duration_p90": 37.6,
+   "pred_rss_p90": 1608247,
+   "quiet_until": null,
+   "rss": 175875,
+   "started": 99232.0,
+   "weight": 1.0
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 20.0,
+  "load_factor": 1.5,
+  "load_wait": 1800.0,
+  "memory_budget": 6392335,
+  "memory_limit": "critical",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 18.9,
+  "load1": 29.07,
+  "load_gate": true,
+  "memory_level": "warning",
+  "memory_used_kib": 1867547
+ },
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "Work",
+   "pred_cores": 0.41,
+   "pred_duration": 599.2,
+   "pred_duration_p90": 618.0,
+   "pred_rss_p90": 1462427,
+   "requested": 99778.0,
+   "seq": 0,
+   "weight": 2.0
+  },
+  {
+   "id": "w0",
+   "kind": "work",
+   "pred_cores": null,
+   "pred_duration": 803.8,
+   "pred_duration_p90": 391.2,
+   "pred_rss_p90": 677262,
+   "requested": 99832.0,
+   "seq": 1,
+   "weight": 12.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "x1",
+   "quiet_until": 99729.0
+  },
+  {
+   "ended": 99829.0,
+   "id": "x2",
+   "quiet_until": 99795.0
+  }
+ ]
+}

@@ -4,6 +4,7 @@
 //! write lock); a caller can never assert its own role.
 
 use crate::channels::is_encrypted;
+use crate::system::is_system;
 use crate::{Store, StoreError};
 use agora_core::{Role, TransitionError};
 use agora_crypto::{Identity, canonical, verify};
@@ -76,7 +77,7 @@ impl SignedOp {
         }
     }
 
-    fn signing_bytes(&self) -> Vec<u8> {
+    pub(crate) fn signing_bytes(&self) -> Vec<u8> {
         canonical(
             "op/v1",
             &[
@@ -163,6 +164,12 @@ pub(crate) fn authorize(
     }
     check_clock(now, op.ts)?;
     verify(&op.actor, &op.signing_bytes(), &op.sig)?;
+    // The system identity signs only through `authorize_system`, never an agent operation.
+    if is_system(tx, &op.actor)? {
+        return Err(StoreError::Transition(TransitionError::Forbidden(
+            Role::Observer,
+        )));
+    }
     let role = active_role(tx, &op.actor)?;
     consume_nonce(tx, now, &op.actor, &op.nonce, op.ts)?;
     Ok(role)
@@ -260,6 +267,7 @@ impl Store {
         need(actor_role, Role::Controller)?;
         let target =
             unhex32(&op.subject).ok_or(StoreError::Invalid("subject must be a 64-char hex key"))?;
+        refuse_system_target(&tx, &target)?;
         let new = Role::parse(&op.arg).ok_or(StoreError::Invalid("unknown role"))?;
         let target_role = active_role(&tx, &target)?;
         if target_role >= Role::Controller {
@@ -308,6 +316,7 @@ impl Store {
         need(actor_role, Role::Controller)?;
         let target =
             unhex32(&op.subject).ok_or(StoreError::Invalid("subject must be a 64-char hex key"))?;
+        refuse_system_target(&tx, &target)?;
         let target_role = active_role(&tx, &target)?;
         if target_role >= Role::Controller {
             need(actor_role, Role::Owner)?;
@@ -350,6 +359,17 @@ impl Store {
         )?;
         Ok(tx.commit()?)
     }
+}
+
+/// Refuses a target that is the system identity (registered or revoked): an agent cannot grant it a role
+/// or revoke it; the system identity is registered only through `register_system_identity`.
+fn refuse_system_target(tx: &Transaction, target: &Pub) -> Result<(), StoreError> {
+    if is_system(tx, target)? {
+        return Err(StoreError::Refused(
+            "the system identity cannot be granted roles or revoked by an agent".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// True when no other active owner exists, so removing `pk`'s owner role would

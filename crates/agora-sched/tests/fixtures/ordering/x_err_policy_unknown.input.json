@@ -1,0 +1,11 @@
+{
+  "args": [
+    "order",
+    "--policy",
+    "x",
+    "--task",
+    "id=a"
+  ],
+  "tasks": null,
+  "compare_stderr": false
+}

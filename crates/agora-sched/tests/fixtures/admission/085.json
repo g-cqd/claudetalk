@@ -1,0 +1,58 @@
+{
+ "aging": 0.0,
+ "expected_order": [
+  "o1",
+  "o0",
+  "o2",
+  "o3"
+ ],
+ "kind": "order",
+ "name": "order-005",
+ "now": 100000.0,
+ "waiting": [
+  {
+   "id": "o0",
+   "kind": "Work",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 41.4,
+   "pred_rss_p90": null,
+   "requested": 50.0,
+   "seq": 0,
+   "weight": 3.0
+  },
+  {
+   "id": "o1",
+   "kind": "validity",
+   "pred_cores": null,
+   "pred_duration": 600.0,
+   "pred_duration_p90": 1082.6,
+   "pred_rss_p90": 1599481,
+   "requested": 50.0,
+   "seq": 1,
+   "weight": 2.0
+  },
+  {
+   "id": "o2",
+   "kind": "refactor",
+   "pred_cores": 0.19,
+   "pred_duration": 30.0,
+   "pred_duration_p90": 912.5,
+   "pred_rss_p90": null,
+   "requested": 600.0,
+   "seq": 2,
+   "weight": 3.0
+  },
+  {
+   "id": "o3",
+   "kind": "Work",
+   "pred_cores": null,
+   "pred_duration": 60.0,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 0.0,
+   "seq": 3,
+   "weight": 4.0
+  }
+ ]
+}

@@ -1,0 +1,111 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "cores",
+  "reason": "predicted 8.2 of 3 cores are taken and this job needs 3"
+ },
+ "kind": "blocker",
+ "name": "blocker-062",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 1.78,
+   "pred_duration_p90": 835.0,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 2.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": null,
+   "pred_duration_p90": 831.5,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1396871,
+   "started": 99433.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": 1.44,
+   "pred_duration_p90": 872.2,
+   "pred_rss_p90": 2127754,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99696.0,
+   "weight": 2.0
+  },
+  {
+   "id": "r3",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 4.0
+  }
+ ],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 60.0,
+  "capacity": 3.0,
+  "cpu_budget": 3.0,
+  "idle_min": 5.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 4434712,
+  "memory_limit": "off",
+  "quiet_drain": 30.0,
+  "quiet_max": 180.0,
+  "small_weight": 2.0
+ },
+ "signals": {
+  "idle_pct": null,
+  "load1": null,
+  "load_gate": false,
+  "memory_level": "warning",
+  "memory_used_kib": null
+ },
+ "total_memory_kib": 3000000,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "Work",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2291464,
+   "requested": 99664.0,
+   "seq": 0,
+   "weight": 3.0
+  },
+  {
+   "id": "w0",
+   "kind": "work",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99741.0,
+   "seq": 1,
+   "weight": 3.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99757.0,
+   "id": "x0",
+   "quiet_until": 99950.0
+  },
+  {
+   "ended": null,
+   "id": "cand",
+   "quiet_until": 99874.0
+  }
+ ]
+}

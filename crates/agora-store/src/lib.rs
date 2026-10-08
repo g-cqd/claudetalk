@@ -20,6 +20,9 @@ pub enum StoreError {
     Crypto(#[from] agora_crypto::CryptoError),
     #[error("{0}")]
     Invalid(&'static str),
+    /// A refusal with a dynamic, user-facing message (work queue rules: "task X is claimed by A", …).
+    #[error("{0}")]
+    Refused(String),
     #[error("not a member of channel {0}")]
     NotMember(String),
     #[error(transparent)]
@@ -64,18 +67,30 @@ CREATE TABLE approvals (
 "#,
     include_str!("migration2.sql"),
     include_str!("migration3.sql"),
+    include_str!("migration4.sql"),
 ];
 
+mod cards_ext;
 mod channels;
 mod identity;
+mod jobs;
+mod leases;
 mod messages;
+mod metrics;
+mod policy;
+mod reconcile;
 mod social;
 mod sprints;
+mod system;
+mod timers;
+mod work_ops;
+mod work_query;
 pub use channels::{ChannelInfo, WRAPPED_KEY_LEN, keys_digest};
 pub use identity::*;
 pub use messages::*;
 pub use social::*;
 pub use sprints::*;
+pub use system::SYSTEM_KINDS;
 
 pub struct Store {
     pub(crate) conn: Connection,
@@ -174,6 +189,7 @@ impl Store {
                 .as_str()
                 .ok_or(StoreError::Invalid("card lane must be a string"))?,
         };
+        let fields = cards_ext::NewCardFields::parse(&arg)?;
         let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM cards WHERE id=?)",
             [op.subject.as_str()],
@@ -183,16 +199,22 @@ impl Store {
             return Err(StoreError::Invalid("card already exists"));
         }
         tx.execute(
-            "INSERT INTO cards(id,title,lane,state,created,updated) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO cards(id,title,lane,state,created,updated,priority,value,size,team) \
+             VALUES (?,?,?,?,?,?,?,?,?,?)",
             params![
                 op.subject,
                 title,
                 lane,
                 CardState::Backlog.as_str(),
                 now,
-                now
+                now,
+                fields.priority,
+                fields.value,
+                fields.size,
+                fields.team,
             ],
         )?;
+        fields.insert_deps(&tx, &op.subject)?;
         Self::append(
             &tx,
             now,
@@ -332,6 +354,13 @@ impl Store {
         ) || (matches!(from, CardState::Blocked) && owner.is_some());
         if guarded && role < Role::Supervisor && owner.as_deref() != Some(actor.as_str()) {
             return Err(StoreError::Transition(TransitionError::Forbidden(role)));
+        }
+        // The WIP gate applies only when work enters claimed or doing from outside them, so a
+        // card already in progress may move between the two in a lane over its limit.
+        if matches!(to, CardState::Claimed | CardState::Doing)
+            && !matches!(from, CardState::Claimed | CardState::Doing)
+        {
+            cards_ext::check_wip(&tx, card, require_review)?;
         }
         let new_owner = match to {
             CardState::Claimed => Some(actor.clone()),

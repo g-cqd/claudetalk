@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "work: expected a list, not 5\n"
+}

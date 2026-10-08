@@ -1,0 +1,25 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "2",
+    "--assign",
+    "--conflict-cost",
+    "0.5",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "files": [
+        "src"
+      ]
+    },
+    {
+      "id": "b",
+      "files": [
+        "src/x"
+      ]
+    }
+  ]
+}

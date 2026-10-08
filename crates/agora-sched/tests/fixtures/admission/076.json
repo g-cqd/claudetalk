@@ -1,0 +1,91 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "load",
+  "reason": "the load average 13.20 is at or above 4.00"
+ },
+ "kind": "blocker",
+ "name": "blocker-076",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.18,
+   "pred_duration_p90": 70.8,
+   "pred_rss_p90": 525451,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99280.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 1.4,
+   "pred_duration_p90": 731.8,
+   "pred_rss_p90": 1793679,
+   "quiet_until": null,
+   "rss": 1166220,
+   "started": null,
+   "weight": 1.5
+  }
+ ],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 300.0,
+  "capacity": 12.0,
+  "cpu_budget": 6.0,
+  "idle_min": 15.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "critical",
+  "quiet_drain": 60.0,
+  "quiet_max": 120.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 88.0,
+  "load1": 13.2,
+  "load_gate": true,
+  "memory_level": "warning",
+  "memory_used_kib": 228958
+ },
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "work",
+   "pred_cores": 2.48,
+   "pred_duration": 826.6,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99489.0,
+   "seq": 0,
+   "weight": 3.0
+  },
+  {
+   "id": "w1",
+   "kind": "validity",
+   "pred_cores": null,
+   "pred_duration": 352.4,
+   "pred_duration_p90": 485.0,
+   "pred_rss_p90": null,
+   "requested": 99985.0,
+   "seq": 1,
+   "weight": 4.0
+  },
+  {
+   "id": "cand",
+   "kind": "validity",
+   "pred_cores": 0.12,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99852.0,
+   "seq": 2,
+   "weight": 3.0
+  }
+ ],
+ "windows": []
+}

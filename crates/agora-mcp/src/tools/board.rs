@@ -1,36 +1,14 @@
 //! Tool handlers: card_*, sprint_*, board_summary, note_*.
 
 use super::args::*;
-use super::{ToolCx, ToolOutput, ToolResult};
-use crate::framing::{UNTRUSTED_DATA_NOTICE, frame_text};
+use super::{ToolCx, ToolResult, framed_output, output};
 use agora_client::Out;
 use agora_client::api::board as api;
+use agora_client::api::sched as sched_api;
+use agora_sched::model::BoardExtras;
+use agora_sched::pyfmt::printable;
 use serde_json::Value;
 use std::collections::BTreeMap;
-
-/// The api result as a tool result: its JSON is `structured`, its text is kept as is.
-fn output(out: Out) -> ToolOutput {
-    ToolOutput {
-        structured: out.json,
-        text: out.text,
-    }
-}
-
-/// The api result as a tool result whose text echoes other agents' titles: the text is framed
-/// as untrusted data, and the JSON gets the same `notice` field when it is an object.
-fn framed_output(out: Out) -> ToolOutput {
-    let mut structured = out.json;
-    if let Value::Object(map) = &mut structured {
-        map.insert(
-            "notice".to_owned(),
-            Value::String(UNTRUSTED_DATA_NOTICE.to_owned()),
-        );
-    }
-    ToolOutput {
-        structured,
-        text: frame_text(&out.text),
-    }
-}
 
 /// Clamp a list limit to the 1..=200 range every list tool accepts.
 fn clamp_limit(limit: i64) -> i64 {
@@ -43,6 +21,11 @@ pub async fn card_create(cx: &ToolCx<'_>, a: CardCreateArgs) -> ToolResult {
         id: a.id,
         title: a.title,
         lane: a.lane,
+        priority: a.priority,
+        value: a.value,
+        size: a.size,
+        team: a.team,
+        after: a.after,
     };
     Ok(output(api::card_create(&cx.peer.ctx, p).await?))
 }
@@ -126,7 +109,7 @@ pub async fn sprint_summary(cx: &ToolCx<'_>, a: SprintSummaryArgs) -> ToolResult
     Ok(output(api::sprint_summary(&cx.peer.ctx, p).await?))
 }
 
-/// `card_list` with limit 200 (and optional lane), reduced to json `{total, by_state:{state:n}, by_lane:{lane:n}, mine:[cards owned by me], blocked:[cards in state "blocked"]}` and a short human text summary.
+/// `card_list` with limit 200 (and optional lane), reduced to json `{total, by_state:{state:n}, by_lane:{lane:n}, mine:[cards owned by me], blocked:[cards in state "blocked"], extras}` and a short human text summary. `extras` is the board's scheduling extras (`null` when the daemon cannot give them); its text lines follow the summary line. The text carries card titles, so it is framed as untrusted data.
 pub async fn board_summary(cx: &ToolCx<'_>, a: BoardSummaryArgs) -> ToolResult {
     let p = api::CardListParams {
         state: None,
@@ -136,9 +119,57 @@ pub async fn board_summary(cx: &ToolCx<'_>, a: BoardSummaryArgs) -> ToolResult {
     let out = api::card_list(&cx.peer.ctx, p).await?;
     let cards = out.json.get("cards").cloned().unwrap_or(Value::Null);
     let me = agora_store::hex(&cx.peer.ctx.identity.public());
-    let structured = summarize(&cards, &me);
-    let text = summary_text(&structured);
-    Ok(ToolOutput { structured, text })
+    let mut structured = summarize(&cards, &me);
+    let mut lines = vec![summary_text(&structured)];
+    // An older daemon cannot give the extras: the summary goes out without them.
+    let extras = sched_api::board_extras(&cx.peer.ctx).await.ok();
+    let extras_json = match &extras {
+        Some(e) => {
+            lines.extend(extras_lines(e));
+            serde_json::to_value(e).unwrap_or(Value::Null)
+        }
+        None => Value::Null,
+    };
+    if let Value::Object(map) = &mut structured {
+        map.insert("extras".to_owned(), extras_json);
+    }
+    Ok(framed_output(Out {
+        json: structured,
+        text: lines.join("\n"),
+    }))
+}
+
+/// The board extras as text lines, in the order the board summary shows them: one "needs owner"
+/// line per card, one "wip" line per lane, then the job and lease counts, then the quiet window
+/// and the admission pause when set. Card titles, lane and team names and the reasons are written
+/// by other agents, so every line goes through `printable`.
+fn extras_lines(extras: &BoardExtras) -> Vec<String> {
+    let mut lines: Vec<String> = extras
+        .needs_owner
+        .iter()
+        .map(|n| {
+            printable(&format!(
+                "needs owner: {} ({}): {}",
+                n.card, n.title, n.owner_action
+            ))
+        })
+        .collect();
+    lines.extend(extras.wip.iter().map(|w| {
+        let limit = w.limit.map_or_else(|| "-".to_owned(), |n| n.to_string());
+        printable(&format!("wip: {}/{} {}/{limit}", w.team, w.lane, w.count))
+    }));
+    lines.push(format!(
+        "jobs: {} running, {} waiting, {} queued",
+        extras.running_jobs, extras.waiting_jobs, extras.queued_tasks
+    ));
+    lines.push(format!("leases: {} open", extras.open_leases));
+    if let Some(quiet) = &extras.quiet {
+        lines.push(printable(&format!("quiet: {}", quiet.text)));
+    }
+    if let Some(reason) = &extras.paused {
+        lines.push(printable(&format!("admission paused: {reason}")));
+    }
+    lines
 }
 
 /// Publish a note via `api::board::note_publish`.
@@ -254,6 +285,7 @@ fn summary_text(summary: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framing::UNTRUSTED_DATA_NOTICE;
     use serde_json::json;
 
     const ME: &str = "aa11";
@@ -355,5 +387,87 @@ mod tests {
             "5 cards: 1 ready, 2 doing, 2 blocked; 3 yours"
         );
         assert_eq!(summary_text(&summarize(&json!([]), ME)), "0 cards");
+    }
+
+    fn extras(value: Value) -> BoardExtras {
+        serde_json::from_value(value).expect("board extras")
+    }
+
+    #[test]
+    fn extras_lines_render_every_section_in_order() {
+        let e = extras(json!({
+            "needs_owner": [{"card": "c1", "title": "one", "owner_action": "claim it"}],
+            "wip": [
+                {"team": "core", "lane": "doing", "count": 2, "limit": 3},
+                {"team": "web", "lane": "ready", "count": 1},
+            ],
+            "running_jobs": 1,
+            "waiting_jobs": 2,
+            "queued_tasks": 3,
+            "open_leases": 4,
+            "quiet": {"state": "window", "seconds_left": 60.0, "text": "quiet until 18:00"},
+            "paused": "disk full",
+        }));
+        assert_eq!(
+            extras_lines(&e),
+            [
+                "needs owner: c1 (one): claim it",
+                "wip: core/doing 2/3",
+                "wip: web/ready 1/-",
+                "jobs: 1 running, 2 waiting, 3 queued",
+                "leases: 4 open",
+                "quiet: quiet until 18:00",
+                "admission paused: disk full",
+            ]
+        );
+    }
+
+    #[test]
+    fn extras_lines_of_an_empty_board_keep_only_the_counts() {
+        let e = extras(json!({}));
+        assert_eq!(
+            extras_lines(&e),
+            ["jobs: 0 running, 0 waiting, 0 queued", "leases: 0 open",]
+        );
+    }
+
+    #[test]
+    fn extras_lines_omit_quiet_and_pause_when_unset() {
+        let e = extras(json!({"running_jobs": 5, "open_leases": 1}));
+        let lines = extras_lines(&e);
+        assert!(lines.iter().all(|l| !l.starts_with("quiet:")), "{lines:?}");
+        assert!(
+            lines.iter().all(|l| !l.starts_with("admission paused:")),
+            "{lines:?}"
+        );
+        assert_eq!(lines.len(), 2, "{lines:?}");
+    }
+
+    #[test]
+    fn extras_lines_escape_control_characters_in_untrusted_names() {
+        let e = extras(json!({
+            "needs_owner": [{"card": "c1", "title": "a\nb\u{1b}[2J", "owner_action": "x"}],
+            "wip": [{"team": "t\tm", "lane": "l", "count": 0}],
+        }));
+        let lines = extras_lines(&e);
+        assert_eq!(lines[0], "needs owner: c1 (a\\nb\\x1b[2J): x");
+        assert_eq!(lines[1], "wip: t\\tm/l 0/-");
+        for line in &lines {
+            assert!(!line.contains(['\n', '\t', '\u{1b}']), "{line:?}");
+        }
+    }
+
+    #[test]
+    fn extras_lines_list_one_needs_owner_line_per_card() {
+        let e = extras(json!({
+            "needs_owner": [
+                {"card": "c1", "title": "one", "owner_action": "claim it"},
+                {"card": "c2", "title": "two", "owner_action": "reclaim it"},
+            ],
+        }));
+        let lines = extras_lines(&e);
+        assert_eq!(lines[0], "needs owner: c1 (one): claim it");
+        assert_eq!(lines[1], "needs owner: c2 (two): reclaim it");
+        assert_eq!(lines.len(), 4, "{lines:?}");
     }
 }

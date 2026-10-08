@@ -1,0 +1,85 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "memory pressure is warning; jobs start below warning"
+ },
+ "kind": "blocker",
+ "name": "blocker-004",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.12,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2110937,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99420.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.47,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 684478,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99557.0,
+   "weight": 2.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.4,
+   "pred_duration_p90": 674.9,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 1.0
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 15.0,
+  "load_factor": 1.5,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "warning",
+  "quiet_drain": 30.0,
+  "quiet_max": 180.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 14.5,
+  "load1": 22.81,
+  "load_gate": true,
+  "memory_level": "warning",
+  "memory_used_kib": 3515391
+ },
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": " crash",
+   "pred_cores": 0.26,
+   "pred_duration": 846.5,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2475886,
+   "requested": 99958.0,
+   "seq": 0,
+   "weight": 4.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99890.0,
+   "id": "x0",
+   "quiet_until": 99984.0
+  }
+ ]
+}

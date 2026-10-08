@@ -1,0 +1,117 @@
+{
+ "candidate": "cand",
+ "cpus": 16.0,
+ "expected": {
+  "cause": "cores",
+  "reason": "predicted 20.6 of 8 cores are taken and this job needs 1"
+ },
+ "kind": "blocker",
+ "name": "blocker-036",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1255695,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99453.0,
+   "weight": 12.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": null,
+   "pred_duration_p90": 367.1,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 8.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.6,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99677.0,
+   "weight": 1.5
+  }
+ ],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 60.0,
+  "capacity": 8.0,
+  "cpu_budget": 8.0,
+  "idle_min": 20.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 5535559,
+  "memory_limit": "warning",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 0.5
+ },
+ "signals": null,
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "validity",
+   "pred_cores": null,
+   "pred_duration": 293.8,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1161780,
+   "requested": 99328.0,
+   "seq": 0,
+   "weight": 1.0
+  },
+  {
+   "id": "w0",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99539.0,
+   "seq": 1,
+   "weight": 6.0
+  },
+  {
+   "id": "w1",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99823.0,
+   "seq": 2,
+   "weight": 0.5
+  },
+  {
+   "id": "w2",
+   "kind": "Work",
+   "pred_cores": 8.96,
+   "pred_duration": 710.6,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99740.0,
+   "seq": 3,
+   "weight": 12.0
+  },
+  {
+   "id": "w3",
+   "kind": "docs",
+   "pred_cores": 3.51,
+   "pred_duration": null,
+   "pred_duration_p90": 1111.4,
+   "pred_rss_p90": 459453,
+   "requested": 99925.0,
+   "seq": 4,
+   "weight": 4.0
+  }
+ ],
+ "windows": []
+}

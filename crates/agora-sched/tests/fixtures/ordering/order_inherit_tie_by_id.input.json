@@ -1,0 +1,29 @@
+{
+  "args": [
+    "order",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "x",
+      "kind": "validity",
+      "after": [
+        "zeta",
+        "alpha",
+        "Mid"
+      ]
+    },
+    {
+      "id": "zeta"
+    },
+    {
+      "id": "alpha"
+    },
+    {
+      "id": "Mid"
+    },
+    {
+      "id": "plain"
+    }
+  ]
+}

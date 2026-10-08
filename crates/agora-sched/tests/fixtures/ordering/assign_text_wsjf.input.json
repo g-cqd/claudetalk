@@ -1,0 +1,45 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "3",
+    "--assign",
+    "--policy",
+    "wsjf"
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "size": 4,
+      "value": 1
+    },
+    {
+      "id": "b",
+      "size": 1,
+      "value": 9
+    },
+    {
+      "id": "c",
+      "size": 2,
+      "value": 2,
+      "after": [
+        "b"
+      ]
+    },
+    {
+      "id": "d",
+      "size": 1,
+      "value": 5,
+      "kind": "validity",
+      "files": [
+        "x"
+      ]
+    },
+    {
+      "id": "e",
+      "files": [
+        "x/y"
+      ]
+    }
+  ]
+}

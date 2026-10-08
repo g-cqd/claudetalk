@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "usage: work order [-h] [--scope SCOPE] [--json]\n                  [--policy {fifo,wsjf,critical-path}] [--tasks FILE]\n                  [--task SPEC]\nwork order: error: argument --policy: invalid choice: 'x' (choose from 'fifo', 'wsjf', 'critical-path')\n"
+}

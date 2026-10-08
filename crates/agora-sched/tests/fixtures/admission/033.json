@@ -1,0 +1,111 @@
+{
+ "candidate": "cand",
+ "cpus": 8.0,
+ "expected": {
+  "cause": "ahead",
+  "reason": "job w0 has waited 9 min 11 s, past the backfill limit of 1 min 0 s, so no job starts before it"
+ },
+ "kind": "blocker",
+ "name": "blocker-033",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": 19.3,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 1.5
+  },
+  {
+   "id": "r1",
+   "pred_cores": 1.01,
+   "pred_duration_p90": 114.4,
+   "pred_rss_p90": 240238,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 3.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": 1.97,
+   "pred_duration_p90": 860.5,
+   "pred_rss_p90": 2462694,
+   "quiet_until": null,
+   "rss": 1566854,
+   "started": 99949.0,
+   "weight": 3.0
+  },
+  {
+   "id": "r3",
+   "pred_cores": 0.17,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1239324,
+   "started": 99699.0,
+   "weight": 1.5
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 60.0,
+  "capacity": 16.0,
+  "cpu_budget": 4.0,
+  "idle_min": 10.0,
+  "load_factor": 2.0,
+  "load_wait": 1800.0,
+  "memory_budget": 4942207,
+  "memory_limit": "off",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": null,
+  "load1": null,
+  "load_gate": true,
+  "memory_level": "warning",
+  "memory_used_kib": null
+ },
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "docs",
+   "pred_cores": 1.95,
+   "pred_duration": null,
+   "pred_duration_p90": 283.5,
+   "pred_rss_p90": null,
+   "requested": 99496.0,
+   "seq": 0,
+   "weight": 4.0
+  },
+  {
+   "id": "w0",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": 24.6,
+   "pred_duration_p90": 112.2,
+   "pred_rss_p90": 2914623,
+   "requested": 99449.0,
+   "seq": 1,
+   "weight": 2.0
+  },
+  {
+   "id": "w1",
+   "kind": "Work",
+   "pred_cores": 1.48,
+   "pred_duration": 518.2,
+   "pred_duration_p90": 656.8,
+   "pred_rss_p90": null,
+   "requested": 99825.0,
+   "seq": 2,
+   "weight": 1.5
+  }
+ ],
+ "windows": []
+}

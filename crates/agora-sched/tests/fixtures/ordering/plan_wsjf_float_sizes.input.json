@@ -1,0 +1,46 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "2",
+    "--policy",
+    "wsjf",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "size": 0.1,
+      "value": 1
+    },
+    {
+      "id": "b",
+      "size": 0.2,
+      "value": 1,
+      "after": [
+        "a"
+      ]
+    },
+    {
+      "id": "c",
+      "size": 0.3,
+      "value": 5,
+      "after": [
+        "b"
+      ]
+    },
+    {
+      "id": "d",
+      "size": 0.7,
+      "value": 2
+    },
+    {
+      "id": "e",
+      "size": 1e-05
+    },
+    {
+      "id": "f",
+      "size": 1e+16
+    }
+  ]
+}

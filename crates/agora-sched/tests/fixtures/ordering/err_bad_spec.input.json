@@ -1,0 +1,8 @@
+{
+  "args": [
+    "order",
+    "--task",
+    "nonsense"
+  ],
+  "tasks": null
+}

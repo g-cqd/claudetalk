@@ -1,0 +1,54 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "load",
+  "reason": "the load average 13.32 is at or above 6.00"
+ },
+ "kind": "blocker",
+ "name": "blocker-006",
+ "now": 100000.0,
+ "running": [],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 60.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 5.0,
+  "load_factor": 1.5,
+  "load_wait": 1800.0,
+  "memory_budget": null,
+  "memory_limit": "critical",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 24.7,
+  "load1": 13.32,
+  "load_gate": true,
+  "memory_level": "normal",
+  "memory_used_kib": 9796482
+ },
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "docs",
+   "pred_cores": 0.97,
+   "pred_duration": 889.9,
+   "pred_duration_p90": 552.6,
+   "pred_rss_p90": 784015,
+   "requested": 99434.0,
+   "seq": 0,
+   "weight": 4.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "x2",
+   "quiet_until": 99990.0
+  }
+ ]
+}

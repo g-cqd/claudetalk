@@ -1,0 +1,114 @@
+{
+ "candidate": "cand",
+ "cpus": 1.0,
+ "expected": null,
+ "kind": "blocker",
+ "name": "blocker-025",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": 771.2,
+   "pred_rss_p90": 764121,
+   "quiet_until": null,
+   "rss": 529503,
+   "started": 99125.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 0.5
+  },
+  {
+   "id": "r2",
+   "pred_cores": null,
+   "pred_duration_p90": 477.0,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99164.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r3",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1632316,
+   "started": 99295.0,
+   "weight": 0.5
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 60.0,
+  "capacity": 12.0,
+  "cpu_budget": 7.5,
+  "idle_min": 15.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "off",
+  "quiet_drain": 60.0,
+  "quiet_max": 120.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": null,
+  "load1": 14.45,
+  "load_gate": false,
+  "memory_level": null,
+  "memory_used_kib": 9291101
+ },
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "crash",
+   "pred_cores": 0.16,
+   "pred_duration": 711.4,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99377.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "w0",
+   "kind": "crash",
+   "pred_cores": null,
+   "pred_duration": 514.3,
+   "pred_duration_p90": 614.8,
+   "pred_rss_p90": null,
+   "requested": 99762.0,
+   "seq": 1,
+   "weight": 0.5
+  },
+  {
+   "id": "w1",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": 394.5,
+   "pred_duration_p90": 901.1,
+   "pred_rss_p90": null,
+   "requested": 99320.0,
+   "seq": 2,
+   "weight": 1.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "x2",
+   "quiet_until": 99940.0
+  }
+ ]
+}

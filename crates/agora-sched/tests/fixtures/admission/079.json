@@ -1,0 +1,107 @@
+{
+ "candidate": "cand",
+ "cpus": 8.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "memory pressure is critical; jobs start below warning"
+ },
+ "kind": "blocker",
+ "name": "blocker-079",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.13,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99917.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.3,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 173944,
+   "quiet_until": null,
+   "rss": 928985,
+   "started": 99557.0,
+   "weight": 0.5
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.35,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99422.0,
+   "weight": 0.5
+  }
+ ],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 15.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "warning",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 2.0
+ },
+ "signals": {
+  "idle_pct": 24.7,
+  "load1": 8.78,
+  "load_gate": false,
+  "memory_level": "critical",
+  "memory_used_kib": 6865371
+ },
+ "total_memory_kib": null,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "Work",
+   "pred_cores": null,
+   "pred_duration": 799.5,
+   "pred_duration_p90": 550.3,
+   "pred_rss_p90": 272418,
+   "requested": 99958.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "w0",
+   "kind": "docs",
+   "pred_cores": 1.37,
+   "pred_duration": null,
+   "pred_duration_p90": 63.6,
+   "pred_rss_p90": 1652450,
+   "requested": 99711.0,
+   "seq": 1,
+   "weight": 4.0
+  },
+  {
+   "id": "w1",
+   "kind": "refactor",
+   "pred_cores": 5.05,
+   "pred_duration": 831.0,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 525484,
+   "requested": 99896.0,
+   "seq": 2,
+   "weight": 6.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99922.0,
+   "id": "x1",
+   "quiet_until": 99742.0
+  }
+ ]
+}

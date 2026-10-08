@@ -1,0 +1,12 @@
+{
+  "args": [
+    "order",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "queued": true
+    }
+  ]
+}

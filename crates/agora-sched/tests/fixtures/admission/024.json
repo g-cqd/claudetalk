@@ -1,0 +1,87 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "memory pressure is warning; jobs start below warning"
+ },
+ "kind": "blocker",
+ "name": "blocker-024",
+ "now": 100000.0,
+ "running": [],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 7.5,
+  "idle_min": 20.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "warning",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 2.0
+ },
+ "signals": {
+  "idle_pct": 45.1,
+  "load1": null,
+  "load_gate": true,
+  "memory_level": "warning",
+  "memory_used_kib": 7767713
+ },
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": " crash",
+   "pred_cores": 2.28,
+   "pred_duration": null,
+   "pred_duration_p90": 480.1,
+   "pred_rss_p90": null,
+   "requested": 99452.0,
+   "seq": 0,
+   "weight": 3.0
+  },
+  {
+   "id": "cand",
+   "kind": "Security",
+   "pred_cores": 0.36,
+   "pred_duration": null,
+   "pred_duration_p90": 1194.8,
+   "pred_rss_p90": 1231978,
+   "requested": 99337.0,
+   "seq": 1,
+   "weight": 1.5
+  },
+  {
+   "id": "w1",
+   "kind": "work",
+   "pred_cores": 0.44,
+   "pred_duration": 384.6,
+   "pred_duration_p90": 64.1,
+   "pred_rss_p90": null,
+   "requested": 99935.0,
+   "seq": 2,
+   "weight": 0.5
+  },
+  {
+   "id": "w2",
+   "kind": "crash",
+   "pred_cores": 2.63,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1433017,
+   "requested": 99668.0,
+   "seq": 3,
+   "weight": 3.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "x1",
+   "quiet_until": 99795.0
+  }
+ ]
+}

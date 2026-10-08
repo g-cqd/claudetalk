@@ -1,0 +1,114 @@
+{
+ "candidate": "cand",
+ "cpus": 2.0,
+ "expected": {
+  "cause": "ahead",
+  "reason": "job w2 has waited 11 min 18 s, past the backfill limit of 1 min 0 s, so no job starts before it"
+ },
+ "kind": "blocker",
+ "name": "blocker-005",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 1.79,
+   "pred_duration_p90": 729.8,
+   "pred_rss_p90": null,
+   "quiet_until": 99962.0,
+   "rss": 1412896,
+   "started": null,
+   "weight": 2.0
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 60.0,
+  "capacity": 2.0,
+  "cpu_budget": 7.5,
+  "idle_min": 20.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "warning",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": 78.0,
+  "load1": null,
+  "load_gate": true,
+  "memory_level": "critical",
+  "memory_used_kib": 9106499
+ },
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "docs",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99618.0,
+   "seq": 0,
+   "weight": 1.0
+  },
+  {
+   "id": "w1",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": 536.4,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2850645,
+   "requested": 99472.0,
+   "seq": 1,
+   "weight": 1.5
+  },
+  {
+   "id": "w2",
+   "kind": "Security",
+   "pred_cores": 0.92,
+   "pred_duration": 53.8,
+   "pred_duration_p90": 1156.7,
+   "pred_rss_p90": 2048913,
+   "requested": 99322.0,
+   "seq": 2,
+   "weight": 1.5
+  },
+  {
+   "id": "w3",
+   "kind": "Work",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 441.5,
+   "pred_rss_p90": 1723309,
+   "requested": 99776.0,
+   "seq": 3,
+   "weight": 1.5
+  },
+  {
+   "id": "cand",
+   "kind": "correctness",
+   "pred_cores": 0.98,
+   "pred_duration": null,
+   "pred_duration_p90": 905.1,
+   "pred_rss_p90": 2089361,
+   "requested": 99521.0,
+   "seq": 4,
+   "weight": 1.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "r0",
+   "quiet_until": 99962.0
+  },
+  {
+   "ended": 99784.0,
+   "id": "cand",
+   "quiet_until": 99813.0
+  }
+ ]
+}

@@ -1,0 +1,144 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "ahead",
+  "reason": "job w4 has waited 4 min 58 s, past the backfill limit of 1 min 0 s, so no job starts before it"
+ },
+ "kind": "blocker",
+ "name": "blocker-043",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 1.5
+  },
+  {
+   "id": "r1",
+   "pred_cores": 1.36,
+   "pred_duration_p90": 348.3,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 2.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 1.5
+  },
+  {
+   "id": "r3",
+   "pred_cores": 0.26,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1608960,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99764.0,
+   "weight": 1.0
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 60.0,
+  "capacity": null,
+  "cpu_budget": 4.0,
+  "idle_min": 15.0,
+  "load_factor": 2.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "off",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 2.0
+ },
+ "signals": {
+  "idle_pct": null,
+  "load1": 9.98,
+  "load_gate": true,
+  "memory_level": "normal",
+  "memory_used_kib": 5308789
+ },
+ "total_memory_kib": 16777216,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "docs",
+   "pred_cores": null,
+   "pred_duration": 726.3,
+   "pred_duration_p90": 815.4,
+   "pred_rss_p90": 846491,
+   "requested": 99821.0,
+   "seq": 0,
+   "weight": 2.0
+  },
+  {
+   "id": "w1",
+   "kind": "Security",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 584.2,
+   "pred_rss_p90": null,
+   "requested": 99858.0,
+   "seq": 1,
+   "weight": 1.0
+  },
+  {
+   "id": "w2",
+   "kind": "refactor",
+   "pred_cores": 0.26,
+   "pred_duration": 362.7,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2915115,
+   "requested": 99448.0,
+   "seq": 2,
+   "weight": 1.5
+  },
+  {
+   "id": "w3",
+   "kind": "validity",
+   "pred_cores": 0.54,
+   "pred_duration": 611.6,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99375.0,
+   "seq": 3,
+   "weight": 1.5
+  },
+  {
+   "id": "cand",
+   "kind": "docs",
+   "pred_cores": null,
+   "pred_duration": 580.8,
+   "pred_duration_p90": 1077.9,
+   "pred_rss_p90": 203482,
+   "requested": 99480.0,
+   "seq": 4,
+   "weight": 3.0
+  },
+  {
+   "id": "w4",
+   "kind": "crash",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 1031.3,
+   "pred_rss_p90": 1379806,
+   "requested": 99702.0,
+   "seq": 5,
+   "weight": 3.0
+  }
+ ],
+ "windows": []
+}

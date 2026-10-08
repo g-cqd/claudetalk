@@ -1,0 +1,102 @@
+{
+ "candidate": "cand",
+ "cpus": 1.0,
+ "expected": {
+  "cause": "idle",
+  "reason": "the CPU is 13% idle; jobs start at 20% idle or more"
+ },
+ "kind": "blocker",
+ "name": "blocker-073",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1185498,
+   "quiet_until": null,
+   "rss": 1056803,
+   "started": 99522.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": null,
+   "pred_duration_p90": 521.9,
+   "pred_rss_p90": 1430145,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99139.0,
+   "weight": 0.5
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 300.0,
+  "capacity": 4.0,
+  "cpu_budget": 4.0,
+  "idle_min": 20.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 6309531,
+  "memory_limit": "critical",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 13.2,
+  "load1": 17.43,
+  "load_gate": true,
+  "memory_level": "normal",
+  "memory_used_kib": null
+ },
+ "total_memory_kib": 3000000,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2448040,
+   "requested": 99837.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "w1",
+   "kind": "Security",
+   "pred_cores": 0.15,
+   "pred_duration": 600.0,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 304599,
+   "requested": 99991.0,
+   "seq": 1,
+   "weight": 0.5
+  },
+  {
+   "id": "cand",
+   "kind": "work",
+   "pred_cores": 0.18,
+   "pred_duration": 856.3,
+   "pred_duration_p90": 513.3,
+   "pred_rss_p90": 284253,
+   "requested": 99416.0,
+   "seq": 2,
+   "weight": 1.0
+  },
+  {
+   "id": "w2",
+   "kind": " crash",
+   "pred_cores": 0.15,
+   "pred_duration": 599.0,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99828.0,
+   "seq": 3,
+   "weight": 0.5
+  }
+ ],
+ "windows": []
+}

@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"agents\": 2,\n  \"makespan\": 3.0,\n  \"lower_bound\": 3.0,\n  \"lanes\": [\n    [\n      {\n        \"id\": \"a\",\n        \"start\": 0.0,\n        \"end\": 2.0\n      },\n      {\n        \"id\": \"c\",\n        \"start\": 2.0,\n        \"end\": 3.0\n      }\n    ],\n    [\n      {\n        \"id\": \"b\",\n        \"start\": 0.0,\n        \"end\": 1.0\n      }\n    ]\n  ]\n}\n",
+  "stderr": ""
+}

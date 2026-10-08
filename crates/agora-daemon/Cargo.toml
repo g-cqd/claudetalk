@@ -4,11 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "agora-supervise"
+path = "src/bin/agora-supervise.rs"
+
 [dependencies]
 agora-core = { path = "../agora-core" }
 agora-crypto = { path = "../agora-crypto" }
 agora-store = { path = "../agora-store" }
 agora-proto = { path = "../agora-proto" }
+agora-sched = { path = "../agora-sched" }
+agora-run = { path = "../agora-run" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -16,6 +22,9 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 libc.workspace = true
+notify.workspace = true
+regex.workspace = true
+rustix.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

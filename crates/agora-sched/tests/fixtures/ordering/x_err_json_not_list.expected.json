@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "work: the JSON must be a list of tasks or an object with a \"tasks\" list\n"
+}

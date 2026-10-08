@@ -1,0 +1,109 @@
+{
+ "candidate": "cand",
+ "cpus": 16.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "used memory is 5.8 GiB, above the memory budget of 5.0 GiB"
+ },
+ "kind": "blocker",
+ "name": "blocker-014",
+ "now": 100000.0,
+ "running": [],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 5.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 5240184,
+  "memory_limit": "off",
+  "quiet_drain": 60.0,
+  "quiet_max": 120.0,
+  "small_weight": 2.0
+ },
+ "signals": {
+  "idle_pct": 23.0,
+  "load1": 12.64,
+  "load_gate": true,
+  "memory_level": "critical",
+  "memory_used_kib": 6076809
+ },
+ "total_memory_kib": 16777216,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "validity",
+   "pred_cores": null,
+   "pred_duration": 624.4,
+   "pred_duration_p90": 729.3,
+   "pred_rss_p90": 1895286,
+   "requested": 99728.0,
+   "seq": 0,
+   "weight": 1.0
+  },
+  {
+   "id": "cand",
+   "kind": "validity",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 172.2,
+   "pred_rss_p90": null,
+   "requested": 99570.0,
+   "seq": 1,
+   "weight": 2.0
+  },
+  {
+   "id": "w1",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": 449.8,
+   "pred_duration_p90": 980.6,
+   "pred_rss_p90": 143962,
+   "requested": 99586.0,
+   "seq": 2,
+   "weight": 1.0
+  },
+  {
+   "id": "w2",
+   "kind": "correctness",
+   "pred_cores": 0.18,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1525908,
+   "requested": 99694.0,
+   "seq": 3,
+   "weight": 3.0
+  },
+  {
+   "id": "w3",
+   "kind": "validity",
+   "pred_cores": 2.57,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99724.0,
+   "seq": 4,
+   "weight": 16.0
+  },
+  {
+   "id": "w4",
+   "kind": "crash",
+   "pred_cores": 0.15,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99444.0,
+   "seq": 5,
+   "weight": 1.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "cand",
+   "quiet_until": 99712.0
+  }
+ ]
+}

@@ -1,13 +1,16 @@
 //! Socket lifecycle: home dir, single-instance lock, stale-socket cleanup, accept
 //! loop, per-connection handshake and request loop, graceful shutdown.
 
+use crate::clock::{Clock, SystemClock};
 use crate::{
-    BUS_CAPACITY, Conn, DaemonConfig, DaemonError, Paths, Shared, actor, auth, dispatch, push,
+    BUS_CAPACITY, Conn, DaemonConfig, DaemonError, Paths, Shared, actor, auth, background,
+    dispatch, push, system,
 };
 use agora_proto::{
     ClientHello, ErrorBody, ErrorCode, Event, MAX_FRAME, PROTO_VERSION, ProtoError, Req, Request,
     ServerFrame, ServerHello, Welcome, b64, read_frame, write_json,
 };
+use agora_run::machine::{Machine, RealMachine};
 use agora_store::{Store, hex};
 use std::future::Future;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -45,6 +48,13 @@ const MAX_SOCKET_PATH_BYTES: usize = 104;
 /// hold a dying connection open.
 const REJECT_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Test seams for [`Daemon::bind_with`]: `None` selects the real implementation.
+#[derive(Clone, Default)]
+pub struct Injected {
+    pub clock: Option<Arc<dyn Clock>>,
+    pub machine: Option<Arc<dyn Machine>>,
+}
+
 pub struct Daemon {
     paths: Paths,
     /// Held (flock) for the daemon's lifetime; never removed.
@@ -75,7 +85,18 @@ impl Daemon {
     ///    same way; spawn both actors; bus = broadcast::channel(BUS_CAPACITY).
     /// 5. bind the UnixListener at `paths.socket`, chmod 0600.
     ///    Log "listening" with the socket path at info.
+    ///
+    /// Also creates `home/work` (0700) and loads or creates the system identity
+    /// (`home/system.seed`), which it registers through the writer before listening.
     pub async fn bind(config: DaemonConfig) -> Result<Daemon, DaemonError> {
+        Self::bind_with(config, Injected::default()).await
+    }
+
+    /// [`Daemon::bind`] with an injected clock and/or machine probe (tests).
+    pub async fn bind_with(
+        config: DaemonConfig,
+        injected: Injected,
+    ) -> Result<Daemon, DaemonError> {
         // A directly built config can bypass the loader's checks; reject it here.
         config.validate()?;
         let paths = config.paths();
@@ -124,6 +145,20 @@ impl Daemon {
             )));
         }
         std::fs::set_permissions(&paths.home, std::fs::Permissions::from_mode(0o700))?;
+        let work_root = agora_run::jobdir::work_root(&paths.home);
+        match std::fs::symlink_metadata(&work_root) {
+            Ok(meta) if !meta.is_dir() => {
+                return Err(DaemonError::Config(format!(
+                    "{} exists and is not a directory",
+                    work_root.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::DirBuilder::new().mode(0o700).create(&work_root)?;
+            }
+            Err(e) => return Err(DaemonError::Io(e)),
+        }
 
         let lock = std::fs::OpenOptions::new()
             .create(true)
@@ -158,6 +193,16 @@ impl Daemon {
         let (writer, writer_thread) = actor::Writer::spawn(writer_store, bus.clone());
         let (reader, reader_thread) = actor::Reader::spawn(reader_store);
 
+        // The system key is loaded under the lock and registered before any client can connect.
+        let system_identity = Arc::new(system::load_or_create(&paths.home)?);
+        let system_pk = system_identity.public();
+        writer
+            .exec(move |s| {
+                s.register_system_identity(crate::now_ms(), &system_pk)?;
+                Ok(((), vec![]))
+            })
+            .await?;
+
         let listener = UnixListener::bind(&paths.socket)?;
         std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;
         tracing::info!(socket = %paths.socket.display(), "listening");
@@ -172,6 +217,13 @@ impl Daemon {
             config: Arc::new(config),
             daemon_uid,
             shutdown: token.clone(),
+            clock: injected.clock.unwrap_or_else(|| Arc::new(SystemClock)),
+            machine: injected
+                .machine
+                .unwrap_or_else(|| Arc::new(RealMachine::new(paths.home.clone()))),
+            system: system_identity,
+            kick: Arc::default(),
+            jobs: Default::default(),
         };
         Ok(Daemon {
             paths,
@@ -221,6 +273,7 @@ impl Daemon {
             max_connections,
         } = self;
 
+        let background = background::spawn_all(&shared);
         let mut connections = JoinSet::new();
         loop {
             tokio::select! {
@@ -269,7 +322,9 @@ impl Daemon {
         while connections.join_next().await.is_some() {}
 
         // Every Shared clone must go before the actor threads can finish: they end
-        // when the last Writer/Reader handle is dropped.
+        // when the last Writer/Reader handle is dropped. The background tasks hold
+        // clones, so they are stopped and joined first.
+        background.stop(&shared).await;
         drop(shared);
         for thread in [writer_thread, reader_thread] {
             match tokio::task::spawn_blocking(move || thread.join()).await {
@@ -1072,6 +1127,7 @@ mod tests {
         let home = TestHome::new();
         let mut config = home.config();
         config.max_inflight_per_conn = 2;
+        config.work_enabled = false; // M5 background loops hold permanent bus receivers
         let daemon = Daemon::bind(config).await.expect("bind");
         let socket = daemon.socket_path().to_path_buf();
         let token = daemon.shutdown_token();

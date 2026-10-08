@@ -1,0 +1,70 @@
+{
+ "aging": 1.0,
+ "expected_order": [
+  "o3",
+  "o1",
+  "o2",
+  "o4",
+  "o0"
+ ],
+ "kind": "order",
+ "name": "order-002",
+ "now": 100000.0,
+ "waiting": [
+  {
+   "id": "o0",
+   "kind": "Work",
+   "pred_cores": null,
+   "pred_duration": 600.0,
+   "pred_duration_p90": 549.2,
+   "pred_rss_p90": null,
+   "requested": 300.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "o1",
+   "kind": " crash",
+   "pred_cores": 1.0,
+   "pred_duration": 60.0,
+   "pred_duration_p90": 1030.3,
+   "pred_rss_p90": null,
+   "requested": 0.0,
+   "seq": 1,
+   "weight": 1.5
+  },
+  {
+   "id": "o2",
+   "kind": "docs",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 739.3,
+   "pred_rss_p90": 1997867,
+   "requested": 50.0,
+   "seq": 2,
+   "weight": 6.0
+  },
+  {
+   "id": "o3",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": 30.0,
+   "pred_duration_p90": 307.4,
+   "pred_rss_p90": 2983425,
+   "requested": 0.0,
+   "seq": 3,
+   "weight": 1.0
+  },
+  {
+   "id": "o4",
+   "kind": " crash",
+   "pred_cores": 3.65,
+   "pred_duration": 30.0,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1183353,
+   "requested": 600.0,
+   "seq": 4,
+   "weight": 4.0
+  }
+ ]
+}

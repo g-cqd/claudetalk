@@ -1,0 +1,76 @@
+{
+ "cpus": 4.0,
+ "expected": {
+  "basis": "no history: the declared weight",
+  "cores": "2.0",
+  "duration": "30.0",
+  "duration_p90": null,
+  "level": "none",
+  "rss_kib": null,
+  "rss_p90_kib": null,
+  "runs": 0
+ },
+ "kind": "predict",
+ "name": "predict-020",
+ "runs": [
+  {
+   "cpu_time": 417.45,
+   "ended": 1000.0,
+   "id": "p0",
+   "rss_peak": null,
+   "sig_full": "F2",
+   "sig_head": null,
+   "sig_prog": "P1",
+   "sig_tool": "T1",
+   "started": 750.0,
+   "status": null,
+   "weight": 4.0
+  },
+  {
+   "cpu_time": 663.39,
+   "ended": 1037.0,
+   "id": "p1",
+   "rss_peak": null,
+   "sig_full": null,
+   "sig_head": null,
+   "sig_prog": "P1",
+   "sig_tool": null,
+   "started": 920.0,
+   "status": null,
+   "weight": 1.0
+  },
+  {
+   "cpu_time": 968.56,
+   "ended": 1074.0,
+   "id": "p2",
+   "rss_peak": null,
+   "sig_full": "F2",
+   "sig_head": null,
+   "sig_prog": "P1",
+   "sig_tool": null,
+   "started": 873.0,
+   "status": 126,
+   "weight": 1.0
+  },
+  {
+   "cpu_time": 516.93,
+   "ended": 1111.0,
+   "id": "p3",
+   "rss_peak": null,
+   "sig_full": null,
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": "T1",
+   "started": 887.0,
+   "status": 126,
+   "weight": 4.0
+  }
+ ],
+ "signed": {
+  "full": "F1",
+  "head": "H1",
+  "prog": "P1",
+  "tool": "T1"
+ },
+ "weight": 2.0
+}

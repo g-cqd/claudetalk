@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agora-client = { path = "../agora-client" }
+agora-sched = { path = "../agora-sched" }
 agora-proto = { path = "../agora-proto" }
 agora-crypto = { path = "../agora-crypto" }
 agora-store = { path = "../agora-store" }

@@ -12,6 +12,13 @@ pub struct CardCreateParams {
     pub id: String,
     pub title: String,
     pub lane: Option<String>,
+    /// Higher = more urgent. Serialised into the `card.create` arg only when set.
+    pub priority: Option<i64>,
+    pub value: Option<f64>,
+    pub size: Option<f64>,
+    pub team: Option<String>,
+    /// Cards this one waits for.
+    pub after: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,14 +99,38 @@ pub struct NoteSearchParams {
 }
 
 pub async fn card_create(ctx: &Ctx, p: CardCreateParams) -> Result<Out, ClientError> {
-    let CardCreateParams { id, title, lane } = p;
-    let arg = match lane {
-        Some(lane) => serde_json::json!({"title": title, "lane": lane}),
-        None => serde_json::json!({"title": title}),
-    };
+    let arg = card_create_arg(&p);
+    let CardCreateParams { id, .. } = p;
     let op = sign_op(&ctx.identity, "card.create", &id, &arg.to_string());
     send(ctx, Req::CardCreate { op }).await?;
     Ok(done(&id, format!("created card {id}")))
+}
+
+/// The `card.create` arg: `{"title"}` plus `"lane"` when set, as before, and each optional
+/// field only when the caller set it (`after` only when non-empty). A non-finite `value` or
+/// `size` becomes JSON null, which the store rejects.
+fn card_create_arg(p: &CardCreateParams) -> serde_json::Value {
+    let mut arg = serde_json::Map::new();
+    arg.insert("title".to_owned(), p.title.clone().into());
+    if let Some(lane) = &p.lane {
+        arg.insert("lane".to_owned(), lane.clone().into());
+    }
+    if let Some(priority) = p.priority {
+        arg.insert("priority".to_owned(), priority.into());
+    }
+    if let Some(value) = p.value {
+        arg.insert("value".to_owned(), value.into());
+    }
+    if let Some(size) = p.size {
+        arg.insert("size".to_owned(), size.into());
+    }
+    if let Some(team) = &p.team {
+        arg.insert("team".to_owned(), team.clone().into());
+    }
+    if !p.after.is_empty() {
+        arg.insert("after".to_owned(), p.after.clone().into());
+    }
+    serde_json::Value::Object(arg)
 }
 
 pub async fn card_move(ctx: &Ctx, p: CardMoveParams) -> Result<Out, ClientError> {
@@ -279,4 +310,135 @@ fn done(id: &str, text: String) -> Out {
 
 fn to_json<T: Serialize>(value: &T) -> Result<serde_json::Value, ClientError> {
     serde_json::to_value(value).map_err(|e| ClientError::Proto(e.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn params() -> CardCreateParams {
+        CardCreateParams {
+            id: "c1".to_owned(),
+            title: "ship it".to_owned(),
+            lane: None,
+            priority: None,
+            value: None,
+            size: None,
+            team: None,
+            after: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn no_optional_fields_gives_the_old_arg_json() {
+        let mut p = params();
+        assert_eq!(
+            card_create_arg(&p).to_string(),
+            json!({"title": "ship it"}).to_string()
+        );
+        p.lane = Some("doing".to_owned());
+        assert_eq!(
+            card_create_arg(&p).to_string(),
+            json!({"title": "ship it", "lane": "doing"}).to_string()
+        );
+    }
+
+    #[test]
+    fn priority_is_serialised_when_set() {
+        let p = CardCreateParams {
+            priority: Some(-2),
+            ..params()
+        };
+        assert_eq!(
+            card_create_arg(&p),
+            json!({"title": "ship it", "priority": -2})
+        );
+    }
+
+    #[test]
+    fn value_and_size_are_serialised_when_set() {
+        let p = CardCreateParams {
+            value: Some(2.5),
+            size: Some(0.5),
+            ..params()
+        };
+        assert_eq!(
+            card_create_arg(&p),
+            json!({"title": "ship it", "value": 2.5, "size": 0.5})
+        );
+    }
+
+    #[test]
+    fn non_finite_value_is_sent_as_null_for_the_store_to_reject() {
+        let p = CardCreateParams {
+            value: Some(f64::NAN),
+            ..params()
+        };
+        assert_eq!(
+            card_create_arg(&p).get("value"),
+            Some(&serde_json::Value::Null)
+        );
+    }
+
+    #[test]
+    fn team_is_serialised_when_set() {
+        let p = CardCreateParams {
+            team: Some("core".to_owned()),
+            ..params()
+        };
+        assert_eq!(
+            card_create_arg(&p),
+            json!({"title": "ship it", "team": "core"})
+        );
+    }
+
+    #[test]
+    fn after_list_is_serialised_in_order() {
+        let p = CardCreateParams {
+            after: vec!["b".to_owned(), "a".to_owned()],
+            ..params()
+        };
+        assert_eq!(
+            card_create_arg(&p),
+            json!({"title": "ship it", "after": ["b", "a"]})
+        );
+    }
+
+    #[test]
+    fn empty_after_list_is_omitted() {
+        let p = CardCreateParams {
+            after: Vec::new(),
+            team: Some(String::new()),
+            ..params()
+        };
+        let arg = card_create_arg(&p);
+        assert!(arg.get("after").is_none());
+        assert_eq!(arg, json!({"title": "ship it", "team": ""}));
+    }
+
+    #[test]
+    fn all_fields_and_lane_together() {
+        let p = CardCreateParams {
+            lane: Some("doing".to_owned()),
+            priority: Some(5),
+            value: Some(3.0),
+            size: Some(1.0),
+            team: Some("core".to_owned()),
+            after: vec!["c0".to_owned()],
+            ..params()
+        };
+        assert_eq!(
+            card_create_arg(&p),
+            json!({
+                "title": "ship it",
+                "lane": "doing",
+                "priority": 5,
+                "value": 3.0,
+                "size": 1.0,
+                "team": "core",
+                "after": ["c0"],
+            })
+        );
+    }
 }

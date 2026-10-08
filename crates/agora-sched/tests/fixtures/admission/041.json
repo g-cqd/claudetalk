@@ -1,0 +1,83 @@
+{
+ "candidate": "cand",
+ "cpus": 16.0,
+ "expected": null,
+ "kind": "blocker",
+ "name": "blocker-041",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1726177,
+   "quiet_until": null,
+   "rss": 1055572,
+   "started": 99252.0,
+   "weight": 16.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": null,
+   "pred_duration_p90": 174.9,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 0.5
+  }
+ ],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 60.0,
+  "capacity": 8.0,
+  "cpu_budget": 12.0,
+  "idle_min": 5.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "critical",
+  "quiet_drain": 30.0,
+  "quiet_max": 180.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": null,
+  "load1": 16.75,
+  "load_gate": false,
+  "memory_level": null,
+  "memory_used_kib": null
+ },
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "docs",
+   "pred_cores": 0.99,
+   "pred_duration": 796.2,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 76062,
+   "requested": 99820.0,
+   "seq": 0,
+   "weight": 1.0
+  },
+  {
+   "id": "cand",
+   "kind": "Security",
+   "pred_cores": 4.33,
+   "pred_duration": 883.6,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2464816,
+   "requested": 99958.0,
+   "seq": 1,
+   "weight": 16.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99889.0,
+   "id": "x1",
+   "quiet_until": 99892.0
+  }
+ ]
+}

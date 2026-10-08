@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"agents\": 3,\n  \"makespan\": 3.0,\n  \"lower_bound\": 3.0,\n  \"lanes\": [\n    [\n      {\n        \"id\": \"lib\",\n        \"start\": 0.0,\n        \"end\": 2.0\n      },\n      {\n        \"id\": \"ui\",\n        \"start\": 2.0,\n        \"end\": 3.0\n      }\n    ],\n    [\n      {\n        \"id\": \"docs\",\n        \"start\": 0.0,\n        \"end\": 3.0\n      }\n    ],\n    [\n      {\n        \"id\": \"api\",\n        \"start\": 0.0,\n        \"end\": 1.0\n      },\n      {\n        \"id\": \"api2\",\n        \"start\": 1.0,\n        \"end\": 2.0\n      }\n    ]\n  ]\n}\n",
+  "stderr": ""
+}

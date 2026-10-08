@@ -1,0 +1,46 @@
+{
+ "aging": 0.5,
+ "expected_order": [
+  "o1",
+  "o2",
+  "o0"
+ ],
+ "kind": "order",
+ "name": "order-001",
+ "now": 100000.0,
+ "waiting": [
+  {
+   "id": "o0",
+   "kind": "docs",
+   "pred_cores": null,
+   "pred_duration": 600.0,
+   "pred_duration_p90": 708.9,
+   "pred_rss_p90": null,
+   "requested": 600.0,
+   "seq": 0,
+   "weight": 1.5
+  },
+  {
+   "id": "o1",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": 60.0,
+   "pred_duration_p90": 36.2,
+   "pred_rss_p90": 2281457,
+   "requested": 100.0,
+   "seq": 1,
+   "weight": 3.0
+  },
+  {
+   "id": "o2",
+   "kind": "Work",
+   "pred_cores": 0.61,
+   "pred_duration": 600.0,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 907429,
+   "requested": 50.0,
+   "seq": 2,
+   "weight": 1.0
+  }
+ ]
+}

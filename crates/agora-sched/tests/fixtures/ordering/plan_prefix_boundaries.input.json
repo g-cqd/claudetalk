@@ -1,0 +1,59 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "4",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "files": [
+        "src/a"
+      ],
+      "size": 2
+    },
+    {
+      "id": "b",
+      "files": [
+        "src/ab"
+      ]
+    },
+    {
+      "id": "c",
+      "files": [
+        "src/a/"
+      ]
+    },
+    {
+      "id": "d",
+      "files": [
+        "./src/a"
+      ]
+    },
+    {
+      "id": "e",
+      "files": [
+        "src/a/deep/f.rs"
+      ]
+    },
+    {
+      "id": "f",
+      "files": [
+        "/"
+      ]
+    },
+    {
+      "id": "g",
+      "files": [
+        "/etc/x"
+      ]
+    },
+    {
+      "id": "h",
+      "files": [
+        "etc"
+      ]
+    }
+  ]
+}

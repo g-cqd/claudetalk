@@ -1,0 +1,25 @@
+{
+  "args": [
+    "order",
+    "--json"
+  ],
+  "tasks": {
+    "tasks": [
+      {
+        "id": "c",
+        "queued": 3
+      },
+      {
+        "id": "a",
+        "queued": 1
+      },
+      {
+        "id": "b",
+        "queued": 2
+      },
+      {
+        "id": "n"
+      }
+    ]
+  }
+}

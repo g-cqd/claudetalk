@@ -1,0 +1,106 @@
+{
+ "candidate": "cand",
+ "cpus": 16.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "used memory is 7.3 GiB, above the memory budget of 2.2 GiB"
+ },
+ "kind": "blocker",
+ "name": "blocker-037",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.17,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 288683,
+   "quiet_until": null,
+   "rss": 1413253,
+   "started": 99130.0,
+   "weight": 2.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.22,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99366.0,
+   "weight": 2.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.26,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 0.5
+  },
+  {
+   "id": "r3",
+   "pred_cores": 0.15,
+   "pred_duration_p90": 304.6,
+   "pred_rss_p90": 2922462,
+   "quiet_until": null,
+   "rss": 58987,
+   "started": 99810.0,
+   "weight": 2.0
+  }
+ ],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 60.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 20.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 2255960,
+  "memory_limit": "critical",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": 19.7,
+  "load1": 2.0,
+  "load_gate": true,
+  "memory_level": "normal",
+  "memory_used_kib": 7612354
+ },
+ "total_memory_kib": 16777216,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "refactor",
+   "pred_cores": 1.41,
+   "pred_duration": 179.2,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1422656,
+   "requested": 99873.0,
+   "seq": 0,
+   "weight": 2.0
+  },
+  {
+   "id": "w0",
+   "kind": "Security",
+   "pred_cores": 0.15,
+   "pred_duration": 469.6,
+   "pred_duration_p90": 928.5,
+   "pred_rss_p90": null,
+   "requested": 99477.0,
+   "seq": 1,
+   "weight": 1.5
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "cand",
+   "quiet_until": 99892.0
+  }
+ ]
+}

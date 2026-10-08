@@ -1,0 +1,110 @@
+{
+ "candidate": "cand",
+ "cpus": 2.0,
+ "expected": null,
+ "kind": "blocker",
+ "name": "blocker-040",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": 764.3,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 1.5
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.21,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 0.5
+  }
+ ],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 60.0,
+  "capacity": 12.0,
+  "cpu_budget": 10.0,
+  "idle_min": 15.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 4480249,
+  "memory_limit": "critical",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": null,
+  "load1": 6.5,
+  "load_gate": false,
+  "memory_level": "normal",
+  "memory_used_kib": null
+ },
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "Work",
+   "pred_cores": 0.18,
+   "pred_duration": 547.0,
+   "pred_duration_p90": 1000.0,
+   "pred_rss_p90": null,
+   "requested": 99480.0,
+   "seq": 0,
+   "weight": 1.0
+  },
+  {
+   "id": "w1",
+   "kind": "Work",
+   "pred_cores": 0.82,
+   "pred_duration": 734.8,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2813931,
+   "requested": 99893.0,
+   "seq": 1,
+   "weight": 1.5
+  },
+  {
+   "id": "w2",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": 303.3,
+   "pred_duration_p90": 467.7,
+   "pred_rss_p90": 1970627,
+   "requested": 99516.0,
+   "seq": 2,
+   "weight": 0.5
+  },
+  {
+   "id": "cand",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": 158.7,
+   "pred_duration_p90": 353.6,
+   "pred_rss_p90": null,
+   "requested": 99900.0,
+   "seq": 3,
+   "weight": 2.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99748.0,
+   "id": "x2",
+   "quiet_until": 99745.0
+  },
+  {
+   "ended": 99962.0,
+   "id": "cand",
+   "quiet_until": 99951.0
+  }
+ ]
+}

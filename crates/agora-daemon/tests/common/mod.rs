@@ -3,13 +3,16 @@
 //! Every test using it must be `#[tokio::test(flavor = "multi_thread", worker_threads = 4)]`.
 
 use agora_crypto::Identity;
-use agora_daemon::{Daemon, DaemonConfig, DaemonError, now_ms};
+use agora_daemon::clock::Clock;
+use agora_daemon::{Daemon, DaemonConfig, DaemonError, Injected, now_ms};
 use agora_proto::{
     ClientHello, ErrorBody, MessageWire, OpWire, Reply, Req, Request, ServerFrame, read_json,
     unb64, write_json,
 };
+use agora_run::machine::Machine;
 use agora_store::{SignedMessage, SignedOp};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::net::UnixStream;
@@ -35,11 +38,21 @@ pub async fn start() -> TestDaemon {
 
 /// Like `start`, with `f` applied to the config before `Daemon::bind`.
 pub async fn start_with(f: impl FnOnce(&mut DaemonConfig)) -> TestDaemon {
+    start_injected(None, None, f).await
+}
+
+/// Like `start_with`, with an injected clock and/or machine probe (`None` = the real one). Every start
+/// helper points `supervisor_argv` at the `agora-supervise` test binary.
+pub async fn start_injected(
+    clock: Option<Arc<dyn Clock>>,
+    machine: Option<Arc<dyn Machine>>,
+    f: impl FnOnce(&mut DaemonConfig),
+) -> TestDaemon {
     let home = tempfile::Builder::new()
         .prefix("ag")
         .tempdir_in("/tmp")
         .expect("create temp home under /tmp");
-    let (socket, token, task) = bind_and_spawn(home.path(), f)
+    let (socket, token, task) = bind_and_spawn(home.path(), Injected { clock, machine }, f)
         .await
         .expect("bind daemon on a fresh home");
     TestDaemon {
@@ -55,7 +68,7 @@ pub async fn start_at(
     home: &Path,
     f: impl FnOnce(&mut DaemonConfig),
 ) -> Result<(CancellationToken, JoinHandle<Result<(), DaemonError>>), DaemonError> {
-    let (_socket, token, task) = bind_and_spawn(home, f).await?;
+    let (_socket, token, task) = bind_and_spawn(home, Injected::default(), f).await?;
     Ok((token, task))
 }
 
@@ -63,6 +76,7 @@ pub async fn start_at(
 /// the run task. A bind failure returns before anything is spawned.
 async fn bind_and_spawn(
     home: &Path,
+    injected: Injected,
     f: impl FnOnce(&mut DaemonConfig),
 ) -> Result<
     (
@@ -74,8 +88,9 @@ async fn bind_and_spawn(
 > {
     let mut cfg = DaemonConfig::load(home)?;
     cfg.handle_signals = false;
+    cfg.supervisor_argv = Some(vec![env!("CARGO_BIN_EXE_agora-supervise").into()]);
     f(&mut cfg);
-    let daemon = Daemon::bind(cfg).await?;
+    let daemon = Daemon::bind_with(cfg, injected).await?;
     let socket = daemon.socket_path().to_path_buf();
     let token = daemon.shutdown_token();
     let task = tokio::spawn(daemon.run());

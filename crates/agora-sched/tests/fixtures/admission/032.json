@@ -1,0 +1,81 @@
+{
+ "candidate": "cand",
+ "cpus": 8.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "used memory is 11.4 GiB, above the memory budget of 5.7 GiB"
+ },
+ "kind": "blocker",
+ "name": "blocker-032",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.24,
+   "pred_duration_p90": 351.5,
+   "pred_rss_p90": 2736245,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99578.0,
+   "weight": 2.0
+  }
+ ],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 60.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 20.0,
+  "load_factor": 2.0,
+  "load_wait": 1800.0,
+  "memory_budget": 5938721,
+  "memory_limit": "critical",
+  "quiet_drain": 60.0,
+  "quiet_max": 120.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": 23.2,
+  "load1": 1.12,
+  "load_gate": false,
+  "memory_level": "normal",
+  "memory_used_kib": 11940465
+ },
+ "total_memory_kib": null,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "validity",
+   "pred_cores": 0.28,
+   "pred_duration": 150.0,
+   "pred_duration_p90": 1002.7,
+   "pred_rss_p90": 2140634,
+   "requested": 99577.0,
+   "seq": 0,
+   "weight": 1.0
+  },
+  {
+   "id": "w0",
+   "kind": "Security",
+   "pred_cores": null,
+   "pred_duration": 788.7,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 347785,
+   "requested": 99386.0,
+   "seq": 1,
+   "weight": 6.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "x2",
+   "quiet_until": 99876.0
+  },
+  {
+   "ended": 99916.0,
+   "id": "x0",
+   "quiet_until": 99859.0
+  }
+ ]
+}

@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "work: queued values must be all numbers or all timestamps\n"
+}

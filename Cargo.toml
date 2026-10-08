@@ -11,6 +11,8 @@ members = [
     "crates/agora-proto",
     "crates/agora-daemon",
     "crates/agora-hooks",
+    "crates/agora-sched",
+    "crates/agora-run",
 ]
 
 [workspace.package]
@@ -24,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 sha2 = "0.10"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "sync", "time", "signal", "process"] }
 tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -37,6 +39,13 @@ assert_cmd = "2"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 schemars = "1"
 tokio-stream = "0.1"
+rustix = { version = "1", features = ["process", "fs", "param", "std"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+signal-hook = "0.4"
+notify = "8"
+regex = "1"
+# dev only
+proptest = "1"
 # dev only (agora-mcp tests)
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 

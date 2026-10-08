@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"policy\": \"wsjf\",\n  \"order\": [\n    {\n      \"id\": \"prep\",\n      \"tier\": 1,\n      \"moved_up_for\": \"hot\"\n    },\n    {\n      \"id\": \"hot\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"quick\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"big\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"tie\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"low\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    }\n  ]\n}\n",
+  "stderr": ""
+}

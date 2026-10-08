@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"policy\": \"fifo\",\n  \"order\": [\n    {\n      \"id\": \"iso\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"oct\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"sept\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"none\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    }\n  ]\n}\n",
+  "stderr": ""
+}

@@ -1,0 +1,12 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "2",
+    "--conflict-cost",
+    "1",
+    "--task",
+    "id=a"
+  ],
+  "tasks": null
+}

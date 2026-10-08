@@ -1,0 +1,133 @@
+{
+ "candidate": "cand",
+ "cpus": 16.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "memory pressure is warning; jobs start below warning"
+ },
+ "kind": "blocker",
+ "name": "blocker-058",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.3,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 260343,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 2.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.26,
+   "pred_duration_p90": 85.7,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99541.0,
+   "weight": 2.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.41,
+   "pred_duration_p90": 493.2,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 272194,
+   "started": null,
+   "weight": 2.0
+  },
+  {
+   "id": "r3",
+   "pred_cores": 0.29,
+   "pred_duration_p90": 518.5,
+   "pred_rss_p90": 2210797,
+   "quiet_until": null,
+   "rss": 672061,
+   "started": null,
+   "weight": 2.0
+  }
+ ],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 10.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "warning",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 7.4,
+  "load1": 23.45,
+  "load_gate": false,
+  "memory_level": "warning",
+  "memory_used_kib": 10928174
+ },
+ "total_memory_kib": null,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "docs",
+   "pred_cores": 0.77,
+   "pred_duration": null,
+   "pred_duration_p90": 957.7,
+   "pred_rss_p90": null,
+   "requested": 99919.0,
+   "seq": 0,
+   "weight": 1.5
+  },
+  {
+   "id": "w1",
+   "kind": "correctness",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99627.0,
+   "seq": 1,
+   "weight": 2.0
+  },
+  {
+   "id": "cand",
+   "kind": "Work",
+   "pred_cores": 0.44,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2206240,
+   "requested": 99316.0,
+   "seq": 2,
+   "weight": 0.5
+  },
+  {
+   "id": "w2",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": 716.9,
+   "pred_duration_p90": 1028.1,
+   "pred_rss_p90": 1903559,
+   "requested": 99712.0,
+   "seq": 3,
+   "weight": 4.0
+  },
+  {
+   "id": "w3",
+   "kind": "docs",
+   "pred_cores": 0.49,
+   "pred_duration": null,
+   "pred_duration_p90": 833.9,
+   "pred_rss_p90": null,
+   "requested": 99525.0,
+   "seq": 4,
+   "weight": 1.0
+  }
+ ],
+ "windows": []
+}

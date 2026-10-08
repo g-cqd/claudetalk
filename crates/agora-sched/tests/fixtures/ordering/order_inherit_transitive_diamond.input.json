@@ -1,0 +1,58 @@
+{
+  "args": [
+    "order",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "tail",
+      "kind": "docs"
+    },
+    {
+      "id": "a"
+    },
+    {
+      "id": "b",
+      "after": [
+        "a"
+      ]
+    },
+    {
+      "id": "c",
+      "after": "b"
+    },
+    {
+      "id": "fix",
+      "kind": "validity",
+      "after": [
+        "c"
+      ]
+    },
+    {
+      "id": "base"
+    },
+    {
+      "id": "right",
+      "after": [
+        "base"
+      ]
+    },
+    {
+      "id": "left",
+      "after": [
+        "base"
+      ]
+    },
+    {
+      "id": "top",
+      "kind": "security",
+      "after": [
+        "left",
+        "right"
+      ]
+    },
+    {
+      "id": "other"
+    }
+  ]
+}

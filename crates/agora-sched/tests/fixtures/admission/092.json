@@ -1,0 +1,21 @@
+{
+ "cpu_budget": 5.0,
+ "cpus": 12.0,
+ "expected": "100000.0",
+ "head_need": 3.0,
+ "kind": "head_start",
+ "name": "head-004",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": 852.8,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 1.5
+  }
+ ]
+}

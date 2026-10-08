@@ -1,0 +1,4 @@
+#!/bin/sh
+# Drop-in for `work` (planner's work.py) backed by the agora daemon: `agora-work run -- make test`.
+# Set AGORA_BIN to the agora binary when it is not on PATH. Never replaces ~/.agent-harness/bin/work.
+exec "${AGORA_BIN:-agora}" work "$@"

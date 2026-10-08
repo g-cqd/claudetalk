@@ -1,0 +1,37 @@
+{
+ "cpus": 4.0,
+ "expected": {
+  "basis": "no history: the declared weight",
+  "cores": "1.0",
+  "duration": "208.0",
+  "duration_p90": null,
+  "level": "none",
+  "rss_kib": null,
+  "rss_p90_kib": null,
+  "runs": 0
+ },
+ "kind": "predict",
+ "name": "predict-002",
+ "runs": [
+  {
+   "cpu_time": 713.34,
+   "ended": 1000.0,
+   "id": "p0",
+   "rss_peak": 580992,
+   "sig_full": null,
+   "sig_head": null,
+   "sig_prog": "P1",
+   "sig_tool": null,
+   "started": 792.0,
+   "status": 0,
+   "weight": 8.0
+  }
+ ],
+ "signed": {
+  "full": null,
+  "head": null,
+  "prog": "P1",
+  "tool": null
+ },
+ "weight": 1.0
+}

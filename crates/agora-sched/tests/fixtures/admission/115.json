@@ -1,0 +1,102 @@
+{
+ "cpus": 4.0,
+ "expected": {
+  "basis": "3 runs of the same program and flags",
+  "cores": "0.5",
+  "duration": "206.0",
+  "duration_p90": "215.0",
+  "level": "head",
+  "rss_kib": 603861,
+  "rss_p90_kib": 603861,
+  "runs": 3
+ },
+ "kind": "predict",
+ "name": "predict-019",
+ "runs": [
+  {
+   "cpu_time": 44.16,
+   "ended": 1000.0,
+   "id": "p0",
+   "rss_peak": null,
+   "sig_full": null,
+   "sig_head": "H1",
+   "sig_prog": "P1",
+   "sig_tool": null,
+   "started": 978.0,
+   "status": 127,
+   "weight": 4.0
+  },
+  {
+   "cpu_time": 208.4,
+   "ended": 1037.0,
+   "id": "p1",
+   "rss_peak": null,
+   "sig_full": "F2",
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": "T1",
+   "started": 965.0,
+   "status": 126,
+   "weight": 4.0
+  },
+  {
+   "cpu_time": 942.73,
+   "ended": 1074.0,
+   "id": "p2",
+   "rss_peak": 603861,
+   "sig_full": "F1",
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": null,
+   "started": 868.0,
+   "status": 0,
+   "weight": 4.0
+  },
+  {
+   "cpu_time": 145.24,
+   "ended": 1111.0,
+   "id": "p3",
+   "rss_peak": null,
+   "sig_full": null,
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": null,
+   "started": 1075.0,
+   "status": 0,
+   "weight": 4.0
+  },
+  {
+   "cpu_time": 283.35,
+   "ended": 1148.0,
+   "id": "p4",
+   "rss_peak": 595032,
+   "sig_full": null,
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": null,
+   "started": 933.0,
+   "status": 1,
+   "weight": 8.0
+  },
+  {
+   "cpu_time": 596.14,
+   "ended": 1185.0,
+   "id": "p5",
+   "rss_peak": null,
+   "sig_full": "F1",
+   "sig_head": "H1",
+   "sig_prog": "P1",
+   "sig_tool": null,
+   "started": 1046.0,
+   "status": null,
+   "weight": 8.0
+  }
+ ],
+ "signed": {
+  "full": null,
+  "head": "H1",
+  "prog": null,
+  "tool": null
+ },
+ "weight": 0.5
+}

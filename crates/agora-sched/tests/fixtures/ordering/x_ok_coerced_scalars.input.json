@@ -1,0 +1,31 @@
+{
+  "args": [
+    "order",
+    "--policy",
+    "wsjf",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": 1
+    },
+    {
+      "id": null
+    },
+    {
+      "id": true
+    },
+    {
+      "id": 2.5,
+      "size": true,
+      "value": "3"
+    },
+    {
+      "id": "z",
+      "after": [
+        1,
+        null
+      ]
+    }
+  ]
+}

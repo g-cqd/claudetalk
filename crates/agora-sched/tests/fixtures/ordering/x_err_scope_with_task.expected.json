@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "work: --scope does not apply to tasks given with --tasks or --task\n"
+}

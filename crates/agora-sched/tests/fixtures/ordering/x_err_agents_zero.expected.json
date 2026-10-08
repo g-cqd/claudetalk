@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "usage: work plan [-h] [--scope SCOPE] [--json]\n                 [--policy {fifo,wsjf,critical-path}] [--tasks FILE]\n                 [--task SPEC] --agents AGENTS [--assign]\n                 [--conflict-cost COST]\nwork plan: error: argument --agents: '0' is less than 1\n"
+}

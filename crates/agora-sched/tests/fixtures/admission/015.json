@@ -1,0 +1,120 @@
+{
+ "candidate": "cand",
+ "cpus": 12.0,
+ "expected": null,
+ "kind": "blocker",
+ "name": "blocker-015",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": 480.6,
+   "pred_rss_p90": 1509553,
+   "quiet_until": null,
+   "rss": 1319393,
+   "started": 99730.0,
+   "weight": 4.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 2.18,
+   "pred_duration_p90": 427.7,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1149824,
+   "started": null,
+   "weight": 12.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": 1.61,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 3.0
+  }
+ ],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 2.0,
+  "idle_min": 10.0,
+  "load_factor": 2.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "warning",
+  "quiet_drain": 60.0,
+  "quiet_max": 120.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 36.4,
+  "load1": 10.73,
+  "load_gate": false,
+  "memory_level": "normal",
+  "memory_used_kib": 557072
+ },
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "validity",
+   "pred_cores": 0.2,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99642.0,
+   "seq": 0,
+   "weight": 1.5
+  },
+  {
+   "id": "w0",
+   "kind": "Security",
+   "pred_cores": null,
+   "pred_duration": 471.5,
+   "pred_duration_p90": 35.5,
+   "pred_rss_p90": 2845375,
+   "requested": 99704.0,
+   "seq": 1,
+   "weight": 4.0
+  },
+  {
+   "id": "w1",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 974809,
+   "requested": 100000.0,
+   "seq": 2,
+   "weight": 2.0
+  },
+  {
+   "id": "w2",
+   "kind": "crash",
+   "pred_cores": 2.09,
+   "pred_duration": 35.3,
+   "pred_duration_p90": 108.9,
+   "pred_rss_p90": 2959044,
+   "requested": 99932.0,
+   "seq": 3,
+   "weight": 8.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99985.0,
+   "id": "x0",
+   "quiet_until": 99923.0
+  },
+  {
+   "ended": 99931.0,
+   "id": "x2",
+   "quiet_until": 99925.0
+  }
+ ]
+}

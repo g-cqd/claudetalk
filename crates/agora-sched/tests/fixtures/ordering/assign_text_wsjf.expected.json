@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "agent 1: d\nagent 2: b\nagent 3: a\nNash equilibrium after 1 rounds; potential 4\n",
+  "stderr": ""
+}

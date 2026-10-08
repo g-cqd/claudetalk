@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "work: the tasks form a cycle: a -> c -> b -> a\n"
+}

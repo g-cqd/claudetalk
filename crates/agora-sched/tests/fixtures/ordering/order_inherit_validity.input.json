@@ -1,0 +1,23 @@
+{
+  "args": [
+    "order",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "old",
+      "kind": "performance"
+    },
+    {
+      "id": "refactor",
+      "kind": "structure"
+    },
+    {
+      "id": "fix",
+      "kind": "validity",
+      "after": [
+        "refactor"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "1",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "b",
+      "after": [
+        "a"
+      ]
+    },
+    {
+      "id": "a"
+    },
+    {
+      "id": "v",
+      "kind": "safety"
+    }
+  ]
+}

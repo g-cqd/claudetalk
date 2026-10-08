@@ -1,0 +1,9 @@
+{
+  "args": [
+    "order",
+    "--tasks",
+    "/nonexistent/tasks.json"
+  ],
+  "tasks": null,
+  "compare_stderr": false
+}

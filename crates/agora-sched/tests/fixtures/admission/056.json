@@ -1,0 +1,106 @@
+{
+ "candidate": "cand",
+ "cpus": 2.0,
+ "expected": {
+  "cause": "reserved",
+  "reason": "used memory, the running jobs' predicted growth and this job's predicted peak come to 3.6 GiB, above the memory budget of 0.9 GiB"
+ },
+ "kind": "blocker",
+ "name": "blocker-056",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.54,
+   "pred_duration_p90": 453.0,
+   "pred_rss_p90": 2479726,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99438.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": null,
+   "pred_duration_p90": 185.9,
+   "pred_rss_p90": 2472994,
+   "quiet_until": null,
+   "rss": 1614473,
+   "started": null,
+   "weight": 1.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": null,
+   "pred_duration_p90": 701.5,
+   "pred_rss_p90": 1569651,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99889.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r3",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99343.0,
+   "weight": 1.0
+  }
+ ],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 300.0,
+  "capacity": 8.0,
+  "cpu_budget": 7.5,
+  "idle_min": 10.0,
+  "load_factor": 2.0,
+  "load_wait": 1800.0,
+  "memory_budget": null,
+  "memory_limit": "off",
+  "quiet_drain": 30.0,
+  "quiet_max": 180.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": null,
+  "load1": null,
+  "load_gate": false,
+  "memory_level": "warning",
+  "memory_used_kib": 704375
+ },
+ "total_memory_kib": 3000000,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "Work",
+   "pred_cores": 0.15,
+   "pred_duration": 128.6,
+   "pred_duration_p90": 1104.7,
+   "pred_rss_p90": 1469203,
+   "requested": 99641.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "w0",
+   "kind": "validity",
+   "pred_cores": 0.34,
+   "pred_duration": 853.6,
+   "pred_duration_p90": 393.2,
+   "pred_rss_p90": null,
+   "requested": 99760.0,
+   "seq": 1,
+   "weight": 0.5
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99774.0,
+   "id": "x2",
+   "quiet_until": 99913.0
+  }
+ ]
+}

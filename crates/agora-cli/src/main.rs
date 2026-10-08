@@ -5,12 +5,20 @@
 //! from the machine seed), signs every op locally and wraps/unwraps channel keys
 //! locally: the daemon never sees a private key or a channel key.
 
+mod args_sched;
+mod args_work;
 mod cmd_board;
 mod cmd_chat;
 mod cmd_hook;
 mod cmd_mcp;
 mod cmd_org;
+mod cmd_sched;
+mod cmd_work;
+mod cmd_work_run;
 mod install;
+
+pub use args_sched::*;
+pub use args_work::*;
 
 pub use agora_client::ClientError as CliError;
 pub use agora_client::{Ctx, Out};
@@ -40,7 +48,9 @@ pub struct Cli {
     pub cmd: Cmd,
 }
 
+/// Parsed once at startup, so the size of the largest variant does not matter.
 #[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Cmd {
     /// Run the daemon in the foreground (logs to stderr; AGORA_LOG sets the filter).
     Daemon(DaemonArgs),
@@ -83,6 +93,44 @@ pub enum Cmd {
     Install(InstallArgs),
     /// Undo `install`: remove only what `install` added.
     Uninstall(InstallArgs),
+    /// The shared work queue: add, claim, run and wait for jobs on this machine. Prints the work.py
+    /// texts; exit codes follow the job (124 = the wait timed out, 130 = interrupted).
+    Work(WorkArgs),
+    /// Capacity pools and path/pool leases.
+    #[command(subcommand)]
+    Pool(PoolCmd),
+    /// Manual quiet windows for the job scheduler.
+    #[command(subcommand)]
+    Quiet(QuietCmd),
+    /// Team and lane policies (stale, escalate, reclaim, WIP).
+    #[command(subcommand)]
+    Policy(PolicyCmd),
+    /// What the watchdog sees: stale cards, expiring leases, notices, WIP, orphaned jobs.
+    Watchdog,
+    /// Flow metrics: lead and cycle time, WIP, blocked time, queue waits.
+    Metrics {
+        #[arg(long)]
+        team: Option<String>,
+        #[arg(long)]
+        lane: Option<String>,
+        /// Only work finished after this time (ms since epoch).
+        #[arg(long)]
+        since_ms: Option<i64>,
+    },
+    /// Notices the reconciler and escalations addressed to you.
+    Notices {
+        /// Only notices with seq greater than this.
+        #[arg(long, default_value_t = 0)]
+        after: i64,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Internal: supervise one job (started by the daemon).
+    #[command(name = "_supervise", hide = true)]
+    Supervise {
+        #[arg(long)]
+        job_dir: PathBuf,
+    },
 }
 
 /// Options of `agora daemon`.
@@ -271,6 +319,18 @@ pub enum CardCmd {
         title: String,
         #[arg(long)]
         lane: Option<String>,
+        /// Higher = more urgent.
+        #[arg(long)]
+        priority: Option<i64>,
+        #[arg(long)]
+        value: Option<f64>,
+        #[arg(long)]
+        size: Option<f64>,
+        #[arg(long)]
+        team: Option<String>,
+        /// Cards this one waits for.
+        #[arg(long, num_args = 1..)]
+        after: Vec<String>,
     },
     /// Move to a state: backlog ready claimed doing review done blocked ...
     Move {
@@ -294,6 +354,48 @@ pub enum CardCmd {
         lane: Option<String>,
         #[arg(long, default_value_t = 100)]
         limit: i64,
+    },
+    /// Change a card's priority, value, size, team, needs-owner flag or owner action.
+    Update {
+        id: String,
+        #[arg(long)]
+        priority: Option<i64>,
+        #[arg(long)]
+        value: Option<f64>,
+        #[arg(long)]
+        size: Option<f64>,
+        #[arg(long)]
+        team: Option<String>,
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        needs_owner: Option<bool>,
+        #[arg(long)]
+        owner_action: Option<String>,
+    },
+    /// Make a card wait for another (`--remove` drops the dependency).
+    Dep {
+        id: String,
+        after: String,
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Link a card to another card, a job, a message or a note.
+    Link {
+        id: String,
+        /// re | blocks | relates | duplicates | caused_by | job | message | note
+        rel: String,
+        target: String,
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Flag a card as needing its owner's attention and notify the escalation chain.
+    Escalate {
+        id: String,
+        /// What the owner has to do.
+        #[arg(long)]
+        owner_action: String,
+        /// Public keys to notify (default: the policy's chain, else the supervisors).
+        #[arg(long, num_args = 1..)]
+        to: Vec<String>,
     },
 }
 
@@ -501,11 +603,16 @@ fn run_daemon_with_mcp(
 
 async fn dispatch(ctx: &Ctx, cmd: Cmd) -> Result<Out, CliError> {
     match cmd {
-        Cmd::Daemon(_) | Cmd::Mcp(_) | Cmd::Hook(_) | Cmd::Install(_) | Cmd::Uninstall(_) => {
-            Err(CliError::Usage(
-                "daemon, mcp, hook, install and uninstall are handled before dispatch".into(),
-            ))
-        }
+        Cmd::Daemon(_)
+        | Cmd::Mcp(_)
+        | Cmd::Hook(_)
+        | Cmd::Install(_)
+        | Cmd::Uninstall(_)
+        | Cmd::Work(_)
+        | Cmd::Supervise { .. } => Err(CliError::Usage(
+            "daemon, mcp, hook, install, uninstall, work and _supervise are handled before dispatch"
+                .into(),
+        )),
         Cmd::Stop => cmd_org::stop(ctx).await,
         Cmd::Init(a) => cmd_org::init(ctx, a).await,
         Cmd::Whoami => cmd_org::whoami(ctx).await,
@@ -521,7 +628,24 @@ async fn dispatch(ctx: &Ctx, cmd: Cmd) -> Result<Out, CliError> {
         Cmd::Card(c) => cmd_board::card(ctx, c).await,
         Cmd::Sprint(c) => cmd_board::sprint(ctx, c).await,
         Cmd::Note(c) => cmd_board::note(ctx, c).await,
+        Cmd::Pool(c) => cmd_sched::pool(ctx, c).await,
+        Cmd::Quiet(c) => cmd_sched::quiet(ctx, c).await,
+        Cmd::Policy(c) => cmd_sched::policy(ctx, c).await,
+        Cmd::Watchdog => cmd_sched::watchdog(ctx).await,
+        Cmd::Metrics {
+            team,
+            lane,
+            since_ms,
+        } => cmd_sched::metrics(ctx, team, lane, since_ms).await,
+        Cmd::Notices { after, limit } => cmd_sched::notices(ctx, after, limit).await,
     }
+}
+
+/// `agora _supervise --job-dir D`: the same supervisor as the `agora-supervise` binary.
+fn supervise(job_dir: &Path) -> ExitCode {
+    let args = ["--job-dir".to_string(), job_dir.display().to_string()];
+    let code = agora_run::supervise::main_from_args(&args);
+    ExitCode::from(u8::try_from(code).unwrap_or(1))
 }
 
 /// Exit code of a long-running server command (`daemon`, `mcp`): its error goes to stderr.
@@ -552,6 +676,39 @@ fn is_hook_invocation(args: &[OsString]) -> bool {
     false
 }
 
+/// The arguments after `work` of an `agora [--home H] [--json] work (order|plan) ...` invocation that
+/// carries `--tasks` or `--task`: answered before clap runs, without a daemon or an identity. A `--json`
+/// given before `work` is appended, because the work.py emulation reads it among its own arguments.
+fn given_tasks_args(args: &[OsString]) -> Option<Vec<String>> {
+    let mut json_first = false;
+    let mut rest = args.iter().skip(1);
+    loop {
+        let arg = rest.next()?;
+        if arg.as_os_str() == "--json" {
+            json_first = true;
+        } else if arg.as_os_str() == "--home" {
+            rest.next()?;
+        } else if !arg.as_encoded_bytes().starts_with(b"--home=") {
+            if arg.as_os_str() != "work" {
+                return None;
+            }
+            break;
+        }
+    }
+    let mut after: Vec<String> = rest
+        .map(|a| a.to_str().map(str::to_owned))
+        .collect::<Option<_>>()?;
+    if !matches!(after.first().map(String::as_str), Some("order" | "plan"))
+        || !agora_sched::compat::is_given_tasks(&after)
+    {
+        return None;
+    }
+    if json_first && !after.iter().any(|a| a == "--json") {
+        after.push("--json".into());
+    }
+    Some(after)
+}
+
 /// A parse error of a hook invocation exits 0 silently (clap's own exit 2 would block a Stop or
 /// UserPromptSubmit). Help and version still print, as they do for every command.
 fn hook_parse_error_is_silent(kind: clap::error::ErrorKind, args: &[OsString]) -> bool {
@@ -560,6 +717,10 @@ fn hook_parse_error_is_silent(kind: clap::error::ErrorKind, args: &[OsString]) -
 }
 
 fn main() -> ExitCode {
+    let raw_args: Vec<OsString> = std::env::args_os().collect();
+    if let Some(args) = given_tasks_args(&raw_args) {
+        return cmd_work::given_tasks(&args);
+    }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => {
@@ -585,6 +746,8 @@ fn main() -> ExitCode {
         )),
         Cmd::Mcp(a) => return finish_server("mcp", cmd_mcp::run(home, a)),
         Cmd::Hook(a) => return cmd_hook::run(home, a),
+        Cmd::Work(a) => return cmd_work::run(home, json, a),
+        Cmd::Supervise { job_dir } => return supervise(&job_dir),
         Cmd::Install(a) => install::install(home, a),
         Cmd::Uninstall(a) => install::uninstall(home, a),
         cmd => (|| -> Result<Out, CliError> {
@@ -681,6 +844,98 @@ mod tests {
 
     fn os(args: &[&str]) -> Vec<OsString> {
         args.iter().map(|a| OsString::from(*a)).collect()
+    }
+
+    #[test]
+    fn work_order_with_tasks_is_routed_before_parsing() {
+        let some = |a: &[&str]| given_tasks_args(&os(a));
+        assert_eq!(
+            some(&["agora", "work", "order", "--task", "id=a"]),
+            Some(strings(&["order", "--task", "id=a"]))
+        );
+        assert_eq!(
+            some(&[
+                "agora", "--home", "/h", "--json", "work", "plan", "--agents", "2", "--tasks", "-"
+            ]),
+            Some(strings(&[
+                "plan", "--agents", "2", "--tasks", "-", "--json"
+            ]))
+        );
+        assert_eq!(some(&["agora", "work", "order", "--policy", "wsjf"]), None);
+    }
+
+    #[test]
+    fn only_work_order_and_plan_are_candidates_for_early_routing() {
+        let some = |a: &[&str]| given_tasks_args(&os(a));
+        assert_eq!(some(&["agora", "work", "add", "--task", "x"]), None);
+        assert_eq!(
+            some(&["agora", "chat", "work", "order", "--task", "a"]),
+            None
+        );
+        assert_eq!(some(&["agora", "--home"]), None);
+        assert_eq!(some(&["agora", "work"]), None);
+        assert_eq!(some(&["agora"]), None);
+    }
+
+    #[test]
+    fn work_commands_declare_their_flags() {
+        for args in [
+            &["work", "run", "--timeout", "1", "--", "sleep", "5"][..],
+            &["work", "wait", "a", "b", "--any", "--tail", "2"],
+            &["work", "wait", "--log", "/tmp/x", "done"],
+            &["work", "wait", "--card", "c1", "--state", "review", "done"],
+            &[
+                "work", "add", "--title", "t", "--after", "a", "b", "--files", "/x", "--", "true",
+            ],
+            &[
+                "work",
+                "settings",
+                "--cpu-budget",
+                "4",
+                "--self-accept",
+                "true",
+            ],
+            &["work", "schedule", "add", "--every", "5m", "--", "true"],
+            &["work", "update", "t1", "--assign", "ab"],
+            &["pool", "lease", "--path", "/x"],
+            &["quiet", "open", "--for-secs", "60"],
+            &[
+                "policy",
+                "set",
+                "core",
+                "main",
+                "--wip-limit",
+                "3",
+                "--reclaim",
+            ],
+            &["card", "link", "c1", "blocks", "c2"],
+            &[
+                "card",
+                "create",
+                "c1",
+                "t",
+                "--priority",
+                "5",
+                "--after",
+                "c0",
+            ],
+            &["metrics", "--team", "core"],
+            &["_supervise", "--job-dir", "/tmp/j"],
+        ] {
+            Cli::try_parse_from(std::iter::once("agora").chain(args.iter().copied()))
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"));
+        }
+    }
+
+    #[test]
+    fn schedule_add_needs_exactly_one_time() {
+        assert!(Cli::try_parse_from(["agora", "work", "schedule", "add", "--", "true"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "agora", "work", "schedule", "add", "--at", "1", "--every", "60", "--", "true"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

@@ -79,6 +79,18 @@ groups of cards. Use them when your task names a sprint.
 For shared knowledge, use `note_publish` to record a note that other agents need, and `note_search` to
 find existing notes before you write a new one. Do not put secrets in notes.
 
+## The shared machine
+
+Several agents share this machine's CPU and memory. Use the work tools to queue, run and wait for commands:
+
+- `work_scope`, `work_add`, `work_show`, `work_next`, `work_claim`, `work_accept`: scopes, queued tasks and claims.
+- `work_run`, `work_wait`, `work_status`, `work_cancel`, `work_finish`: run commands, and follow or stop them.
+- `work_schedule`, `work_settings`, `work_plan`: timers, settings and planning.
+- `pool_define`, `pool_lease`, `pool_release`, `quiet_window`: shared resource pools and quiet windows.
+- `watchdog_report`, `reclaim`, `escalate`, `policy_set`, `metrics`, `card_update`: watchdog, reclaim, escalation, policy and metrics.
+
+Run builds and tests through work_run (or `agora work run -- cmd`) so agents share the machine; never accept a command another agent queued unless you would run it yourself.
+
 ## Diagnostics
 
 - `whoami` shows your identity: pseudonym, role, transport, harness and delivery ladder.

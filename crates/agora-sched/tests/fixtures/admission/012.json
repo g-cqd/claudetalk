@@ -1,0 +1,120 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "quiet",
+  "reason": "job w3, exclusive too, is ahead of it: one quiet window at a time"
+ },
+ "kind": "blocker",
+ "name": "blocker-012",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.25,
+   "pred_duration_p90": 829.4,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1585792,
+   "started": null,
+   "weight": 1.0
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 5.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 6254321,
+  "memory_limit": "critical",
+  "quiet_drain": 30.0,
+  "quiet_max": 180.0,
+  "small_weight": 2.0
+ },
+ "signals": {
+  "idle_pct": 13.7,
+  "load1": 25.34,
+  "load_gate": false,
+  "memory_level": "normal",
+  "memory_used_kib": 10185074
+ },
+ "total_memory_kib": 3000000,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 319.9,
+   "pred_rss_p90": 1717148,
+   "requested": 99375.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "w1",
+   "kind": " crash",
+   "pred_cores": 1.27,
+   "pred_duration": null,
+   "pred_duration_p90": 876.5,
+   "pred_rss_p90": null,
+   "requested": 99939.0,
+   "seq": 1,
+   "weight": 1.5
+  },
+  {
+   "id": "w2",
+   "kind": "Security",
+   "pred_cores": null,
+   "pred_duration": 687.6,
+   "pred_duration_p90": 1106.9,
+   "pred_rss_p90": null,
+   "requested": 99844.0,
+   "seq": 2,
+   "weight": 0.5
+  },
+  {
+   "id": "w3",
+   "kind": "work",
+   "pred_cores": 2.98,
+   "pred_duration": null,
+   "pred_duration_p90": 812.3,
+   "pred_rss_p90": null,
+   "requested": 99949.0,
+   "seq": 3,
+   "weight": 4.0
+  },
+  {
+   "id": "w4",
+   "kind": "crash",
+   "pred_cores": null,
+   "pred_duration": 637.8,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2102189,
+   "requested": 99850.0,
+   "seq": 4,
+   "weight": 1.5
+  },
+  {
+   "id": "cand",
+   "kind": "Work",
+   "pred_cores": null,
+   "pred_duration": 738.6,
+   "pred_duration_p90": 925.2,
+   "pred_rss_p90": 2354694,
+   "requested": 99960.0,
+   "seq": 5,
+   "weight": 4.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "cand",
+   "quiet_until": 99897.0
+  }
+ ]
+}

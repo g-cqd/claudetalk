@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "1. pre Refactor (other, moved up for fix)\n2. fix Crash on empty input (Crash, queued 2)\n3. plain Tidy docs (docs)\n4. esc x\\x1b[2Jy\\nz\\u202eq\\xa0w, kind=odd (other)\n5. empty ()\n",
+  "stderr": ""
+}

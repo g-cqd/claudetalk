@@ -1,0 +1,29 @@
+{
+  "args": [
+    "order",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "after": [
+        "c"
+      ]
+    },
+    {
+      "id": "b",
+      "after": [
+        "a"
+      ]
+    },
+    {
+      "id": "c",
+      "after": [
+        "b"
+      ]
+    },
+    {
+      "id": "free"
+    }
+  ]
+}

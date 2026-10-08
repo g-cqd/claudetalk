@@ -1,0 +1,43 @@
+{
+  "args": [
+    "order",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "k1",
+      "kind": "SECURITY"
+    },
+    {
+      "id": "k2",
+      "kind": " crash"
+    },
+    {
+      "id": "k3",
+      "kind": "Data-Loss"
+    },
+    {
+      "id": "k4",
+      "kind": "safety"
+    },
+    {
+      "id": "k5",
+      "kind": "crashes"
+    },
+    {
+      "id": "k6"
+    },
+    {
+      "id": "k7",
+      "kind": "correctness"
+    },
+    {
+      "id": "k8",
+      "kind": "validity"
+    },
+    {
+      "id": "k9",
+      "kind": "crash"
+    }
+  ]
+}

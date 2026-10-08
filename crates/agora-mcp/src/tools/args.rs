@@ -286,6 +286,17 @@ pub struct CardCreateArgs {
     pub title: String,
     /// Lane (workstream) the card belongs to.
     pub lane: Option<String>,
+    /// Priority: higher = more urgent.
+    pub priority: Option<i64>,
+    /// Estimated value of the card.
+    pub value: Option<f64>,
+    /// Estimated size of the card.
+    pub size: Option<f64>,
+    /// Team that works the card (for per-lane WIP limits).
+    pub team: Option<String>,
+    /// Ids of cards this one waits for.
+    #[serde(default)]
+    pub after: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -428,6 +439,7 @@ pub struct DeliveryStatusArgs {}
 
 #[cfg(test)]
 mod tests {
+    use super::super::work_args::*;
     use super::*;
     use serde_json::{Value, json};
 
@@ -481,6 +493,30 @@ mod tests {
             NotePublishArgs,
             NoteSearchArgs,
             DeliveryStatusArgs,
+            WorkScopeArgs,
+            WorkAddArgs,
+            WorkShowArgs,
+            WorkNextArgs,
+            WorkClaimArgs,
+            WorkAcceptArgs,
+            WorkRunArgs,
+            WorkWaitArgs,
+            WorkStatusArgs,
+            WorkCancelArgs,
+            WorkFinishArgs,
+            WorkScheduleArgs,
+            WorkSettingsArgs,
+            WorkPlanArgs,
+            PoolDefineArgs,
+            PoolLeaseArgs,
+            PoolReleaseArgs,
+            QuietWindowArgs,
+            WatchdogReportArgs,
+            ReclaimArgs,
+            EscalateArgs,
+            PolicySetArgs,
+            MetricsArgs,
+            CardUpdateArgs,
         );
     }
 

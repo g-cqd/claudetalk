@@ -1,0 +1,111 @@
+{
+ "candidate": "cand",
+ "cpus": 8.0,
+ "expected": null,
+ "kind": "blocker",
+ "name": "blocker-071",
+ "now": 100000.0,
+ "running": [],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 5.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "off",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 8.7,
+  "load1": 27.0,
+  "load_gate": false,
+  "memory_level": "normal",
+  "memory_used_kib": 1229203
+ },
+ "total_memory_kib": null,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "validity",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1653707,
+   "requested": 99519.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "w1",
+   "kind": "crash",
+   "pred_cores": 0.28,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 449997,
+   "requested": 99646.0,
+   "seq": 1,
+   "weight": 1.0
+  },
+  {
+   "id": "w2",
+   "kind": "docs",
+   "pred_cores": 2.65,
+   "pred_duration": 257.3,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99355.0,
+   "seq": 2,
+   "weight": 6.0
+  },
+  {
+   "id": "cand",
+   "kind": "docs",
+   "pred_cores": 0.32,
+   "pred_duration": 531.6,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99825.0,
+   "seq": 3,
+   "weight": 0.5
+  },
+  {
+   "id": "w3",
+   "kind": "validity",
+   "pred_cores": 0.74,
+   "pred_duration": 412.6,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99631.0,
+   "seq": 4,
+   "weight": 4.0
+  },
+  {
+   "id": "w4",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": 113.4,
+   "pred_duration_p90": 304.3,
+   "pred_rss_p90": null,
+   "requested": 99975.0,
+   "seq": 5,
+   "weight": 6.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "x1",
+   "quiet_until": 99906.0
+  },
+  {
+   "ended": 99765.0,
+   "id": "x2",
+   "quiet_until": 99844.0
+  }
+ ]
+}

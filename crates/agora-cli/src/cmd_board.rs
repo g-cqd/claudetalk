@@ -9,9 +9,32 @@ use agora_client::api::board::{
 
 pub async fn card(ctx: &Ctx, c: CardCmd) -> Result<Out, CliError> {
     match c {
-        CardCmd::Create { id, title, lane } => {
-            api::card_create(ctx, CardCreateParams { id, title, lane }).await
+        CardCmd::Create {
+            id,
+            title,
+            lane,
+            priority,
+            value,
+            size,
+            team,
+            after,
+        } => {
+            let p = CardCreateParams {
+                id,
+                title,
+                lane,
+                priority,
+                value,
+                size,
+                team,
+                after,
+            };
+            api::card_create(ctx, p).await
         }
+        c @ (CardCmd::Update { .. }
+        | CardCmd::Dep { .. }
+        | CardCmd::Link { .. }
+        | CardCmd::Escalate { .. }) => crate::cmd_sched::card(ctx, c).await,
         CardCmd::Move { id, state } => api::card_move(ctx, CardMoveParams { id, state }).await,
         CardCmd::Evidence { id, reference } => {
             api::card_evidence(ctx, CardEvidenceParams { id, reference }).await

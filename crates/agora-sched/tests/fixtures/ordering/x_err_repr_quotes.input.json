@@ -1,0 +1,14 @@
+{
+  "args": [
+    "order",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "it's",
+      "after": [
+        "x\"y"
+      ]
+    }
+  ]
+}

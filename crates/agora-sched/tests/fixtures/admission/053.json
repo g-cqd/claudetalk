@@ -1,0 +1,89 @@
+{
+ "candidate": "cand",
+ "cpus": 1.0,
+ "expected": null,
+ "kind": "blocker",
+ "name": "blocker-053",
+ "now": 100000.0,
+ "running": [],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 60.0,
+  "capacity": null,
+  "cpu_budget": 4.0,
+  "idle_min": 15.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 11470320,
+  "memory_limit": "off",
+  "quiet_drain": 60.0,
+  "quiet_max": 120.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 82.4,
+  "load1": 13.29,
+  "load_gate": false,
+  "memory_level": "critical",
+  "memory_used_kib": null
+ },
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "work",
+   "pred_cores": 0.45,
+   "pred_duration": 531.2,
+   "pred_duration_p90": 316.8,
+   "pred_rss_p90": 1165063,
+   "requested": 99926.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "w1",
+   "kind": "Security",
+   "pred_cores": 0.11,
+   "pred_duration": 219.0,
+   "pred_duration_p90": 136.8,
+   "pred_rss_p90": 2154614,
+   "requested": 99792.0,
+   "seq": 1,
+   "weight": 0.5
+  },
+  {
+   "id": "w2",
+   "kind": "docs",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 364.4,
+   "pred_rss_p90": 1536194,
+   "requested": 99754.0,
+   "seq": 2,
+   "weight": 1.0
+  },
+  {
+   "id": "cand",
+   "kind": "Work",
+   "pred_cores": 0.32,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1475105,
+   "requested": 99656.0,
+   "seq": 3,
+   "weight": 1.0
+  },
+  {
+   "id": "w3",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 816.2,
+   "pred_rss_p90": null,
+   "requested": 99677.0,
+   "seq": 4,
+   "weight": 1.0
+  }
+ ],
+ "windows": []
+}

@@ -1,0 +1,63 @@
+{
+ "cpus": 4.0,
+ "expected": {
+  "basis": "typical exclusive use; no history",
+  "cores": "1.0",
+  "duration": "70.5",
+  "duration_p90": null,
+  "level": "exclusive",
+  "rss_kib": null,
+  "rss_p90_kib": null,
+  "runs": 0
+ },
+ "kind": "predict",
+ "name": "predict-013",
+ "runs": [
+  {
+   "cpu_time": 638.44,
+   "ended": 1000.0,
+   "id": "p0",
+   "rss_peak": 613285,
+   "sig_full": "F2",
+   "sig_head": "H2",
+   "sig_prog": "P1",
+   "sig_tool": "T1",
+   "started": 866.0,
+   "status": 0,
+   "weight": 2.0
+  },
+  {
+   "cpu_time": 707.93,
+   "ended": 1037.0,
+   "id": "p1",
+   "rss_peak": null,
+   "sig_full": "F1",
+   "sig_head": "H1",
+   "sig_prog": "P1",
+   "sig_tool": "T1",
+   "started": 794.0,
+   "status": null,
+   "weight": 1.0
+  },
+  {
+   "cpu_time": 17.23,
+   "ended": 1074.0,
+   "id": "p2",
+   "rss_peak": null,
+   "sig_full": "F1",
+   "sig_head": null,
+   "sig_prog": "P1",
+   "sig_tool": "T1",
+   "started": 1067.0,
+   "status": 0,
+   "weight": 1.0
+  }
+ ],
+ "signed": {
+  "full": null,
+  "head": null,
+  "prog": null,
+  "tool": "T1"
+ },
+ "weight": 4.0
+}

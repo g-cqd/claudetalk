@@ -1,0 +1,65 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "reserved",
+  "reason": "used memory, the running jobs' predicted growth and this job's predicted peak come to 9.0 GiB, above the memory budget of 8.1 GiB"
+ },
+ "kind": "blocker",
+ "name": "blocker-050",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.26,
+   "pred_duration_p90": 74.9,
+   "pred_rss_p90": 2935926,
+   "quiet_until": null,
+   "rss": 164272,
+   "started": null,
+   "weight": 2.0
+  }
+ ],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 20.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 8528826,
+  "memory_limit": "warning",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 2.0
+ },
+ "signals": {
+  "idle_pct": 19.8,
+  "load1": 8.44,
+  "load_gate": false,
+  "memory_level": "normal",
+  "memory_used_kib": 8381752
+ },
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "Work",
+   "pred_cores": 1.53,
+   "pred_duration": 93.7,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1105809,
+   "requested": 99532.0,
+   "seq": 0,
+   "weight": 2.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99806.0,
+   "id": "x0",
+   "quiet_until": 99810.0
+  }
+ ]
+}

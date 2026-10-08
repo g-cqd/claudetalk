@@ -1,0 +1,107 @@
+{
+ "candidate": "cand",
+ "cpus": 8.0,
+ "expected": {
+  "cause": "capacity",
+  "reason": "declared weights of 2.5 of the capacity of 6 cores are taken and this job declares 6"
+ },
+ "kind": "blocker",
+ "name": "blocker-054",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.37,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1340846,
+   "started": null,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 1.23,
+   "pred_duration_p90": 314.9,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 1.5
+  }
+ ],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 300.0,
+  "capacity": 6.0,
+  "cpu_budget": 16.0,
+  "idle_min": 5.0,
+  "load_factor": 1.5,
+  "load_wait": 1800.0,
+  "memory_budget": 4726180,
+  "memory_limit": "warning",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 0.5
+ },
+ "signals": null,
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "validity",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 736.6,
+   "pred_rss_p90": null,
+   "requested": 99775.0,
+   "seq": 0,
+   "weight": 3.0
+  },
+  {
+   "id": "w1",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99384.0,
+   "seq": 1,
+   "weight": 1.5
+  },
+  {
+   "id": "w2",
+   "kind": "correctness",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1802693,
+   "requested": 99830.0,
+   "seq": 2,
+   "weight": 6.0
+  },
+  {
+   "id": "cand",
+   "kind": "validity",
+   "pred_cores": 0.3,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99409.0,
+   "seq": 3,
+   "weight": 6.0
+  },
+  {
+   "id": "w3",
+   "kind": " crash",
+   "pred_cores": 1.94,
+   "pred_duration": 741.4,
+   "pred_duration_p90": 1028.3,
+   "pred_rss_p90": null,
+   "requested": 99581.0,
+   "seq": 4,
+   "weight": 4.0
+  }
+ ],
+ "windows": []
+}

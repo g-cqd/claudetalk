@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"policy\": \"fifo\",\n  \"order\": [\n    {\n      \"id\": \"a\",\n      \"tier\": 1,\n      \"moved_up_for\": \"fix\"\n    },\n    {\n      \"id\": \"b\",\n      \"tier\": 1,\n      \"moved_up_for\": \"fix\"\n    },\n    {\n      \"id\": \"c\",\n      \"tier\": 1,\n      \"moved_up_for\": \"fix\"\n    },\n    {\n      \"id\": \"fix\",\n      \"tier\": 0,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"base\",\n      \"tier\": 1,\n      \"moved_up_for\": \"top\"\n    },\n    {\n      \"id\": \"left\",\n      \"tier\": 1,\n      \"moved_up_for\": \"top\"\n    },\n    {\n      \"id\": \"right\",\n      \"tier\": 1,\n      \"moved_up_for\": \"top\"\n    },\n    {\n      \"id\": \"top\",\n      \"tier\": 0,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"tail\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    },\n    {\n      \"id\": \"other\",\n      \"tier\": 1,\n      \"moved_up_for\": null\n    }\n  ]\n}\n",
+  "stderr": ""
+}

@@ -1,0 +1,48 @@
+{
+ "candidate": "cand",
+ "cpus": 16.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "memory pressure is critical; jobs start below critical"
+ },
+ "kind": "blocker",
+ "name": "blocker-008",
+ "now": 100000.0,
+ "running": [],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 20.0,
+  "load_factor": 2.0,
+  "load_wait": 1800.0,
+  "memory_budget": null,
+  "memory_limit": "critical",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": 0.8,
+  "load1": 12.25,
+  "load_gate": false,
+  "memory_level": "critical",
+  "memory_used_kib": 1975435
+ },
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "crash",
+   "pred_cores": null,
+   "pred_duration": 101.2,
+   "pred_duration_p90": 345.5,
+   "pred_rss_p90": null,
+   "requested": 99891.0,
+   "seq": 0,
+   "weight": 0.5
+  }
+ ],
+ "windows": []
+}

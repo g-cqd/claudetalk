@@ -1,0 +1,59 @@
+{
+ "candidate": "cand",
+ "cpus": 8.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "memory pressure is critical; jobs start below warning"
+ },
+ "kind": "blocker",
+ "name": "blocker-023",
+ "now": 100000.0,
+ "running": [],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 60.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 20.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 10425742,
+  "memory_limit": "warning",
+  "quiet_drain": 60.0,
+  "quiet_max": 120.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": 10.7,
+  "load1": 8.17,
+  "load_gate": false,
+  "memory_level": "critical",
+  "memory_used_kib": 5312905
+ },
+ "total_memory_kib": 8388608,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "work",
+   "pred_cores": 0.19,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2472526,
+   "requested": 99347.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "w0",
+   "kind": " crash",
+   "pred_cores": null,
+   "pred_duration": 164.4,
+   "pred_duration_p90": 54.7,
+   "pred_rss_p90": 685268,
+   "requested": 99734.0,
+   "seq": 1,
+   "weight": 1.5
+  }
+ ],
+ "windows": []
+}

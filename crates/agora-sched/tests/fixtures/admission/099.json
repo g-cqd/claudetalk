@@ -1,0 +1,141 @@
+{
+ "cpus": 4.0,
+ "expected": {
+  "basis": "4 runs of the same program and flags",
+  "cores": "2.7114320587868974",
+  "duration": "165.5",
+  "duration_p90": "217.0",
+  "level": "head",
+  "rss_kib": 716087,
+  "rss_p90_kib": 716087,
+  "runs": 4
+ },
+ "kind": "predict",
+ "name": "predict-003",
+ "runs": [
+  {
+   "cpu_time": 657.08,
+   "ended": 1000.0,
+   "id": "p0",
+   "rss_peak": 897482,
+   "sig_full": null,
+   "sig_head": null,
+   "sig_prog": null,
+   "sig_tool": "T1",
+   "started": 744.0,
+   "status": 126,
+   "weight": 1.0
+  },
+  {
+   "cpu_time": 119.47,
+   "ended": 1037.0,
+   "id": "p1",
+   "rss_peak": 567557,
+   "sig_full": "F1",
+   "sig_head": "H1",
+   "sig_prog": "P1",
+   "sig_tool": "T1",
+   "started": 1015.0,
+   "status": 1,
+   "weight": 2.0
+  },
+  {
+   "cpu_time": 20.0,
+   "ended": 1074.0,
+   "id": "p2",
+   "rss_peak": null,
+   "sig_full": "F1",
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": null,
+   "started": 894.0,
+   "status": null,
+   "weight": 1.0
+  },
+  {
+   "cpu_time": 1183.45,
+   "ended": 1111.0,
+   "id": "p3",
+   "rss_peak": 274478,
+   "sig_full": "F1",
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": "T1",
+   "started": 862.0,
+   "status": 127,
+   "weight": 1.0
+  },
+  {
+   "cpu_time": 751.34,
+   "ended": 1148.0,
+   "id": "p4",
+   "rss_peak": 154770,
+   "sig_full": "F2",
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": "T1",
+   "started": 963.0,
+   "status": 0,
+   "weight": 2.0
+  },
+  {
+   "cpu_time": 295.46,
+   "ended": 1185.0,
+   "id": "p5",
+   "rss_peak": 716087,
+   "sig_full": null,
+   "sig_head": "H1",
+   "sig_prog": "P1",
+   "sig_tool": null,
+   "started": 968.0,
+   "status": 0,
+   "weight": 4.0
+  },
+  {
+   "cpu_time": 17.36,
+   "ended": 1222.0,
+   "id": "p6",
+   "rss_peak": 551975,
+   "sig_full": "F1",
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": null,
+   "started": 1076.0,
+   "status": 0,
+   "weight": 2.0
+  },
+  {
+   "cpu_time": 102.63,
+   "ended": 1259.0,
+   "id": "p7",
+   "rss_peak": null,
+   "sig_full": "F2",
+   "sig_head": "H1",
+   "sig_prog": "P1",
+   "sig_tool": null,
+   "started": 1076.0,
+   "status": null,
+   "weight": 8.0
+  },
+  {
+   "cpu_time": 636.41,
+   "ended": 1296.0,
+   "id": "p8",
+   "rss_peak": null,
+   "sig_full": "F1",
+   "sig_head": "H1",
+   "sig_prog": null,
+   "sig_tool": "T1",
+   "started": 1086.0,
+   "status": 126,
+   "weight": 4.0
+  }
+ ],
+ "signed": {
+  "full": null,
+  "head": "H1",
+  "prog": null,
+  "tool": null
+ },
+ "weight": 4.0
+}

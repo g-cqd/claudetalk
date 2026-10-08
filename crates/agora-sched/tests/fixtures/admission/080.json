@@ -1,0 +1,135 @@
+{
+ "candidate": "cand",
+ "cpus": 16.0,
+ "expected": {
+  "cause": "ahead",
+  "reason": "job w0 has waited 10 min 30 s, past the backfill limit of 5 min 0 s, so no job starts before it"
+ },
+ "kind": "blocker",
+ "name": "blocker-080",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.29,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1466423,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 0.5
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.24,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 816362,
+   "quiet_until": null,
+   "rss": 311599,
+   "started": 99204.0,
+   "weight": 1.0
+  }
+ ],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 15.0,
+  "load_factor": 2.0,
+  "load_wait": 1800.0,
+  "memory_budget": null,
+  "memory_limit": "off",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": 3.5,
+  "load1": 28.83,
+  "load_gate": false,
+  "memory_level": "critical",
+  "memory_used_kib": 4851288
+ },
+ "total_memory_kib": null,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "validity",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 320.2,
+   "pred_rss_p90": 1050309,
+   "requested": 99370.0,
+   "seq": 0,
+   "weight": 8.0
+  },
+  {
+   "id": "w1",
+   "kind": "work",
+   "pred_cores": 2.91,
+   "pred_duration": 232.6,
+   "pred_duration_p90": 49.8,
+   "pred_rss_p90": null,
+   "requested": 99817.0,
+   "seq": 1,
+   "weight": 3.0
+  },
+  {
+   "id": "cand",
+   "kind": "Work",
+   "pred_cores": 1.62,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2097998,
+   "requested": 99548.0,
+   "seq": 2,
+   "weight": 2.0
+  },
+  {
+   "id": "w2",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99620.0,
+   "seq": 3,
+   "weight": 4.0
+  },
+  {
+   "id": "w3",
+   "kind": "validity",
+   "pred_cores": 5.29,
+   "pred_duration": 562.2,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 802342,
+   "requested": 99738.0,
+   "seq": 4,
+   "weight": 6.0
+  },
+  {
+   "id": "w4",
+   "kind": "correctness",
+   "pred_cores": 0.88,
+   "pred_duration": 364.4,
+   "pred_duration_p90": 719.0,
+   "pred_rss_p90": null,
+   "requested": 99395.0,
+   "seq": 5,
+   "weight": 1.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99809.0,
+   "id": "cand",
+   "quiet_until": 99789.0
+  },
+  {
+   "ended": null,
+   "id": "x1",
+   "quiet_until": 99851.0
+  }
+ ]
+}

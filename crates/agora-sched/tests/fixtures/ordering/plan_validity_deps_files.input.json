@@ -1,0 +1,47 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "3",
+    "--policy",
+    "critical-path",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "lib",
+      "files": [
+        "src/lib"
+      ],
+      "size": 2
+    },
+    {
+      "id": "ui",
+      "files": [
+        "src/lib/ui"
+      ],
+      "after": [
+        "lib"
+      ],
+      "kind": "crash"
+    },
+    {
+      "id": "docs",
+      "files": [
+        "docs"
+      ],
+      "size": 3
+    },
+    {
+      "id": "api",
+      "files": "src/api"
+    },
+    {
+      "id": "api2",
+      "files": "src/api/v2",
+      "after": [
+        "api"
+      ]
+    }
+  ]
+}

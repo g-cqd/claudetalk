@@ -41,6 +41,53 @@ pub async fn handle(sh: &Shared, conn: &Conn, req: Req) -> Result<Reply, ErrorBo
         | Req::SprintSummary { .. }
         | Req::NotePublish { .. }
         | Req::NoteSearch { .. }) => crate::board::handle(sh, conn, r).await,
+        r @ (Req::WorkScope { .. }
+        | Req::WorkScopes { .. }
+        | Req::WorkAdd { .. }
+        | Req::WorkShow { .. }
+        | Req::WorkNext { .. }
+        | Req::WorkClaim { .. }
+        | Req::WorkAccept { .. }
+        | Req::WorkRun { .. }
+        | Req::WorkFinish { .. }
+        | Req::WorkCancel { .. }
+        | Req::WorkUpdate { .. }
+        | Req::WorkReclaim { .. }
+        | Req::WorkStatus { .. }
+        | Req::WorkList { .. }
+        | Req::WorkLog { .. }
+        | Req::WorkPlan { .. }
+        | Req::WorkSettings { .. }) => crate::work::handle(sh, conn, r).await,
+        Req::WorkWait {
+            spec,
+            timeout_ms,
+            cursor,
+        } => crate::awaiter::wait(sh, conn, spec, timeout_ms, cursor)
+            .await
+            .map(|result| Reply::Wait { result })
+            .map_err(daemon_error),
+        r @ (Req::TimerCreate { .. }
+        | Req::TimerDelete { .. }
+        | Req::TimerList { .. }
+        | Req::PoolDefine { .. }
+        | Req::PoolList
+        | Req::LeaseAcquire { .. }
+        | Req::LeaseRenew { .. }
+        | Req::LeaseRelease { .. }
+        | Req::LeaseList { .. }
+        | Req::QuietOpen { .. }
+        | Req::QuietClose { .. }
+        | Req::PolicySet { .. }
+        | Req::PolicyList
+        | Req::CardUpdate { .. }
+        | Req::CardDep { .. }
+        | Req::CardLink { .. }
+        | Req::CardEscalate { .. }
+        | Req::CardExt { .. }
+        | Req::WatchdogReport
+        | Req::Metrics { .. }
+        | Req::BoardExtras
+        | Req::Notices { .. }) => crate::sched::handle(sh, conn, r).await,
         r @ (Req::Whoami
         | Req::Register { .. }
         | Req::BootstrapOwner
@@ -86,6 +133,7 @@ pub fn store_error(e: &StoreError) -> ErrorBody {
         StoreError::NotFound(_) => ErrorBody::new(ErrorCode::NotFound, e.to_string()),
         StoreError::NotMember(_) => ErrorBody::new(ErrorCode::NotMember, e.to_string()),
         StoreError::Crypto(_) => ErrorBody::new(ErrorCode::Crypto, e.to_string()),
+        StoreError::Refused(m) => ErrorBody::new(ErrorCode::Invalid, m.clone()),
         StoreError::Invalid(m) => match *m {
             "blob quota exceeded" => ErrorBody::new(ErrorCode::Quota, e.to_string()),
             "blob too large" => ErrorBody::new(ErrorCode::TooLarge, e.to_string()),
@@ -252,6 +300,12 @@ mod tests {
     fn blob_quota_message_maps_to_quota() {
         let err = StoreError::Invalid("blob quota exceeded");
         assert_body(&store_error(&err), ErrorCode::Quota, "blob quota exceeded");
+    }
+
+    #[test]
+    fn refused_maps_to_invalid_with_message() {
+        let err = StoreError::Refused("x".into());
+        assert_body(&store_error(&err), ErrorCode::Invalid, "x");
     }
 
     #[test]

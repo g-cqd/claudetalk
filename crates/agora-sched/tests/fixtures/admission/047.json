@@ -1,0 +1,107 @@
+{
+ "candidate": "cand",
+ "cpus": 8.0,
+ "expected": {
+  "cause": "ahead",
+  "reason": "job w1 has waited 8 min 5 s, past the backfill limit of 5 min 0 s, so no job starts before it"
+ },
+ "kind": "blocker",
+ "name": "blocker-047",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.29,
+   "pred_duration_p90": 282.5,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99591.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.35,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 966401,
+   "quiet_until": null,
+   "rss": 58762,
+   "started": null,
+   "weight": 2.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.21,
+   "pred_duration_p90": 205.9,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1238072,
+   "started": 99890.0,
+   "weight": 2.0
+  }
+ ],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 5.0,
+  "load_factor": 2.0,
+  "load_wait": 1800.0,
+  "memory_budget": null,
+  "memory_limit": "off",
+  "quiet_drain": 30.0,
+  "quiet_max": 180.0,
+  "small_weight": 2.0
+ },
+ "signals": {
+  "idle_pct": 6.3,
+  "load1": 1.39,
+  "load_gate": false,
+  "memory_level": "normal",
+  "memory_used_kib": 1976956
+ },
+ "total_memory_kib": null,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "validity",
+   "pred_cores": null,
+   "pred_duration": 881.4,
+   "pred_duration_p90": 1181.9,
+   "pred_rss_p90": 1182642,
+   "requested": 99788.0,
+   "seq": 0,
+   "weight": 3.0
+  },
+  {
+   "id": "w1",
+   "kind": "crash",
+   "pred_cores": 3.24,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 936477,
+   "requested": 99515.0,
+   "seq": 1,
+   "weight": 4.0
+  },
+  {
+   "id": "cand",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": 52.1,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1172591,
+   "requested": 99341.0,
+   "seq": 2,
+   "weight": 4.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99963.0,
+   "id": "cand",
+   "quiet_until": 99764.0
+  }
+ ]
+}

@@ -1,0 +1,40 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "5",
+    "--assign",
+    "--conflict-cost",
+    "0.1",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "files": [
+        "m"
+      ]
+    },
+    {
+      "id": "b",
+      "files": [
+        "m/b"
+      ]
+    },
+    {
+      "id": "c",
+      "files": [
+        "m/c"
+      ]
+    },
+    {
+      "id": "d",
+      "files": [
+        "m"
+      ]
+    },
+    {
+      "id": "e"
+    }
+  ]
+}

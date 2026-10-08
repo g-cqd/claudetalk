@@ -1,0 +1,20 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "1",
+    "--assign",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a"
+    },
+    {
+      "id": "b",
+      "after": [
+        "a"
+      ]
+    }
+  ]
+}

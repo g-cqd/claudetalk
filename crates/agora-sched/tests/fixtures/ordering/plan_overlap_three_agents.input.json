@@ -1,0 +1,22 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "3",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "files": "src/app"
+    },
+    {
+      "id": "b",
+      "files": "src/app/view.swift"
+    },
+    {
+      "id": "c",
+      "files": "docs"
+    }
+  ]
+}

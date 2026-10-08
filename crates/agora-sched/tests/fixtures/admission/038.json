@@ -1,0 +1,59 @@
+{
+ "candidate": "cand",
+ "cpus": 16.0,
+ "expected": {
+  "cause": "memory",
+  "reason": "used memory is 11.1 GiB, above the memory budget of 6.8 GiB"
+ },
+ "kind": "blocker",
+ "name": "blocker-038",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.29,
+   "pred_duration_p90": 604.4,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1660134,
+   "started": 99357.0,
+   "weight": 0.5
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 60.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 15.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 7123301,
+  "memory_limit": "warning",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": 2.7,
+  "load1": 4.87,
+  "load_gate": false,
+  "memory_level": "normal",
+  "memory_used_kib": 11663001
+ },
+ "total_memory_kib": 3000000,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "correctness",
+   "pred_cores": null,
+   "pred_duration": 21.8,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99861.0,
+   "seq": 0,
+   "weight": 0.5
+  }
+ ],
+ "windows": []
+}

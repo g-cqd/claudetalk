@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "work: --task 'nonsense': 'nonsense' is not key=value\n"
+}

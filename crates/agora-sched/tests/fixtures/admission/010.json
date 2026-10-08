@@ -1,0 +1,81 @@
+{
+ "candidate": "cand",
+ "cpus": 12.0,
+ "expected": {
+  "cause": "ahead",
+  "reason": "job w0 has waited 11 min 27 s, past the backfill limit of 1 min 0 s, so no job starts before it"
+ },
+ "kind": "blocker",
+ "name": "blocker-010",
+ "now": 100000.0,
+ "running": [],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 60.0,
+  "capacity": 3.0,
+  "cpu_budget": 3.0,
+  "idle_min": 15.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": null,
+  "memory_limit": "off",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 2.0
+ },
+ "signals": {
+  "idle_pct": null,
+  "load1": null,
+  "load_gate": false,
+  "memory_level": "normal",
+  "memory_used_kib": null
+ },
+ "total_memory_kib": 3000000,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "Security",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 698.4,
+   "pred_rss_p90": 316148,
+   "requested": 99313.0,
+   "seq": 0,
+   "weight": 6.0
+  },
+  {
+   "id": "w1",
+   "kind": "correctness",
+   "pred_cores": null,
+   "pred_duration": 127.7,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99575.0,
+   "seq": 1,
+   "weight": 0.5
+  },
+  {
+   "id": "w2",
+   "kind": " crash",
+   "pred_cores": 1.78,
+   "pred_duration": 740.3,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1971678,
+   "requested": 99809.0,
+   "seq": 2,
+   "weight": 4.0
+  },
+  {
+   "id": "cand",
+   "kind": "validity",
+   "pred_cores": 0.92,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1927828,
+   "requested": 99403.0,
+   "seq": 3,
+   "weight": 1.5
+  }
+ ],
+ "windows": []
+}

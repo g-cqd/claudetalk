@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "1. f (other, queued 2.5)\n2. i (other, queued 3)\n3. s (other, queued 7.0)\n4. e (other, queued 10.0)\n",
+  "stderr": ""
+}

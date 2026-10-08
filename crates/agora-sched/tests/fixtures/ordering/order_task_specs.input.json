@@ -1,0 +1,19 @@
+{
+  "args": [
+    "order",
+    "--json",
+    "--task",
+    "id=b,after=a,title=Fix the parser, then the lexer,kind=validity,queued=7,size=2,value=3.5",
+    "--task",
+    "id=sp, kind=validity",
+    "--task",
+    "id=dup,kind=x,kind=validity",
+    "--task",
+    "id= padded ,files= x + y ,after= a+ ,size= 2 "
+  ],
+  "tasks": [
+    {
+      "id": "a"
+    }
+  ]
+}

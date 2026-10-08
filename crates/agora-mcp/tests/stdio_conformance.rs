@@ -23,7 +23,7 @@ const WAIT: Duration = Duration::from_secs(10);
 /// How long a silence must last before we accept that nothing more will come.
 const SILENCE: Duration = Duration::from_secs(2);
 /// The number of tools in the Part 3 table.
-const TOOL_COUNT: usize = 33;
+const TOOL_COUNT: usize = 57;
 
 /// The `result` of a response; panics when the response has none.
 fn result_of(response: &Value) -> &Value {
@@ -564,7 +564,7 @@ async fn ping_is_answered_before_initialize() {
 // 8. tools/list schema validity
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tools_list_has_33_tools_with_unique_names() {
+async fn tools_list_has_57_tools_with_unique_names() {
     let world = World::start().await;
     let mut client = stdio_client(&world, EngineConfig::stdio()).await;
     client.initialize("mock").await;
@@ -572,7 +572,7 @@ async fn tools_list_has_33_tools_with_unique_names() {
     let tools = tools_of(&mut client).await;
     let names: HashSet<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
 
-    assert_eq!(tools.len(), TOOL_COUNT, "the tool table has 33 entries");
+    assert_eq!(tools.len(), TOOL_COUNT, "the tool table has 57 entries");
     assert_eq!(names.len(), TOOL_COUNT, "every tool name appears once");
     drop(client);
     world.shutdown().await;

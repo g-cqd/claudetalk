@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "{\n  \"agents\": 2,\n  \"assignment\": [\n    {\n      \"agent\": 0,\n      \"task\": \"a\",\n      \"cost\": 0.5\n    },\n    {\n      \"agent\": 1,\n      \"task\": \"b\",\n      \"cost\": 1.5\n    }\n  ],\n  \"potential\": 1.5,\n  \"rounds\": 1,\n  \"equilibrium\": true\n}\n",
+  "stderr": ""
+}

@@ -1,0 +1,51 @@
+{
+ "cpu_budget": 16.0,
+ "cpus": 1.0,
+ "expected": "100000.0",
+ "head_need": 1.0,
+ "kind": "head_start",
+ "name": "head-001",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": null,
+   "pred_duration_p90": 553.6,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": null,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.28,
+   "pred_duration_p90": 680.4,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1196755,
+   "started": 99021.0,
+   "weight": 0.5
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.88,
+   "pred_duration_p90": 818.0,
+   "pred_rss_p90": 414455,
+   "quiet_until": null,
+   "rss": 1936513,
+   "started": 99839.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r3",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1807500,
+   "quiet_until": null,
+   "rss": 859782,
+   "started": null,
+   "weight": 1.0
+  }
+ ]
+}

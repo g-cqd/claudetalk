@@ -8,19 +8,30 @@
 //! `tokio::sync::broadcast` bus after each successful commit, in commit order.
 
 pub mod actor;
+pub mod admission;
 pub mod auth;
+pub mod awaiter;
+pub mod background;
 pub mod board;
 pub mod chat;
+pub mod clock;
 pub mod config;
 pub mod dispatch;
+pub mod jobs;
 pub mod org;
 pub mod presence;
 pub mod push;
+pub mod reconciler;
+pub mod sched;
 pub mod server;
+pub mod system;
+pub mod timers;
 pub mod wait;
+pub mod watch;
+pub mod work;
 
 pub use config::{DaemonConfig, Paths};
-pub use server::{Daemon, run_blocking};
+pub use server::{Daemon, Injected, run_blocking};
 
 use agora_proto::{Event, ProtoError};
 use agora_store::{Pub, StoreError};
@@ -62,6 +73,16 @@ pub struct Shared {
     pub daemon_uid: u32,
     /// Cancelled once when the daemon begins shutting down.
     pub shutdown: CancellationToken,
+    /// Time source of all M5 code (`SystemClock`, or a `FakeClock` injected by tests).
+    pub clock: Arc<dyn clock::Clock>,
+    /// Machine probe (`RealMachine`, or a `FakeMachine` injected by tests).
+    pub machine: Arc<dyn agora_run::machine::Machine>,
+    /// The daemon's own signing identity; registered in the store as the system identity.
+    pub system: Arc<agora_crypto::Identity>,
+    /// Wakes the admission loop: notify after anything that can change who may start.
+    pub kick: Arc<tokio::sync::Notify>,
+    /// Live jobs, pending environments and held-since bookkeeping.
+    pub jobs: jobs::JobTable,
 }
 
 /// One authenticated connection.

@@ -6,6 +6,8 @@
 
 use agora_crypto::{CryptoError, Identity};
 use agora_proto::*;
+use agora_sched::model::{LeaseKind, NoticeRecord, PoolRecord, TaskFilter, TaskState, WaitSpec};
+use agora_sched::order::OrderPolicy;
 use agora_store::{Attachment, SignedMessage, SignedOp, StoreError, hex};
 use serde_json::json;
 use tokio::io::{AsyncWriteExt, duplex};
@@ -246,6 +248,87 @@ fn every_request() -> Vec<(&'static str, Req)> {
             },
         ),
         ("online", Req::Online),
+        ("work_scopes", Req::WorkScopes { root: None }),
+        ("work_add", Req::WorkAdd { op: op_wire() }),
+        (
+            "work_show",
+            Req::WorkShow {
+                task: "task-1".into(),
+            },
+        ),
+        (
+            "work_run",
+            Req::WorkRun {
+                op: op_wire(),
+                env: [("PATH".to_string(), "/usr/bin".to_string())].into(),
+            },
+        ),
+        (
+            "work_list",
+            Req::WorkList {
+                filter: TaskFilter {
+                    scope: Some("p".into()),
+                    states: vec![TaskState::Queued, TaskState::Running],
+                    ids: vec![],
+                    limit: 20,
+                },
+            },
+        ),
+        (
+            "work_plan",
+            Req::WorkPlan {
+                scope: None,
+                policy: OrderPolicy::CriticalPath,
+                agents: 2,
+                assign: true,
+                conflict_cost: Some(1.5),
+            },
+        ),
+        (
+            "work_wait",
+            Req::WorkWait {
+                spec: WaitSpec::Tasks {
+                    ids: vec!["a".into()],
+                    any: true,
+                },
+                timeout_ms: 5_000,
+                cursor: Some("abc".into()),
+            },
+        ),
+        ("work_settings", Req::WorkSettings { op: None }),
+        (
+            "lease_list",
+            Req::LeaseList {
+                kind: Some(LeaseKind::Path),
+                holder: None,
+                active_only: true,
+            },
+        ),
+        ("pool_list", Req::PoolList),
+        ("card_update", Req::CardUpdate { op: op_wire() }),
+        (
+            "card_ext",
+            Req::CardExt {
+                ids: vec!["c-1".into()],
+            },
+        ),
+        ("watchdog_report", Req::WatchdogReport),
+        (
+            "metrics",
+            Req::Metrics {
+                team: None,
+                lane: Some("main".into()),
+                since_ms: Some(10),
+            },
+        ),
+        ("board_extras", Req::BoardExtras),
+        (
+            "notices",
+            Req::Notices {
+                after: 3,
+                limit: 50,
+            },
+        ),
     ]
 }
 
@@ -369,6 +452,46 @@ fn every_reply() -> Vec<(&'static str, Reply)> {
             "online",
             Reply::Online {
                 pubkeys: vec![sender_hex()],
+            },
+        ),
+        (
+            "work_plan",
+            Reply::WorkPlan {
+                json: "{}".into(),
+                text: "order".into(),
+            },
+        ),
+        (
+            "pools",
+            Reply::Pools {
+                pools: vec![PoolRecord {
+                    name: "gpu".into(),
+                    capacity: 2.0,
+                    unit: "cards".into(),
+                    used: 0.5,
+                    note: String::new(),
+                    created_ms: 7,
+                    created_by: sender_hex(),
+                }],
+            },
+        ),
+        (
+            "escalated",
+            Reply::Escalated {
+                notified: vec![sender_hex()],
+            },
+        ),
+        (
+            "notices",
+            Reply::Notices {
+                notices: vec![NoticeRecord {
+                    seq: 1,
+                    ts_ms: 2,
+                    target: sender_hex(),
+                    kind: "stale".into(),
+                    subject: "c-1".into(),
+                    text: "t".into(),
+                }],
             },
         ),
     ]
@@ -614,6 +737,48 @@ fn message_appended_event_frame_has_the_exact_shape() {
         json!({
             "t": "event",
             "event": {"event": "message_appended", "channel": "ch-1", "seq": 5}
+        }),
+    );
+}
+
+#[test]
+fn work_events_have_the_exact_shapes() {
+    assert_wire(
+        &Event::WorkChanged {
+            task: "task-1".into(),
+        },
+        json!({"event": "work_changed", "task": "task-1"}),
+    );
+    assert_wire(
+        &Event::NoticePosted {
+            target: sender_hex(),
+            seq: 4,
+        },
+        json!({"event": "notice_posted", "target": sender_hex(), "seq": 4}),
+    );
+    assert_wire(
+        &Event::WorkSettingsChanged,
+        json!({"event": "work_settings_changed"}),
+    );
+}
+
+#[test]
+fn work_wait_request_nests_the_tagged_wait_spec() {
+    assert_wire(
+        &Request {
+            id: 4,
+            req: Req::WorkWait {
+                spec: WaitSpec::Log {
+                    path: "/tmp/x".into(),
+                    pattern: "done".into(),
+                },
+                timeout_ms: 1_000,
+                cursor: None,
+            },
+        },
+        json!({
+            "id": 4, "req": "work_wait", "timeout_ms": 1000, "cursor": null,
+            "spec": {"kind": "log", "path": "/tmp/x", "pattern": "done"}
         }),
     );
 }

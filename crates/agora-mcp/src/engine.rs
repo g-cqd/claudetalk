@@ -1011,7 +1011,7 @@ mod tests {
             .expect("a response");
         let tools = r["result"]["tools"].as_array().expect("tools array");
         assert_eq!(tools.len(), tools::table().len());
-        assert_eq!(tools.len(), 33, "the tool table has 33 tools");
+        assert_eq!(tools.len(), 57, "the tool table has 57 tools");
         assert!(
             r["result"]["resultType"].is_null(),
             "legacy results are not modern"

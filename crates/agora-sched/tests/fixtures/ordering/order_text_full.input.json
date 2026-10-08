@@ -1,0 +1,33 @@
+{
+  "args": [
+    "order"
+  ],
+  "tasks": [
+    {
+      "id": "plain",
+      "title": "Tidy docs",
+      "kind": "docs"
+    },
+    {
+      "id": "pre",
+      "title": "Refactor"
+    },
+    {
+      "id": "fix",
+      "title": "Crash on empty input",
+      "kind": "Crash",
+      "queued": 2,
+      "after": [
+        "pre"
+      ]
+    },
+    {
+      "id": "esc",
+      "title": "x\u001b[2Jy\nz\u202eq\u00a0w, kind=odd"
+    },
+    {
+      "id": "empty",
+      "kind": ""
+    }
+  ]
+}

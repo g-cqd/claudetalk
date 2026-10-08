@@ -1,0 +1,43 @@
+{
+  "args": [
+    "order",
+    "--policy",
+    "wsjf",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "big",
+      "size": 8,
+      "value": 8
+    },
+    {
+      "id": "quick",
+      "size": 1,
+      "value": 4
+    },
+    {
+      "id": "tie",
+      "size": 8,
+      "value": 8
+    },
+    {
+      "id": "low",
+      "size": 4,
+      "value": 1
+    },
+    {
+      "id": "prep",
+      "size": 5,
+      "value": 0.5
+    },
+    {
+      "id": "hot",
+      "size": 1,
+      "value": 40,
+      "after": [
+        "prep"
+      ]
+    }
+  ]
+}

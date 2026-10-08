@@ -1,0 +1,130 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": null,
+ "kind": "blocker",
+ "name": "blocker-067",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.52,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1865469,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99863.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.34,
+   "pred_duration_p90": 388.3,
+   "pred_rss_p90": 2495563,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99571.0,
+   "weight": 0.5
+  },
+  {
+   "id": "r2",
+   "pred_cores": null,
+   "pred_duration_p90": 760.7,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 334394,
+   "started": null,
+   "weight": 3.0
+  },
+  {
+   "id": "r3",
+   "pred_cores": null,
+   "pred_duration_p90": 407.4,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99255.0,
+   "weight": 2.0
+  }
+ ],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 300.0,
+  "capacity": 16.0,
+  "cpu_budget": 2.0,
+  "idle_min": 20.0,
+  "load_factor": 1.5,
+  "load_wait": 1800.0,
+  "memory_budget": null,
+  "memory_limit": "off",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": 49.1,
+  "load1": null,
+  "load_gate": true,
+  "memory_level": null,
+  "memory_used_kib": null
+ },
+ "total_memory_kib": 3000000,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "Security",
+   "pred_cores": 0.1,
+   "pred_duration": 393.7,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99950.0,
+   "seq": 0,
+   "weight": 3.0
+  },
+  {
+   "id": "w1",
+   "kind": " crash",
+   "pred_cores": 1.26,
+   "pred_duration": 576.6,
+   "pred_duration_p90": 665.8,
+   "pred_rss_p90": 740461,
+   "requested": 99869.0,
+   "seq": 1,
+   "weight": 2.0
+  },
+  {
+   "id": "w2",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": 106.5,
+   "pred_duration_p90": 634.4,
+   "pred_rss_p90": 2527217,
+   "requested": 99315.0,
+   "seq": 2,
+   "weight": 0.5
+  },
+  {
+   "id": "cand",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": 664.2,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99348.0,
+   "seq": 3,
+   "weight": 4.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": null,
+   "id": "x0",
+   "quiet_until": 99826.0
+  },
+  {
+   "ended": null,
+   "id": "x2",
+   "quiet_until": 99784.0
+  }
+ ]
+}

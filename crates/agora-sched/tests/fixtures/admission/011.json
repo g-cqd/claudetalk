@@ -1,0 +1,146 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": null,
+ "kind": "blocker",
+ "name": "blocker-011",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.46,
+   "pred_duration_p90": 241.3,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1507344,
+   "started": null,
+   "weight": 0.5
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.35,
+   "pred_duration_p90": 818.0,
+   "pred_rss_p90": 1042872,
+   "quiet_until": null,
+   "rss": 1061127,
+   "started": 99201.0,
+   "weight": 1.0
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.47,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 898419,
+   "started": 99635.0,
+   "weight": 0.5
+  },
+  {
+   "id": "r3",
+   "pred_cores": 0.14,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1507373,
+   "started": 99650.0,
+   "weight": 1.0
+  }
+ ],
+ "settings": {
+  "aging": 0.0,
+  "backfill_wait": 300.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 15.0,
+  "load_factor": 1.0,
+  "load_wait": 1800.0,
+  "memory_budget": 0,
+  "memory_limit": "off",
+  "quiet_drain": 30.0,
+  "quiet_max": 120.0,
+  "small_weight": 2.0
+ },
+ "signals": null,
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "Security",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 1080.8,
+   "pred_rss_p90": 719225,
+   "requested": 99962.0,
+   "seq": 0,
+   "weight": 0.5
+  },
+  {
+   "id": "w0",
+   "kind": "Work",
+   "pred_cores": 1.73,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2532002,
+   "requested": 99798.0,
+   "seq": 1,
+   "weight": 3.0
+  },
+  {
+   "id": "w1",
+   "kind": " crash",
+   "pred_cores": 0.91,
+   "pred_duration": null,
+   "pred_duration_p90": 436.9,
+   "pred_rss_p90": 1281771,
+   "requested": 99589.0,
+   "seq": 2,
+   "weight": 1.0
+  },
+  {
+   "id": "w2",
+   "kind": " crash",
+   "pred_cores": 0.88,
+   "pred_duration": 157.9,
+   "pred_duration_p90": 926.5,
+   "pred_rss_p90": null,
+   "requested": 99928.0,
+   "seq": 3,
+   "weight": 2.0
+  },
+  {
+   "id": "w3",
+   "kind": "Work",
+   "pred_cores": null,
+   "pred_duration": 707.0,
+   "pred_duration_p90": 28.3,
+   "pred_rss_p90": 1151909,
+   "requested": 99543.0,
+   "seq": 4,
+   "weight": 2.0
+  },
+  {
+   "id": "w4",
+   "kind": "crash",
+   "pred_cores": null,
+   "pred_duration": 47.9,
+   "pred_duration_p90": 320.0,
+   "pred_rss_p90": 508748,
+   "requested": 99359.0,
+   "seq": 5,
+   "weight": 0.5
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99740.0,
+   "id": "x0",
+   "quiet_until": 99879.0
+  },
+  {
+   "ended": null,
+   "id": "x2",
+   "quiet_until": 99921.0
+  }
+ ]
+}

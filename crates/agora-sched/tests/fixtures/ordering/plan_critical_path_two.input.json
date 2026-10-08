@@ -1,0 +1,38 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "2",
+    "--policy",
+    "critical-path",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "size": 3
+    },
+    {
+      "id": "b",
+      "size": 1
+    },
+    {
+      "id": "c",
+      "size": 1,
+      "after": [
+        "b"
+      ]
+    },
+    {
+      "id": "d",
+      "size": 4,
+      "after": [
+        "c"
+      ]
+    },
+    {
+      "id": "e",
+      "size": 2
+    }
+  ]
+}

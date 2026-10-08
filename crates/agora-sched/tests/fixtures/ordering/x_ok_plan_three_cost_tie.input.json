@@ -1,0 +1,22 @@
+{
+  "args": [
+    "plan",
+    "--agents",
+    "3",
+    "--assign",
+    "--conflict-cost",
+    "2",
+    "--json"
+  ],
+  "tasks": [
+    {
+      "id": "a"
+    },
+    {
+      "id": "b"
+    },
+    {
+      "id": "c"
+    }
+  ]
+}

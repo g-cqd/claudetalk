@@ -1,0 +1,139 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "ahead",
+  "reason": "job w3 has waited 8 min 29 s, past the backfill limit of 1 min 0 s, so no job starts before it"
+ },
+ "kind": "blocker",
+ "name": "blocker-046",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.19,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1118940,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99310.0,
+   "weight": 2.0
+  },
+  {
+   "id": "r1",
+   "pred_cores": 0.31,
+   "pred_duration_p90": 296.7,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 675420,
+   "started": 99127.0,
+   "weight": 0.5
+  },
+  {
+   "id": "r2",
+   "pred_cores": 0.48,
+   "pred_duration_p90": 670.2,
+   "pred_rss_p90": 1620823,
+   "quiet_until": null,
+   "rss": null,
+   "started": 99018.0,
+   "weight": 2.0
+  },
+  {
+   "id": "r3",
+   "pred_cores": 0.36,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1828866,
+   "started": 99858.0,
+   "weight": 2.0
+  }
+ ],
+ "settings": {
+  "aging": 0.5,
+  "backfill_wait": 60.0,
+  "capacity": null,
+  "cpu_budget": 16.0,
+  "idle_min": 10.0,
+  "load_factor": 1.5,
+  "load_wait": 1800.0,
+  "memory_budget": 7362093,
+  "memory_limit": "warning",
+  "quiet_drain": 60.0,
+  "quiet_max": 120.0,
+  "small_weight": 1.0
+ },
+ "signals": {
+  "idle_pct": 24.2,
+  "load1": 9.18,
+  "load_gate": true,
+  "memory_level": "normal",
+  "memory_used_kib": 8082526
+ },
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "cand",
+   "kind": "docs",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 716.2,
+   "pred_rss_p90": null,
+   "requested": 99643.0,
+   "seq": 0,
+   "weight": 1.0
+  },
+  {
+   "id": "w0",
+   "kind": " crash",
+   "pred_cores": 0.81,
+   "pred_duration": 57.5,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2349944,
+   "requested": 99941.0,
+   "seq": 1,
+   "weight": 1.5
+  },
+  {
+   "id": "w1",
+   "kind": " crash",
+   "pred_cores": 0.48,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99987.0,
+   "seq": 2,
+   "weight": 0.5
+  },
+  {
+   "id": "w2",
+   "kind": "refactor",
+   "pred_cores": 0.5,
+   "pred_duration": 188.5,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99945.0,
+   "seq": 3,
+   "weight": 1.0
+  },
+  {
+   "id": "w3",
+   "kind": "Work",
+   "pred_cores": 1.28,
+   "pred_duration": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "requested": 99491.0,
+   "seq": 4,
+   "weight": 2.0
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99933.0,
+   "id": "cand",
+   "quiet_until": 99884.0
+  }
+ ]
+}

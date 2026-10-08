@@ -8,6 +8,8 @@ license.workspace = true
 agora-crypto = { path = "../agora-crypto" }
 agora-store = { path = "../agora-store" }
 agora-proto = { path = "../agora-proto" }
+agora-sched = { path = "../agora-sched" }
+agora-run = { path = "../agora-run" }
 agora-daemon = { path = "../agora-daemon" }
 agora-deliver = { path = "../agora-deliver" }
 serde.workspace = true

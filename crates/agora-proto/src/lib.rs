@@ -24,7 +24,15 @@ mod frame;
 pub use convert::*;
 pub use frame::*;
 
+use agora_sched::model::{
+    BoardExtras, CardExt as CardExtRecord, LeaseKind, LeaseRecord, MetricsReport, NextOutcome,
+    NoticeRecord, PolicyRecord, PoolRecord, ScopeRecord, StatusReport, TaskFilter, TaskRecord,
+    TimerRecord, WaitResult, WaitSpec, WatchdogReport, WorkEvent,
+};
+use agora_sched::order::OrderPolicy;
+use agora_sched::settings::WorkSettings;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const PROTO_VERSION: u32 = 1;
 /// Largest frame payload in bytes (the 4 length bytes are not counted).
@@ -223,7 +231,7 @@ pub struct EmojiCount {
 // ---------------------------------------------------------------- requests
 
 /// A client request: `{"id": 7, "req": "post", "msg": {...}}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     /// Chosen by the client, echoed in the answer. 0 is reserved for connection-level errors.
     pub id: u64,
@@ -234,7 +242,9 @@ pub struct Request {
 /// Every operation. The reader identity of every read is the connection's
 /// authenticated key; it is never a request field. Every signed input must be
 /// signed by the connection's key (else `forbidden`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Not `Eq`: the scheduling payloads carry floating-point numbers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "req", rename_all = "snake_case")]
 pub enum Req {
     Ping,
@@ -376,11 +386,147 @@ pub enum Req {
         query: String,
         limit: i64,
     },
+    // ---- M5: work queue (agora-sched). Every mutation carries a signed op.
+    WorkScope {
+        op: OpWire,
+    },
+    WorkScopes {
+        root: Option<String>,
+    },
+    WorkAdd {
+        op: OpWire,
+    },
+    /// `task`, not `id`: the request's own `id` is flattened next to the variant's fields.
+    WorkShow {
+        task: String,
+    },
+    WorkNext {
+        op: OpWire,
+    },
+    WorkClaim {
+        op: OpWire,
+    },
+    WorkAccept {
+        op: OpWire,
+    },
+    /// `env` is the caller's scrubbed environment; it is kept in memory until the job
+    /// spawns and is never stored.
+    WorkRun {
+        op: OpWire,
+        env: BTreeMap<String, String>,
+    },
+    WorkFinish {
+        op: OpWire,
+    },
+    WorkCancel {
+        op: OpWire,
+    },
+    WorkUpdate {
+        op: OpWire,
+    },
+    WorkReclaim {
+        op: OpWire,
+    },
+    WorkStatus {
+        scope: Option<String>,
+    },
+    WorkList {
+        filter: TaskFilter,
+    },
+    WorkLog {
+        task: Option<String>,
+        actor: Option<String>,
+        scope: Option<String>,
+        limit: u32,
+    },
+    WorkPlan {
+        scope: Option<String>,
+        policy: OrderPolicy,
+        agents: u32,
+        assign: bool,
+        conflict_cost: Option<f64>,
+    },
+    /// Returns before `min(timeout_ms, MAX_WAIT_MS)`; `cursor` resumes a previous wait.
+    WorkWait {
+        spec: WaitSpec,
+        timeout_ms: u64,
+        cursor: Option<String>,
+    },
+    /// `op: None` reads the settings; `Some` is a signed `work.settings` (Controller+).
+    WorkSettings {
+        op: Option<OpWire>,
+    },
+    TimerCreate {
+        op: OpWire,
+    },
+    TimerDelete {
+        op: OpWire,
+    },
+    TimerList {
+        owner: Option<String>,
+    },
+    PoolDefine {
+        op: OpWire,
+    },
+    PoolList,
+    LeaseAcquire {
+        op: OpWire,
+    },
+    LeaseRenew {
+        op: OpWire,
+    },
+    LeaseRelease {
+        op: OpWire,
+    },
+    LeaseList {
+        kind: Option<LeaseKind>,
+        holder: Option<String>,
+        active_only: bool,
+    },
+    QuietOpen {
+        op: OpWire,
+    },
+    QuietClose {
+        op: OpWire,
+    },
+    PolicySet {
+        op: OpWire,
+    },
+    PolicyList,
+    CardUpdate {
+        op: OpWire,
+    },
+    CardDep {
+        op: OpWire,
+    },
+    CardLink {
+        op: OpWire,
+    },
+    CardEscalate {
+        op: OpWire,
+    },
+    CardExt {
+        ids: Vec<String>,
+    },
+    WatchdogReport,
+    Metrics {
+        team: Option<String>,
+        lane: Option<String>,
+        since_ms: Option<i64>,
+    },
+    BoardExtras,
+    Notices {
+        after: i64,
+        limit: u32,
+    },
 }
 
 // ---------------------------------------------------------------- replies
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Not `Eq`: the scheduling payloads carry floating-point numbers. Replies are built, serialized and dropped,
+/// never stored in bulk, so the size of the `TaskRecord` variants is not worth a `Box` in every constructor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Reply {
     Pong,
@@ -449,6 +595,86 @@ pub enum Reply {
     Notes {
         notes: Vec<NoteHit>,
     },
+    // ---- M5: work queue (agora-sched)
+    Task {
+        task: TaskRecord,
+    },
+    Tasks {
+        tasks: Vec<TaskRecord>,
+    },
+    Next {
+        outcome: NextOutcome,
+    },
+    Accepted {
+        task: TaskRecord,
+        first: bool,
+    },
+    Scope {
+        scope: ScopeRecord,
+    },
+    Scopes {
+        scopes: Vec<ScopeRecord>,
+    },
+    WorkStatus {
+        report: StatusReport,
+    },
+    WorkLog {
+        events: Vec<WorkEvent>,
+    },
+    WorkPlan {
+        json: String,
+        text: String,
+    },
+    Wait {
+        result: WaitResult,
+    },
+    WorkSettings {
+        settings: WorkSettings,
+        view: serde_json::Value,
+        text: String,
+    },
+    Timer {
+        timer: TimerRecord,
+    },
+    Timers {
+        timers: Vec<TimerRecord>,
+    },
+    Pool {
+        pool: PoolRecord,
+    },
+    Pools {
+        pools: Vec<PoolRecord>,
+    },
+    Lease {
+        lease: LeaseRecord,
+    },
+    Leases {
+        leases: Vec<LeaseRecord>,
+    },
+    Policy {
+        policy: PolicyRecord,
+    },
+    Policies {
+        policies: Vec<PolicyRecord>,
+    },
+    CardExts {
+        cards: Vec<CardExtRecord>,
+    },
+    Escalated {
+        notified: Vec<String>,
+    },
+    Watchdog {
+        report: WatchdogReport,
+    },
+    Metrics {
+        report: MetricsReport,
+    },
+    BoardExtras {
+        extras: BoardExtras,
+    },
+    Notices {
+        notices: Vec<NoticeRecord>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -493,7 +719,8 @@ impl std::fmt::Display for ErrorBody {
 }
 
 /// Everything the server sends.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ServerFrame {
     Hello(ServerHello),
@@ -553,6 +780,23 @@ pub enum Event {
     BlobStored {
         hash: String,
     },
+    /// A work task changed (added, claimed, started, finished, cancelled ...).
+    WorkChanged {
+        task: String,
+    },
+    LeaseChanged {
+        lease: String,
+    },
+    TimerChanged {
+        timer: String,
+    },
+    /// A notice was stored for `target` (hex key).
+    NoticePosted {
+        target: String,
+        seq: i64,
+    },
+    WorkSettingsChanged,
+    PolicyChanged,
     /// Never published on the bus; sent only to a subscriber whose events were
     /// dropped (slow consumer or bus overflow). Means "you missed some
     /// notifications; re-read your inbox". The inbox cursor is the source of truth,

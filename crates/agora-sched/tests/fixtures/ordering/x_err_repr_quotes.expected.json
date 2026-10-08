@@ -1,0 +1,5 @@
+{
+  "exit_code": 2,
+  "stdout": "",
+  "stderr": "work: task \"it's\" is after unknown task 'x\"y'\n"
+}

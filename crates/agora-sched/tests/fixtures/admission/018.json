@@ -1,0 +1,118 @@
+{
+ "candidate": "cand",
+ "cpus": 4.0,
+ "expected": {
+  "cause": "capacity",
+  "reason": "declared weights of 4 of the capacity of 4 cores are taken and this job declares 2"
+ },
+ "kind": "blocker",
+ "name": "blocker-018",
+ "now": 100000.0,
+ "running": [
+  {
+   "id": "r0",
+   "pred_cores": 0.85,
+   "pred_duration_p90": null,
+   "pred_rss_p90": null,
+   "quiet_until": null,
+   "rss": 1811481,
+   "started": 99709.0,
+   "weight": 1.5
+  },
+  {
+   "id": "r1",
+   "pred_cores": null,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 2720673,
+   "quiet_until": null,
+   "rss": 1788672,
+   "started": null,
+   "weight": 0.5
+  },
+  {
+   "id": "r2",
+   "pred_cores": null,
+   "pred_duration_p90": 263.2,
+   "pred_rss_p90": 2922612,
+   "quiet_until": null,
+   "rss": 1253729,
+   "started": null,
+   "weight": 2.0
+  }
+ ],
+ "settings": {
+  "aging": 1.0,
+  "backfill_wait": 60.0,
+  "capacity": 4.0,
+  "cpu_budget": 12.0,
+  "idle_min": 5.0,
+  "load_factor": 2.0,
+  "load_wait": 1800.0,
+  "memory_budget": 4847024,
+  "memory_limit": "warning",
+  "quiet_drain": 60.0,
+  "quiet_max": 180.0,
+  "small_weight": 0.5
+ },
+ "signals": {
+  "idle_pct": null,
+  "load1": 13.46,
+  "load_gate": false,
+  "memory_level": "warning",
+  "memory_used_kib": 2094415
+ },
+ "total_memory_kib": 1500000,
+ "waiting": [
+  {
+   "id": "w0",
+   "kind": "docs",
+   "pred_cores": null,
+   "pred_duration": null,
+   "pred_duration_p90": 627.8,
+   "pred_rss_p90": null,
+   "requested": 99562.0,
+   "seq": 0,
+   "weight": 1.0
+  },
+  {
+   "id": "cand",
+   "kind": "validity",
+   "pred_cores": 1.28,
+   "pred_duration": null,
+   "pred_duration_p90": 46.6,
+   "pred_rss_p90": null,
+   "requested": 99536.0,
+   "seq": 1,
+   "weight": 2.0
+  },
+  {
+   "id": "w1",
+   "kind": "docs",
+   "pred_cores": null,
+   "pred_duration": 726.2,
+   "pred_duration_p90": 229.9,
+   "pred_rss_p90": null,
+   "requested": 99969.0,
+   "seq": 2,
+   "weight": 1.0
+  },
+  {
+   "id": "w2",
+   "kind": "refactor",
+   "pred_cores": null,
+   "pred_duration": 656.8,
+   "pred_duration_p90": null,
+   "pred_rss_p90": 1580210,
+   "requested": 99791.0,
+   "seq": 3,
+   "weight": 1.5
+  }
+ ],
+ "windows": [
+  {
+   "ended": 99877.0,
+   "id": "x1",
+   "quiet_until": 99912.0
+  }
+ ]
+}
