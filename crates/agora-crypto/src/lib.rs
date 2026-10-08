@@ -35,6 +35,11 @@ fn random<const N: usize>() -> Result<[u8; N], CryptoError> {
     Ok(b)
 }
 
+/// N bytes from the OS random source.
+pub fn random_bytes<const N: usize>() -> Result<[u8; N], CryptoError> {
+    random::<N>()
+}
+
 /// Length-prefixed, domain-separated encoding for signing.
 pub fn canonical(domain: &str, fields: &[&[u8]]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -111,27 +116,66 @@ impl Identity {
         Ok(*h.finalize().as_bytes())
     }
 
-    /// Wrap a channel key for `recipient`. Output: nonce || ciphertext.
+    /// Wrap a channel key for `recipient` at key `epoch`. Output: nonce || ciphertext.
+    /// The AAD is always [`wrap_aad`]`(channel, epoch)`, so a wrapped key cannot be
+    /// re-bound to another channel or epoch by the caller.
     pub fn wrap_key(
         &self,
         recipient: &[u8; 32],
         channel: &str,
+        epoch: i64,
         key: &ChannelKey,
     ) -> Result<Vec<u8>, CryptoError> {
-        aead_seal(&self.shared_with(recipient)?, channel.as_bytes(), &key.0)
+        aead_seal(
+            &self.shared_with(recipient)?,
+            &wrap_aad(channel, epoch),
+            &key.0,
+        )
     }
 
+    /// Inverse of [`Identity::wrap_key`]; `sender` is the identity that wrapped the key.
     pub fn unwrap_key(
         &self,
         sender: &[u8; 32],
         channel: &str,
+        epoch: i64,
         wrapped: &[u8],
     ) -> Result<ChannelKey, CryptoError> {
-        let raw = aead_open(&self.shared_with(sender)?, channel.as_bytes(), wrapped)?;
-        Ok(ChannelKey(
-            raw.try_into().map_err(|_| CryptoError::Malformed)?,
-        ))
+        let plain = aead_open(
+            &self.shared_with(sender)?,
+            &wrap_aad(channel, epoch),
+            wrapped,
+        )?;
+        let key: [u8; KEY_LEN] = plain
+            .as_slice()
+            .try_into()
+            .map_err(|_| CryptoError::Malformed)?;
+        Ok(ChannelKey(key))
     }
+}
+
+/// AAD binding a wrapped channel key to its channel and epoch:
+/// `canonical("wrap/v1", [channel, epoch.to_le_bytes()])`.
+pub fn wrap_aad(channel: &str, epoch: i64) -> Vec<u8> {
+    canonical("wrap/v1", &[channel.as_bytes(), &epoch.to_le_bytes()])
+}
+
+/// AAD for an encrypted message body:
+/// `canonical("body/v1", [channel, epoch.to_le_bytes(), message_id])`.
+pub fn body_aad(channel: &str, epoch: i64, message_id: &str) -> Vec<u8> {
+    canonical(
+        "body/v1",
+        &[
+            channel.as_bytes(),
+            &epoch.to_le_bytes(),
+            message_id.as_bytes(),
+        ],
+    )
+}
+
+/// AAD for an encrypted attachment blob: `canonical("att/v1", [channel, epoch.to_le_bytes()])`.
+pub fn attachment_aad(channel: &str, epoch: i64) -> Vec<u8> {
+    canonical("att/v1", &[channel.as_bytes(), &epoch.to_le_bytes()])
 }
 
 pub fn verify(public: &[u8; 32], msg: &[u8], sig: &[u8]) -> Result<(), CryptoError> {
@@ -219,10 +263,67 @@ mod tests {
         let bob = Identity::generate().unwrap();
         let eve = Identity::generate().unwrap();
         let key = ChannelKey::generate().unwrap();
-        let wrapped = alice.wrap_key(&bob.public(), "c1", &key).unwrap();
-        assert!(bob.unwrap_key(&alice.public(), "c1", &wrapped).unwrap() == key);
-        assert!(eve.unwrap_key(&alice.public(), "c1", &wrapped).is_err());
-        assert!(bob.unwrap_key(&alice.public(), "other", &wrapped).is_err());
+        let wrapped = alice.wrap_key(&bob.public(), "c1", 0, &key).unwrap();
+        assert!(bob.unwrap_key(&alice.public(), "c1", 0, &wrapped).unwrap() == key);
+        assert!(eve.unwrap_key(&alice.public(), "c1", 0, &wrapped).is_err());
+    }
+
+    #[test]
+    fn wrapped_key_with_wrong_epoch_fails_to_unwrap() {
+        let alice = Identity::generate().unwrap();
+        let bob = Identity::generate().unwrap();
+        let key = ChannelKey::generate().unwrap();
+        let wrapped = alice.wrap_key(&bob.public(), "c1", 3, &key).unwrap();
+        assert_eq!(
+            bob.unwrap_key(&alice.public(), "c1", 2, &wrapped).err(),
+            Some(CryptoError::Decrypt)
+        );
+        assert_eq!(
+            bob.unwrap_key(&alice.public(), "c1", 4, &wrapped).err(),
+            Some(CryptoError::Decrypt)
+        );
+    }
+
+    #[test]
+    fn wrapped_key_with_wrong_channel_fails_to_unwrap() {
+        let alice = Identity::generate().unwrap();
+        let bob = Identity::generate().unwrap();
+        let key = ChannelKey::generate().unwrap();
+        let wrapped = alice.wrap_key(&bob.public(), "c1", 0, &key).unwrap();
+        assert_eq!(
+            bob.unwrap_key(&alice.public(), "c2", 0, &wrapped).err(),
+            Some(CryptoError::Decrypt)
+        );
+    }
+
+    #[test]
+    fn unwrap_rejects_wrapped_plaintext_that_is_not_a_key() {
+        let alice = Identity::generate().unwrap();
+        let bob = Identity::generate().unwrap();
+        let shared = alice.shared_with(&bob.public()).unwrap();
+        let wrapped = aead_seal(&shared, &wrap_aad("c1", 0), b"too short").unwrap();
+        assert_eq!(
+            bob.unwrap_key(&alice.public(), "c1", 0, &wrapped).err(),
+            Some(CryptoError::Malformed)
+        );
+    }
+
+    #[test]
+    fn aad_functions_differ_for_different_inputs() {
+        assert_ne!(wrap_aad("c1", 0), wrap_aad("c1", 1));
+        assert_ne!(wrap_aad("c1", 0), wrap_aad("c2", 0));
+        assert_ne!(body_aad("c1", 0, "m1"), body_aad("c1", 0, "m2"));
+        assert_ne!(body_aad("c1", 0, "m1"), body_aad("c1", 1, "m1"));
+        assert_ne!(body_aad("c1", 0, "m1"), body_aad("c2", 0, "m1"));
+        assert_ne!(attachment_aad("c1", 0), attachment_aad("c1", 1));
+        assert_ne!(attachment_aad("c1", 0), attachment_aad("c2", 0));
+    }
+
+    #[test]
+    fn aad_functions_are_domain_separated() {
+        assert_ne!(wrap_aad("c1", 0), attachment_aad("c1", 0));
+        assert_ne!(body_aad("c1", 0, ""), attachment_aad("c1", 0));
+        assert_ne!(body_aad("c1", 0, ""), wrap_aad("c1", 0));
     }
 
     #[test]

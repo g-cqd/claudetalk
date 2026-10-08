@@ -265,6 +265,31 @@ fn observers_can_react_to_cards() {
     );
 }
 
+/// Channel "vault-7" with alice as its only member, and message "m" posted by alice in it.
+fn vault() -> World {
+    let mut w = world();
+    w.s.create_channel(
+        NOW,
+        &op(&w.alice, "channel.create", "vault-7", r#"{"kind":"group"}"#),
+        &[],
+    )
+    .unwrap();
+    let msg = SignedMessage {
+        id: "m".into(),
+        channel: "vault-7".into(),
+        thread_of: None,
+        sender: [0; 32],
+        ts: NOW,
+        encrypted: false,
+        epoch: 0,
+        body: b"hello".to_vec(),
+        attachments: vec![],
+        sig: vec![],
+    };
+    w.s.post_message(NOW, &msg.sign(&w.alice)).unwrap();
+    w
+}
+
 #[test]
 fn non_members_cannot_react_to_messages_but_can_react_to_cards() {
     let (mut w, _) = chat();
@@ -274,7 +299,7 @@ fn non_members_cannot_react_to_messages_but_can_react_to_cards() {
             &reaction("message", "m", "👍", false, NOW).sign(&w.carol),
         )
         .unwrap_err();
-    assert!(matches!(err, StoreError::NotMember(_)));
+    assert!(matches!(err, StoreError::NotFound(ref t) if t == "m"));
     assert!(w.s.reaction_counts("message", "m").unwrap().is_empty());
 
     w.s.react(
@@ -286,6 +311,51 @@ fn non_members_cannot_react_to_messages_but_can_react_to_cards() {
         w.s.reaction_counts("card", "c1").unwrap(),
         vec![("🔥".to_string(), 1)]
     );
+}
+
+#[test]
+fn non_member_reaction_to_a_message_is_not_found_with_the_message_id() {
+    let mut w = vault();
+    let err =
+        w.s.react(
+            NOW,
+            &reaction("message", "m", "👍", false, NOW).sign(&w.carol),
+        )
+        .unwrap_err();
+    assert!(matches!(err, StoreError::NotFound(ref t) if t == "m"));
+}
+
+#[test]
+fn reaction_to_a_missing_message_is_not_found_with_its_own_id_for_a_non_member() {
+    let mut w = vault();
+    let err =
+        w.s.react(
+            NOW,
+            &reaction("message", "nope", "👍", false, NOW).sign(&w.carol),
+        )
+        .unwrap_err();
+    assert!(matches!(err, StoreError::NotFound(ref t) if t == "nope"));
+}
+
+#[test]
+fn reaction_errors_never_name_the_channel_the_message_is_in() {
+    let mut w = vault();
+    let existing =
+        w.s.react(
+            NOW,
+            &reaction("message", "m", "👍", false, NOW).sign(&w.carol),
+        )
+        .unwrap_err();
+    let missing =
+        w.s.react(
+            NOW,
+            &reaction("message", "nope", "👍", false, NOW).sign(&w.carol),
+        )
+        .unwrap_err();
+    for err in [&existing, &missing] {
+        assert!(!err.to_string().contains("vault-7"), "{err}");
+        assert!(!format!("{err:?}").contains("vault-7"), "{err:?}");
+    }
 }
 
 #[test]
@@ -706,6 +776,87 @@ fn reaction_with_an_extreme_timestamp_is_invalid() {
             "ts {ts}"
         );
     }
+}
+
+#[test]
+fn reaction_counts_for_shows_counts_to_a_channel_member() {
+    let (mut w, _) = chat();
+    w.s.react(
+        NOW,
+        &reaction("message", "m", "👍", false, NOW).sign(&w.bob),
+    )
+    .unwrap();
+    assert_eq!(
+        w.s.reaction_counts_for(&w.alice.public(), "message", "m")
+            .unwrap(),
+        vec![("👍".to_string(), 1)]
+    );
+}
+
+#[test]
+fn reaction_counts_for_refuses_a_non_member_with_not_found_of_the_message() {
+    let (mut w, _) = chat();
+    w.s.react(
+        NOW,
+        &reaction("message", "m", "👍", false, NOW).sign(&w.alice),
+    )
+    .unwrap();
+    let err =
+        w.s.reaction_counts_for(&w.carol.public(), "message", "m")
+            .unwrap_err();
+    assert!(matches!(err, StoreError::NotFound(ref t) if t == "m"));
+}
+
+#[test]
+fn reaction_counts_for_a_missing_message_is_not_found_with_its_id() {
+    let (w, _) = chat();
+    let err =
+        w.s.reaction_counts_for(&w.alice.public(), "message", "nope")
+            .unwrap_err();
+    assert!(matches!(err, StoreError::NotFound(ref t) if t == "nope"));
+}
+
+#[test]
+fn reaction_counts_for_does_not_gate_file_or_card_targets() {
+    let (mut w, file) = chat();
+    w.s.react(
+        NOW,
+        &reaction("file", &file, "👀", false, NOW).sign(&w.alice),
+    )
+    .unwrap();
+    w.s.react(
+        NOW,
+        &reaction("card", "c1", "🔥", false, NOW).sign(&w.alice),
+    )
+    .unwrap();
+    assert_eq!(
+        w.s.reaction_counts_for(&w.carol.public(), "file", &file)
+            .unwrap(),
+        vec![("👀".to_string(), 1)]
+    );
+    assert_eq!(
+        w.s.reaction_counts_for(&w.carol.public(), "card", "c1")
+            .unwrap(),
+        vec![("🔥".to_string(), 1)]
+    );
+}
+
+#[test]
+fn reaction_counts_for_an_unknown_kind_is_invalid() {
+    let (w, _) = chat();
+    let err =
+        w.s.reaction_counts_for(&w.alice.public(), "thread", "m")
+            .unwrap_err();
+    assert!(matches!(err, StoreError::Invalid(_)));
+}
+
+#[test]
+fn reaction_counts_for_an_unknown_reader_is_rejected_before_the_membership_gate() {
+    let (w, _) = chat();
+    let err =
+        w.s.reaction_counts_for(&w.eve.public(), "message", "m")
+            .unwrap_err();
+    assert!(matches!(err, StoreError::Invalid(_)));
 }
 
 #[test]

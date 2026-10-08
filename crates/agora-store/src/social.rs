@@ -113,8 +113,9 @@ impl Store {
                 match channel {
                     None => false,
                     Some(channel) => {
+                        // Same answer as a missing message, so the channel id is not leaked.
                         if !is_member(&tx, &channel, &r.by)? {
-                            return Err(StoreError::NotMember(channel));
+                            return Err(StoreError::NotFound(r.target.clone()));
                         }
                         true
                     }
@@ -157,6 +158,39 @@ impl Store {
         Store::append(&tx, now, &hex(&r.by), event, &r.target, &data)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// reaction_counts behind a read gate: reader must be active; for kind "message" the
+    /// message must exist and the reader must be a member of its channel, otherwise
+    /// NotFound(target) (never NotMember: that would leak the channel id). Unknown
+    /// kind -> Invalid("unknown reaction target kind").
+    pub fn reaction_counts_for(
+        &self,
+        reader: &Pub,
+        kind: &str,
+        target: &str,
+    ) -> Result<Vec<(String, i64)>, StoreError> {
+        active_role(&self.conn, reader)?;
+        match kind {
+            "message" => {
+                let channel: Option<String> = self
+                    .conn
+                    .query_row("SELECT channel FROM messages WHERE id=?", [target], |x| {
+                        x.get(0)
+                    })
+                    .optional()?;
+                let member = match channel {
+                    None => false,
+                    Some(channel) => is_member(&self.conn, &channel, reader)?,
+                };
+                if !member {
+                    return Err(StoreError::NotFound(target.to_owned()));
+                }
+            }
+            "file" | "card" => {}
+            _ => return Err(StoreError::Invalid("unknown reaction target kind")),
+        }
+        self.reaction_counts(kind, target)
     }
 
     pub fn reaction_counts(
@@ -251,5 +285,131 @@ impl Store {
             Ok((r.get(0)?, r.get(1)?))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identity::SignedOp;
+    use crate::messages::SignedMessage;
+
+    const NOW: i64 = 1_700_000_000_000;
+
+    fn op(id: &Identity, kind: &str, subject: &str, arg: &str, nonce: &str) -> SignedOp {
+        SignedOp::new(kind, subject, arg, NOW, nonce).sign(id)
+    }
+
+    fn react_by(by: &Identity, kind: &str, target: &str, emoji: &str) -> SignedReaction {
+        SignedReaction {
+            kind: kind.into(),
+            target: target.into(),
+            by: [0; 32],
+            emoji: emoji.into(),
+            remove: false,
+            ts: NOW,
+            sig: vec![],
+        }
+        .sign(by)
+    }
+
+    /// Owner bootstrapped; alice and bob registered as workers. Channel "c" is created by
+    /// alice (a group, so alice is its only member and admin), and alice posts message "m".
+    /// bob is registered but never a member of "c". eve is never registered.
+    fn fixture() -> (Store, Identity, Identity, Identity, Identity) {
+        let mut s = Store::open_in_memory().unwrap();
+        let owner = Identity::from_seed([1; 32]);
+        let alice = Identity::from_seed([3; 32]);
+        let bob = Identity::from_seed([4; 32]);
+        let eve = Identity::from_seed([6; 32]);
+        s.bootstrap_owner(NOW, &owner.public()).unwrap();
+        s.register_identity(NOW, &alice.public(), "alice").unwrap();
+        s.register_identity(NOW, &bob.public(), "bob").unwrap();
+        s.create_channel(
+            NOW,
+            &op(
+                &alice,
+                "channel.create",
+                "c",
+                r#"{"kind":"group"}"#,
+                "create-c",
+            ),
+            &[],
+        )
+        .unwrap();
+        let msg = SignedMessage {
+            id: "m".into(),
+            channel: "c".into(),
+            thread_of: None,
+            sender: [0; 32],
+            ts: NOW,
+            encrypted: false,
+            epoch: 0,
+            body: b"hello".to_vec(),
+            attachments: vec![],
+            sig: vec![],
+        }
+        .sign(&alice);
+        s.post_message(NOW, &msg).unwrap();
+        (s, owner, alice, bob, eve)
+    }
+
+    #[test]
+    fn react_by_non_member_is_not_found_with_message_id() {
+        let (mut s, _owner, alice, bob, _eve) = fixture();
+        let err = s
+            .react(NOW, &react_by(&bob, "message", "m", "+1"))
+            .unwrap_err();
+        assert!(matches!(err, StoreError::NotFound(ref t) if t == "m"));
+        // A missing message gives the same answer, so the channel id is not revealed.
+        let missing = s
+            .react(NOW, &react_by(&alice, "message", "nope", "+1"))
+            .unwrap_err();
+        assert!(matches!(missing, StoreError::NotFound(ref t) if t == "nope"));
+    }
+
+    #[test]
+    fn reaction_counts_for_gates_message_by_membership() {
+        let (mut s, _owner, alice, bob, eve) = fixture();
+        s.react(NOW, &react_by(&alice, "message", "m", "+1"))
+            .unwrap();
+
+        let counts = s
+            .reaction_counts_for(&alice.public(), "message", "m")
+            .unwrap();
+        assert_eq!(counts, vec![("+1".to_owned(), 1)]);
+
+        let outsider = s
+            .reaction_counts_for(&bob.public(), "message", "m")
+            .unwrap_err();
+        assert!(matches!(outsider, StoreError::NotFound(ref t) if t == "m"));
+        let missing = s
+            .reaction_counts_for(&alice.public(), "message", "nope")
+            .unwrap_err();
+        assert!(matches!(missing, StoreError::NotFound(ref t) if t == "nope"));
+
+        // Files and cards have no channel, so no membership gate applies.
+        assert!(
+            s.reaction_counts_for(&bob.public(), "file", "anything")
+                .unwrap()
+                .is_empty()
+        );
+        // The reader itself must be an active, registered identity.
+        let unknown = s
+            .reaction_counts_for(&eve.public(), "file", "anything")
+            .unwrap_err();
+        assert!(matches!(unknown, StoreError::Invalid("unknown identity")));
+    }
+
+    #[test]
+    fn reaction_counts_for_rejects_unknown_kind() {
+        let (s, _owner, alice, _bob, _eve) = fixture();
+        let err = s
+            .reaction_counts_for(&alice.public(), "thread", "m")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            StoreError::Invalid("unknown reaction target kind")
+        ));
     }
 }

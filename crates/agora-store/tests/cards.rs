@@ -1,11 +1,12 @@
 //! Public-API tests for cards: the review-gated lifecycle, independent approval,
 //! ownership of claimed work, role gates, failed transitions, the stale-claim
-//! watchdog, and malformed create args.
+//! watchdog, malformed create args, and the board listing (`list_cards`).
 
 mod common;
 use common::*;
 
 use agora_core::{CardState, Role, TransitionError};
+use agora_crypto::Identity;
 use agora_store::*;
 
 /// Walk a backlog card to Review as its owner (alice), without evidence or approval.
@@ -482,4 +483,170 @@ fn unknown_and_revoked_identities_cannot_create_cards() {
             .unwrap_err();
     assert!(matches!(err, StoreError::Invalid("identity revoked")));
     assert!(matches!(w.s.card_state("c1"), Err(StoreError::NotFound(_))));
+}
+
+/// Create a backlog card titled "Card <id>" in `lane`, as `sup`, signed at `now`.
+fn create_at(s: &mut Store, sup: &Identity, id: &str, lane: &str, now: i64) {
+    let arg = format!(r#"{{"title":"Card {id}","lane":"{lane}"}}"#);
+    s.create_card(now, &op_at(sup, "card.create", id, &arg, now))
+        .unwrap();
+}
+
+/// Move a card to `to` as `who`, at `now`. Signed at `now`, so the clock check passes.
+fn move_at(s: &mut Store, who: &Identity, id: &str, to: &str, now: i64) {
+    s.transition(now, &op_at(who, "card.move", id, to, now), false)
+        .unwrap();
+}
+
+fn listed_ids(cards: &[CardRow]) -> Vec<&str> {
+    cards.iter().map(|c| c.id.as_str()).collect()
+}
+
+#[test]
+fn list_cards_returns_title_lane_state_and_claimant_of_each_card() {
+    let mut w = world();
+    create_at(&mut w.s, &w.sup, "c1", "infra", NOW);
+    create_at(&mut w.s, &w.sup, "c2", "docs", NOW);
+    move_at(&mut w.s, &w.sup, "c1", "ready", NOW);
+    move_at(&mut w.s, &w.alice, "c1", "claimed", NOW);
+
+    let cards = w.s.list_cards(None, None, 10).unwrap();
+    assert_eq!(
+        cards,
+        [
+            CardRow {
+                id: "c1".into(),
+                title: "Card c1".into(),
+                lane: "infra".into(),
+                state: CardState::Claimed,
+                owner: Some(pk_hex(&w.alice)),
+                updated: NOW,
+            },
+            CardRow {
+                id: "c2".into(),
+                title: "Card c2".into(),
+                lane: "docs".into(),
+                state: CardState::Backlog,
+                owner: None,
+                updated: NOW,
+            },
+        ]
+    );
+}
+
+#[test]
+fn list_cards_filters_by_state() {
+    let mut w = world();
+    create_at(&mut w.s, &w.sup, "a", "x", NOW);
+    create_at(&mut w.s, &w.sup, "b", "x", NOW);
+    create_at(&mut w.s, &w.sup, "c", "x", NOW);
+    move_at(&mut w.s, &w.sup, "b", "ready", NOW);
+    move_at(&mut w.s, &w.sup, "c", "ready", NOW);
+    move_at(&mut w.s, &w.alice, "c", "claimed", NOW);
+
+    let backlog = w.s.list_cards(Some(CardState::Backlog), None, 10).unwrap();
+    assert_eq!(listed_ids(&backlog), ["a"]);
+    let ready = w.s.list_cards(Some(CardState::Ready), None, 10).unwrap();
+    assert_eq!(listed_ids(&ready), ["b"]);
+    let claimed = w.s.list_cards(Some(CardState::Claimed), None, 10).unwrap();
+    assert_eq!(listed_ids(&claimed), ["c"]);
+}
+
+#[test]
+fn list_cards_filters_by_lane() {
+    let mut w = world();
+    create_at(&mut w.s, &w.sup, "a", "x", NOW);
+    create_at(&mut w.s, &w.sup, "b", "y", NOW);
+    create_at(&mut w.s, &w.sup, "c", "x", NOW);
+
+    let x = w.s.list_cards(None, Some("x"), 10).unwrap();
+    assert_eq!(listed_ids(&x), ["a", "c"]);
+    let y = w.s.list_cards(None, Some("y"), 10).unwrap();
+    assert_eq!(listed_ids(&y), ["b"]);
+    let unknown_lane = w.s.list_cards(None, Some("z"), 10).unwrap();
+    assert!(unknown_lane.is_empty());
+}
+
+#[test]
+fn list_cards_applies_state_and_lane_together() {
+    let mut w = world();
+    create_at(&mut w.s, &w.sup, "a", "x", NOW);
+    create_at(&mut w.s, &w.sup, "b", "y", NOW);
+    create_at(&mut w.s, &w.sup, "c", "x", NOW);
+    move_at(&mut w.s, &w.sup, "b", "ready", NOW);
+    move_at(&mut w.s, &w.sup, "c", "ready", NOW);
+
+    // Both filters must hold: "ready" alone would also list b, and "x" alone a.
+    let ready_in_x =
+        w.s.list_cards(Some(CardState::Ready), Some("x"), 10)
+            .unwrap();
+    assert_eq!(listed_ids(&ready_in_x), ["c"]);
+    let backlog_in_y =
+        w.s.list_cards(Some(CardState::Backlog), Some("y"), 10)
+            .unwrap();
+    assert!(backlog_in_y.is_empty());
+}
+
+#[test]
+fn list_cards_orders_by_last_update_newest_first() {
+    let mut w = world();
+    create_at(&mut w.s, &w.sup, "a", "x", NOW);
+    create_at(&mut w.s, &w.sup, "b", "x", NOW);
+    create_at(&mut w.s, &w.sup, "c", "x", NOW);
+    // Creation order is a, b, c; updates make c newest, then a. b is never touched.
+    move_at(&mut w.s, &w.sup, "a", "ready", NOW + 1_000);
+    move_at(&mut w.s, &w.sup, "c", "ready", NOW + 2_000);
+
+    let cards = w.s.list_cards(None, None, 10).unwrap();
+    let order: Vec<(&str, i64)> = cards.iter().map(|c| (c.id.as_str(), c.updated)).collect();
+    assert_eq!(order, [("c", NOW + 2_000), ("a", NOW + 1_000), ("b", NOW)]);
+}
+
+#[test]
+fn list_cards_breaks_update_ties_by_id_ascending() {
+    let mut w = world();
+    // Inserted b, a, c at one instant: insertion order must not decide the tie.
+    create_at(&mut w.s, &w.sup, "b", "x", NOW);
+    create_at(&mut w.s, &w.sup, "a", "x", NOW);
+    create_at(&mut w.s, &w.sup, "c", "x", NOW);
+
+    let cards = w.s.list_cards(None, None, 10).unwrap();
+    assert_eq!(listed_ids(&cards), ["a", "b", "c"]);
+}
+
+#[test]
+fn list_cards_limit_keeps_the_first_rows_in_order() {
+    let mut w = world();
+    create_at(&mut w.s, &w.sup, "a", "x", NOW);
+    create_at(&mut w.s, &w.sup, "b", "x", NOW + 1_000);
+    create_at(&mut w.s, &w.sup, "c", "x", NOW + 2_000);
+
+    // Newest two, not the first two created: truncation happens after ordering.
+    let cards = w.s.list_cards(None, None, 2).unwrap();
+    assert_eq!(listed_ids(&cards), ["c", "b"]);
+}
+
+#[test]
+fn list_cards_with_a_non_positive_limit_returns_nothing() {
+    let mut w = world();
+    create_at(&mut w.s, &w.sup, "a", "x", NOW);
+    create_at(&mut w.s, &w.sup, "b", "x", NOW);
+
+    for limit in [0, -1, i64::MIN] {
+        let cards = w.s.list_cards(None, None, limit).unwrap();
+        assert!(cards.is_empty(), "limit {limit} returned {cards:?}");
+    }
+}
+
+#[test]
+fn list_cards_limit_above_500_is_clamped_and_returns_every_card() {
+    let mut w = world();
+    create_at(&mut w.s, &w.sup, "a", "x", NOW);
+    create_at(&mut w.s, &w.sup, "b", "x", NOW);
+    create_at(&mut w.s, &w.sup, "c", "x", NOW);
+
+    for limit in [501, i64::MAX] {
+        let cards = w.s.list_cards(None, None, limit).unwrap();
+        assert_eq!(listed_ids(&cards), ["a", "b", "c"], "limit {limit}");
+    }
 }

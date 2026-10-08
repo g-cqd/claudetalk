@@ -3,6 +3,7 @@
 //! write transaction as the change (taken IMMEDIATE, so the read holds the
 //! write lock); a caller can never assert its own role.
 
+use crate::channels::is_encrypted;
 use crate::{Store, StoreError};
 use agora_core::{Role, TransitionError};
 use agora_crypto::{Identity, canonical, verify};
@@ -167,7 +168,44 @@ pub(crate) fn authorize(
     Ok(role)
 }
 
+/// Registration state of a key, for `whoami`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityStatus {
+    Unknown,
+    Active(Role),
+    Revoked,
+}
+
 impl Store {
+    /// Registration state of `pk`: Unknown (never registered), Active(role), or Revoked.
+    /// A revoked row reports Revoked whatever its role. A corrupt stored role is an error.
+    pub fn identity_status(&self, pk: &Pub) -> Result<IdentityStatus, StoreError> {
+        let row: Option<(String, bool)> = self
+            .conn
+            .query_row(
+                "SELECT role, revoked FROM identities WHERE pubkey=?",
+                [pk.as_slice()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        match row {
+            None => Ok(IdentityStatus::Unknown),
+            Some((_, true)) => Ok(IdentityStatus::Revoked),
+            Some((role, false)) => Role::parse(&role)
+                .map(IdentityStatus::Active)
+                .ok_or(StoreError::Invalid("corrupt role in database")),
+        }
+    }
+
+    /// True iff an active (non-revoked) owner exists.
+    pub fn owner_exists(&self) -> Result<bool, StoreError> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM identities WHERE role='owner' AND revoked=0)",
+            [],
+            |r| r.get(0),
+        )?)
+    }
+
     /// Register a key (idempotent). Open registration is a local-mode policy;
     /// the daemon decides who may call this.
     pub fn register_identity(&mut self, now: i64, pk: &Pub, label: &str) -> Result<(), StoreError> {
@@ -251,6 +289,17 @@ impl Store {
     /// Revoked keys can no longer authorize anything. Controllers or above only.
     /// Acting on a controller or owner needs the owner, and the last active owner
     /// cannot be revoked.
+    ///
+    /// The key's channel memberships are deleted in the same transaction. Each encrypted
+    /// channel it belonged to gets a `channel_rotation` row (the first reason is kept),
+    /// because a member left without a key change. Last-admin protection does not apply
+    /// here: a channel left without an admin is managed by Supervisor or above.
+    /// The event data is `{"channels": n, "rotation": [encrypted channel ids, sorted]}`.
+    ///
+    /// Rotation procedure: an admin (or Supervisor or above) of each flagged channel
+    /// generates a new channel key, wraps it for every current member at epoch + 1 and
+    /// sends `channel.rotate`, which bumps the epoch and clears the rotation row. Until
+    /// then `post_message` refuses the channel.
     pub fn revoke_identity(&mut self, now: i64, op: &SignedOp) -> Result<(), StoreError> {
         let tx = self
             .conn
@@ -266,6 +315,27 @@ impl Store {
         if target_role == Role::Owner && is_last_owner(&tx, &target)? {
             return Err(StoreError::Invalid("cannot remove the last owner"));
         }
+        let channels: Vec<String> = {
+            let mut stmt =
+                tx.prepare("SELECT channel FROM channel_members WHERE pubkey=? ORDER BY channel")?;
+            let rows = stmt.query_map([target.as_slice()], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut rotation: Vec<&str> = Vec::new();
+        for channel in &channels {
+            if is_encrypted(&tx, channel)? {
+                tx.execute(
+                    "INSERT OR IGNORE INTO channel_rotation(channel,since,reason) \
+                     VALUES (?,?,'revoked ' || ?)",
+                    params![channel, now, hex(&target)],
+                )?;
+                rotation.push(channel);
+            }
+        }
+        tx.execute(
+            "DELETE FROM channel_members WHERE pubkey=?",
+            [target.as_slice()],
+        )?;
         tx.execute(
             "UPDATE identities SET revoked=1 WHERE pubkey=?",
             [target.as_slice()],
@@ -276,7 +346,7 @@ impl Store {
             &op.actor_hex(),
             "identity.revoked",
             &hex(&target),
-            &serde_json::json!({}),
+            &serde_json::json!({"channels": channels.len(), "rotation": rotation}),
         )?;
         Ok(tx.commit()?)
     }
@@ -330,5 +400,73 @@ mod tests {
         assert!(check_clock(i64::MIN, i64::MAX).is_err());
         assert!(check_clock(1_700_000_000_000, 1_700_000_000_000 - (1i64 << 62)).is_err());
         assert!(check_clock(i64::MIN, i64::MIN).is_ok());
+    }
+
+    const NOW: i64 = 1_700_000_000_000;
+
+    #[test]
+    fn identity_status_is_unknown_for_a_key_never_registered() {
+        let s = Store::open_in_memory().unwrap();
+        let pk = Identity::from_seed([5; 32]).public();
+        assert_eq!(s.identity_status(&pk).unwrap(), IdentityStatus::Unknown);
+    }
+
+    #[test]
+    fn identity_status_is_active_with_the_stored_role() {
+        let mut s = Store::open_in_memory().unwrap();
+        let owner = Identity::from_seed([1; 32]).public();
+        let worker = Identity::from_seed([5; 32]).public();
+        s.bootstrap_owner(NOW, &owner).unwrap();
+        s.register_identity(NOW, &worker, "worker").unwrap();
+        assert_eq!(
+            s.identity_status(&owner).unwrap(),
+            IdentityStatus::Active(Role::Owner)
+        );
+        assert_eq!(
+            s.identity_status(&worker).unwrap(),
+            IdentityStatus::Active(Role::Worker)
+        );
+    }
+
+    #[test]
+    fn identity_status_is_revoked_after_revocation() {
+        let mut s = Store::open_in_memory().unwrap();
+        let owner = Identity::from_seed([1; 32]);
+        let worker = Identity::from_seed([5; 32]).public();
+        s.bootstrap_owner(NOW, &owner.public()).unwrap();
+        s.register_identity(NOW, &worker, "worker").unwrap();
+        let op = SignedOp::new("identity.revoke", &hex(&worker), "", NOW, "revoke-1").sign(&owner);
+        s.revoke_identity(NOW, &op).unwrap();
+        assert_eq!(s.identity_status(&worker).unwrap(), IdentityStatus::Revoked);
+    }
+
+    #[test]
+    fn owner_exists_is_false_before_any_owner_is_bootstrapped() {
+        let mut s = Store::open_in_memory().unwrap();
+        assert!(!s.owner_exists().unwrap());
+        s.register_identity(NOW, &Identity::from_seed([5; 32]).public(), "worker")
+            .unwrap();
+        assert!(!s.owner_exists().unwrap());
+    }
+
+    #[test]
+    fn owner_exists_is_true_after_bootstrap() {
+        let mut s = Store::open_in_memory().unwrap();
+        s.bootstrap_owner(NOW, &Identity::from_seed([1; 32]).public())
+            .unwrap();
+        assert!(s.owner_exists().unwrap());
+    }
+
+    #[test]
+    fn owner_exists_ignores_a_revoked_owner() {
+        let mut s = Store::open_in_memory().unwrap();
+        s.bootstrap_owner(NOW, &Identity::from_seed([1; 32]).public())
+            .unwrap();
+        // The API never revokes the last owner, so this row is set directly; the query
+        // must still treat it as no active owner.
+        s.conn
+            .execute("UPDATE identities SET revoked=1 WHERE role='owner'", [])
+            .unwrap();
+        assert!(!s.owner_exists().unwrap());
     }
 }

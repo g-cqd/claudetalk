@@ -3,7 +3,8 @@
 
 use agora_core::{CardState, Gate, Role, TransitionError, check_transition};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use std::path::Path;
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -21,6 +22,8 @@ pub enum StoreError {
     Invalid(&'static str),
     #[error("not a member of channel {0}")]
     NotMember(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 /// Each entry runs once, in order; `PRAGMA user_version` records progress.
@@ -60,6 +63,7 @@ CREATE TABLE approvals (
 );
 "#,
     include_str!("migration2.sql"),
+    include_str!("migration3.sql"),
 ];
 
 mod channels;
@@ -67,7 +71,7 @@ mod identity;
 mod messages;
 mod social;
 mod sprints;
-pub use channels::WRAPPED_KEY_LEN;
+pub use channels::{ChannelInfo, WRAPPED_KEY_LEN, keys_digest};
 pub use identity::*;
 pub use messages::*;
 pub use social::*;
@@ -75,18 +79,49 @@ pub use sprints::*;
 
 pub struct Store {
     pub(crate) conn: Connection,
+    /// Where blobs larger than `SPILL_THRESHOLD` are written as content-addressed
+    /// files. `None`: every blob stays inline in SQLite.
+    pub(crate) blob_dir: Option<PathBuf>,
+}
+
+/// One row of the card board, as returned by [`Store::list_cards`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CardRow {
+    pub id: String,
+    pub title: String,
+    pub lane: String,
+    pub state: CardState,
+    /// Hex public key of the owner, if claimed.
+    pub owner: Option<String>,
+    pub updated: i64,
 }
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        Self::init(Connection::open(path)?)
+        Self::init(Connection::open(path)?, None)
+    }
+
+    /// Open a database whose large blobs spill to files under `blob_dir`
+    /// (created with mode 0700 if missing).
+    pub fn open_with_blob_dir(path: &Path, blob_dir: &Path) -> Result<Self, StoreError> {
+        if let Some(parent) = blob_dir.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Mode 0700 applies only to a directory this call creates. An existing directory
+        // keeps its mode, whatever it is.
+        match std::fs::DirBuilder::new().mode(0o700).create(blob_dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && blob_dir.is_dir() => {}
+            Err(e) => return Err(e.into()),
+        }
+        Self::init(Connection::open(path)?, Some(blob_dir.to_path_buf()))
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
-        Self::init(Connection::open_in_memory()?)
+        Self::init(Connection::open_in_memory()?, None)
     }
 
-    fn init(conn: Connection) -> Result<Self, StoreError> {
+    fn init(conn: Connection, blob_dir: Option<PathBuf>) -> Result<Self, StoreError> {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;
              PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
@@ -98,7 +133,7 @@ impl Store {
             tx.execute_batch(&format!("PRAGMA user_version = {}", i + 1))?;
             tx.commit()?;
         }
-        Ok(Self { conn })
+        Ok(Self { conn, blob_dir })
     }
 
     pub(crate) fn append(
@@ -365,6 +400,49 @@ impl Store {
         Ok(tx.commit()?)
     }
 
+    /// Cards newest-updated first (ties by id), optionally filtered by state and lane.
+    /// `limit` is clamped to 0..=500. No identity gate here: the daemon checks the
+    /// reader is an active identity first.
+    pub fn list_cards(
+        &self,
+        state: Option<CardState>,
+        lane: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<CardRow>, StoreError> {
+        let state = state.map(CardState::as_str);
+        let mut st = self.conn.prepare_cached(
+            "SELECT id, title, lane, state, owner, updated FROM cards \
+             WHERE (?1 IS NULL OR state = ?1) AND (?2 IS NULL OR lane = ?2) \
+             ORDER BY updated DESC, id LIMIT ?3",
+        )?;
+        let rows = st.query_map(params![state, lane, limit.clamp(0, 500)], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, i64>(5)?,
+            ))
+        })?;
+        let mut cards = Vec::new();
+        for row in rows {
+            let (id, title, lane, state, owner, updated) = row?;
+            let Some(state) = CardState::parse(&state) else {
+                return Err(StoreError::BadState(state));
+            };
+            cards.push(CardRow {
+                id,
+                title,
+                lane,
+                state,
+                owner,
+                updated,
+            });
+        }
+        Ok(cards)
+    }
+
     pub fn event_count(&self) -> Result<i64, StoreError> {
         Ok(self
             .conn
@@ -397,5 +475,129 @@ mod tests {
         let s = Store::open(&p).unwrap();
         assert_eq!(s.event_count().unwrap(), 0);
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    use agora_crypto::Identity;
+
+    const NOW: i64 = 1_700_000_000_000;
+
+    /// A store whose only identity is a bootstrapped owner, who may do every card move.
+    fn owner_store() -> (Store, Identity) {
+        let mut s = Store::open_in_memory().unwrap();
+        let owner = Identity::from_seed([1; 32]);
+        s.bootstrap_owner(NOW, &owner.public()).unwrap();
+        (s, owner)
+    }
+
+    /// Signed at `now`; the nonce is derived from the op so each op in a test is unique.
+    fn signed(id: &Identity, kind: &str, subject: &str, arg: &str, now: i64) -> SignedOp {
+        let nonce = format!("{kind}/{subject}/{arg}/{now}");
+        SignedOp::new(kind, subject, arg, now, &nonce).sign(id)
+    }
+
+    fn create(s: &mut Store, owner: &Identity, id: &str, lane: &str, now: i64) {
+        let arg = serde_json::json!({"title": id, "lane": lane}).to_string();
+        s.create_card(now, &signed(owner, "card.create", id, &arg, now))
+            .unwrap();
+    }
+
+    fn move_card(s: &mut Store, owner: &Identity, id: &str, to: &str) {
+        s.transition(NOW, &signed(owner, "card.move", id, to, NOW), false)
+            .unwrap();
+    }
+
+    fn ids(cards: &[CardRow]) -> Vec<&str> {
+        cards.iter().map(|c| c.id.as_str()).collect()
+    }
+
+    #[test]
+    fn list_cards_filters_by_state() {
+        let (mut s, owner) = owner_store();
+        create(&mut s, &owner, "a", "x", NOW);
+        create(&mut s, &owner, "b", "x", NOW);
+        create(&mut s, &owner, "c", "x", NOW);
+        move_card(&mut s, &owner, "b", "ready");
+        move_card(&mut s, &owner, "c", "ready");
+        move_card(&mut s, &owner, "c", "claimed");
+
+        let backlog = s.list_cards(Some(CardState::Backlog), None, 10).unwrap();
+        assert_eq!(ids(&backlog), ["a"]);
+        let ready = s.list_cards(Some(CardState::Ready), None, 10).unwrap();
+        assert_eq!(ids(&ready), ["b"]);
+        let claimed = s.list_cards(Some(CardState::Claimed), None, 10).unwrap();
+        assert_eq!(ids(&claimed), ["c"]);
+        assert_eq!(claimed[0].state, CardState::Claimed);
+        assert_eq!(claimed[0].owner, Some(hex(&owner.public())));
+        assert_eq!(backlog[0].owner, None);
+        let all = s.list_cards(None, None, 10).unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn list_cards_filters_by_lane_and_combines_with_state() {
+        let (mut s, owner) = owner_store();
+        create(&mut s, &owner, "a", "x", NOW);
+        create(&mut s, &owner, "b", "y", NOW);
+        create(&mut s, &owner, "c", "x", NOW);
+        move_card(&mut s, &owner, "c", "ready");
+
+        let x = s.list_cards(None, Some("x"), 10).unwrap();
+        assert_eq!(ids(&x), ["a", "c"]);
+        assert_eq!(x[0].lane, "x");
+        let y = s.list_cards(None, Some("y"), 10).unwrap();
+        assert_eq!(ids(&y), ["b"]);
+        let none = s.list_cards(None, Some("z"), 10).unwrap();
+        assert!(none.is_empty());
+        let both = s
+            .list_cards(Some(CardState::Backlog), Some("x"), 10)
+            .unwrap();
+        assert_eq!(ids(&both), ["a"]);
+    }
+
+    #[test]
+    fn list_cards_orders_newest_first_then_by_id() {
+        let (mut s, owner) = owner_store();
+        create(&mut s, &owner, "b", "x", NOW);
+        create(&mut s, &owner, "a", "x", NOW);
+        create(&mut s, &owner, "c", "x", NOW + 1_000);
+
+        let cards = s.list_cards(None, None, 10).unwrap();
+        assert_eq!(ids(&cards), ["c", "a", "b"]);
+        assert_eq!(cards[0].updated, NOW + 1_000);
+        assert_eq!(cards[1].updated, NOW);
+    }
+
+    #[test]
+    fn list_cards_clamps_limit_to_zero_through_500() {
+        let (mut s, owner) = owner_store();
+        create(&mut s, &owner, "a", "x", NOW);
+        create(&mut s, &owner, "b", "x", NOW);
+        create(&mut s, &owner, "c", "x", NOW);
+
+        assert!(s.list_cards(None, None, -1).unwrap().is_empty());
+        assert!(s.list_cards(None, None, 0).unwrap().is_empty());
+        assert_eq!(s.list_cards(None, None, 2).unwrap().len(), 2);
+
+        // 600 more cards directly, so the upper clamp has something to cut.
+        s.conn
+            .execute_batch(
+                "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 600)
+                 INSERT INTO cards(id, title, lane, state, created, updated)
+                 SELECT 'bulk' || i, 't', 'bulk', 'backlog', 0, 0 FROM n;",
+            )
+            .unwrap();
+        assert_eq!(s.list_cards(None, None, 10_000).unwrap().len(), 500);
+    }
+
+    #[test]
+    fn list_cards_rejects_unknown_stored_state() {
+        let (mut s, owner) = owner_store();
+        create(&mut s, &owner, "a", "x", NOW);
+        s.conn
+            .execute("UPDATE cards SET state = 'bogus' WHERE id = 'a'", [])
+            .unwrap();
+
+        let err = s.list_cards(None, None, 10).unwrap_err();
+        assert!(matches!(err, StoreError::BadState(ref st) if st == "bogus"));
     }
 }

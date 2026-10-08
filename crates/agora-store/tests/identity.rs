@@ -1,12 +1,14 @@
 //! Public-API tests for identities: bootstrap, role grants and forgery, unknown and
-//! revoked keys, replay protection, nonce handling, and tamper/clock rules.
+//! revoked keys, replay protection, nonce handling, tamper/clock rules, and the channel
+//! effects of revocation with the identity status queries.
 
 mod common;
 use common::*;
 
 use agora_core::{Role, TransitionError};
-use agora_crypto::Identity;
+use agora_crypto::{ChannelKey, Identity};
 use agora_store::*;
+use serde_json::json;
 
 #[test]
 fn bootstrap_owner_happens_once() {
@@ -660,4 +662,191 @@ fn unhex32_rejects_uppercase_plus_prefix_and_wrong_length() {
     for case in cases {
         assert_eq!(unhex32(&case), None, "input {case}");
     }
+}
+
+/// Creates channel `ch` as `creator`, with `others` as plain members. An encrypted channel
+/// wraps one fresh key at epoch 0 for every member, the creator included.
+fn make_channel(s: &mut Store, creator: &Identity, ch: &str, others: &[&Identity], encrypt: bool) {
+    let keys: Vec<(Pub, Vec<u8>)> = if encrypt {
+        let key = ChannelKey::generate().unwrap();
+        std::iter::once(creator)
+            .chain(others.iter().copied())
+            .map(|m| {
+                (
+                    m.public(),
+                    creator.wrap_key(&m.public(), ch, 0, &key).unwrap(),
+                )
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+    let listed: Vec<_> = others
+        .iter()
+        .map(|m| json!({"pk": pk_hex(m), "role": "member"}))
+        .collect();
+    let mut arg = json!({"kind": "group", "members": listed});
+    if encrypt {
+        arg["keys"] = json!(keys_digest(0, &keys));
+    }
+    s.create_channel(
+        NOW,
+        &op(creator, "channel.create", ch, &arg.to_string()),
+        &keys,
+    )
+    .unwrap();
+}
+
+/// Alice creates a plain channel `plain` and an encrypted channel `secret`, each with
+/// bob and carol as members. Alice is the admin of both.
+fn with_plain_and_encrypted_channels() -> World {
+    let mut w = world();
+    make_channel(&mut w.s, &w.alice, "plain", &[&w.bob, &w.carol], false);
+    make_channel(&mut w.s, &w.alice, "secret", &[&w.bob, &w.carol], true);
+    w
+}
+
+/// Members of a channel, sorted by public key, as `channel_members` returns them.
+fn sorted(mut members: Vec<(Pub, String)>) -> Vec<(Pub, String)> {
+    members.sort();
+    members
+}
+
+#[test]
+fn revoking_a_member_removes_them_from_every_channel() {
+    let mut w = with_plain_and_encrypted_channels();
+    w.s.revoke_identity(NOW, &op(&w.owner, "identity.revoke", &pk_hex(&w.bob), ""))
+        .unwrap();
+    let expected = sorted(vec![
+        (w.alice.public(), "admin".to_string()),
+        (w.carol.public(), "member".to_string()),
+    ]);
+    assert_eq!(w.s.channel_members("plain").unwrap(), expected);
+    assert_eq!(w.s.channel_members("secret").unwrap(), expected);
+}
+
+#[test]
+fn revoking_flags_only_the_encrypted_channels_for_rotation() {
+    let mut w = with_plain_and_encrypted_channels();
+    w.s.revoke_identity(NOW, &op(&w.owner, "identity.revoke", &pk_hex(&w.bob), ""))
+        .unwrap();
+    let (plain, _) = w.s.channel_info(&w.alice.public(), "plain").unwrap();
+    let (secret, _) = w.s.channel_info(&w.alice.public(), "secret").unwrap();
+    assert_eq!(
+        (plain.rotation_pending, secret.rotation_pending),
+        (false, true)
+    );
+}
+
+#[test]
+fn revoking_appends_exactly_one_identity_revoked_event() {
+    let mut w = with_plain_and_encrypted_channels();
+    let before = w.s.event_count().unwrap();
+    w.s.revoke_identity(NOW, &op(&w.owner, "identity.revoke", &pk_hex(&w.bob), ""))
+        .unwrap();
+    assert_eq!(w.s.event_count().unwrap() - before, 1);
+}
+
+#[test]
+fn revoking_an_identity_in_no_channel_changes_no_channel() {
+    let mut w = world();
+    make_channel(&mut w.s, &w.alice, "plain", &[&w.bob], false);
+    make_channel(&mut w.s, &w.alice, "secret", &[&w.bob], true);
+    let plain_before = w.s.channel_members("plain").unwrap();
+    let secret_before = w.s.channel_members("secret").unwrap();
+    // Carol belongs to neither channel.
+    w.s.revoke_identity(NOW, &op(&w.owner, "identity.revoke", &pk_hex(&w.carol), ""))
+        .unwrap();
+    assert_eq!(w.s.channel_members("plain").unwrap(), plain_before);
+    assert_eq!(w.s.channel_members("secret").unwrap(), secret_before);
+    let (secret, _) = w.s.channel_info(&w.alice.public(), "secret").unwrap();
+    assert!(!secret.rotation_pending);
+}
+
+#[test]
+fn revoking_the_sole_channel_admin_is_allowed_and_leaves_no_admin() {
+    let mut w = world();
+    make_channel(&mut w.s, &w.alice, "plain", &[&w.bob], false);
+    w.s.revoke_identity(NOW, &op(&w.owner, "identity.revoke", &pk_hex(&w.alice), ""))
+        .unwrap();
+    assert_eq!(
+        w.s.channel_members("plain").unwrap(),
+        vec![(w.bob.public(), "member".to_string())]
+    );
+}
+
+#[test]
+fn a_refused_revocation_changes_no_membership_rotation_or_event() {
+    let mut w = with_plain_and_encrypted_channels();
+    let members_before = w.s.channel_members("secret").unwrap();
+    let before = w.s.event_count().unwrap();
+    // Alice is a worker; revoking needs a controller or above.
+    let err =
+        w.s.revoke_identity(NOW, &op(&w.alice, "identity.revoke", &pk_hex(&w.bob), ""))
+            .unwrap_err();
+    assert!(matches!(
+        err,
+        StoreError::Transition(TransitionError::Forbidden(Role::Worker))
+    ));
+    assert_eq!(w.s.channel_members("secret").unwrap(), members_before);
+    assert_eq!(w.s.event_count().unwrap(), before);
+    let (secret, _) = w.s.channel_info(&w.alice.public(), "secret").unwrap();
+    assert!(!secret.rotation_pending);
+    assert_eq!(
+        w.s.identity_status(&w.bob.public()).unwrap(),
+        IdentityStatus::Active(Role::Worker)
+    );
+}
+
+#[test]
+fn identity_status_is_unknown_for_a_key_never_registered() {
+    let w = world();
+    assert_eq!(
+        w.s.identity_status(&w.eve.public()).unwrap(),
+        IdentityStatus::Unknown
+    );
+}
+
+#[test]
+fn identity_status_reports_the_stored_role_of_active_identities() {
+    let w = world();
+    assert_eq!(
+        w.s.identity_status(&w.owner.public()).unwrap(),
+        IdentityStatus::Active(Role::Owner)
+    );
+    assert_eq!(
+        w.s.identity_status(&w.alice.public()).unwrap(),
+        IdentityStatus::Active(Role::Worker)
+    );
+}
+
+#[test]
+fn identity_status_is_revoked_whatever_the_former_role() {
+    let mut w = world();
+    for target in [&w.alice, &w.sup] {
+        w.s.revoke_identity(NOW, &op(&w.owner, "identity.revoke", &pk_hex(target), ""))
+            .unwrap();
+    }
+    assert_eq!(
+        w.s.identity_status(&w.alice.public()).unwrap(),
+        IdentityStatus::Revoked
+    );
+    assert_eq!(
+        w.s.identity_status(&w.sup.public()).unwrap(),
+        IdentityStatus::Revoked
+    );
+}
+
+#[test]
+fn owner_exists_is_false_on_a_fresh_store() {
+    let s = Store::open_in_memory().unwrap();
+    assert!(!s.owner_exists().unwrap());
+}
+
+#[test]
+fn owner_exists_is_true_once_an_owner_is_bootstrapped() {
+    let mut s = Store::open_in_memory().unwrap();
+    s.bootstrap_owner(NOW, &Identity::from_seed([1; 32]).public())
+        .unwrap();
+    assert!(s.owner_exists().unwrap());
 }

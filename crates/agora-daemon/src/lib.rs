@@ -1,0 +1,80 @@
+//! The agora daemon: sole owner of the database, event bus, and unix-socket server.
+//!
+//! Concurrency model (see SPEC): one writer thread owns the read-write `Store`
+//! (commands arrive on a bounded mpsc queue and are answered on oneshots); one
+//! reader thread owns a second `Store` connection on the same WAL database for
+//! read-only requests, so long reads never queue behind writes and no SQLite
+//! connection is ever shared between threads. The writer publishes [`Event`]s on a
+//! `tokio::sync::broadcast` bus after each successful commit, in commit order.
+
+pub mod actor;
+pub mod auth;
+pub mod board;
+pub mod chat;
+pub mod config;
+pub mod dispatch;
+pub mod org;
+pub mod server;
+pub mod wait;
+
+pub use config::{DaemonConfig, Paths};
+pub use server::{Daemon, run_blocking};
+
+use agora_proto::{Event, ProtoError};
+use agora_store::{Pub, StoreError};
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
+
+/// Capacity of the event bus; a waiter that falls further behind gets `Lagged`
+/// and simply re-checks.
+pub const BUS_CAPACITY: usize = 1024;
+
+#[derive(Debug, thiserror::Error)]
+pub enum DaemonError {
+    #[error("another daemon is running (lock held: {0})")]
+    AlreadyRunning(PathBuf),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error(transparent)]
+    Proto(#[from] ProtoError),
+    #[error("store actor stopped")]
+    ActorGone,
+    #[error("{0}")]
+    Config(String),
+}
+
+/// State shared by every connection task (cheap to clone).
+#[derive(Clone)]
+pub struct Shared {
+    pub writer: actor::Writer,
+    pub reader: actor::Reader,
+    pub bus: broadcast::Sender<Event>,
+    pub config: Arc<DaemonConfig>,
+    /// Effective uid of the daemon process.
+    pub daemon_uid: u32,
+    /// Cancelled once when the daemon begins shutting down.
+    pub shutdown: CancellationToken,
+}
+
+/// One authenticated connection.
+#[derive(Debug, Clone)]
+pub struct Conn {
+    /// Key proven in the handshake; the reader/actor identity of every request.
+    pub pubkey: Pub,
+    /// Peer uid from SO_PEERCRED / getpeereid.
+    pub uid: u32,
+    /// ClientHello.label truncated to 64 bytes (at a char boundary).
+    pub label: String,
+}
+
+/// Wall clock in milliseconds since the Unix epoch (the store's `now`).
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}

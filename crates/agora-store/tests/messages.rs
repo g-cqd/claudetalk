@@ -6,7 +6,7 @@ mod common;
 use common::*;
 
 use agora_core::{Role, TransitionError};
-use agora_crypto::{ChannelKey, Identity, content_hash};
+use agora_crypto::{ChannelKey, Identity, body_aad, content_hash};
 use agora_store::*;
 
 /// Unsigned message with the given fields. Callers sign it with `.sign(&identity)`.
@@ -37,25 +37,33 @@ fn reply(who: &Identity, id: &str, ch: &str, parent: &str, body: &[u8]) -> Signe
     m.sign(who)
 }
 
-fn members_arg(members: &[&Identity]) -> String {
+/// The `arg` of a channel.create for `members` (plain members), with an optional
+/// `"keys"` digest for an encrypted channel.
+fn members_arg(members: &[&Identity], keys: Option<String>) -> String {
     let list: Vec<String> = members
         .iter()
         .map(|m| format!(r#"{{"pk":"{}","role":"member"}}"#, pk_hex(m)))
         .collect();
-    format!(r#"{{"kind":"group","members":[{}]}}"#, list.join(","))
+    let keys_field = keys
+        .map(|d| format!(r#","keys":"{d}""#))
+        .unwrap_or_default();
+    format!(
+        r#"{{"kind":"group","members":[{}]{keys_field}}}"#,
+        list.join(",")
+    )
 }
 
 /// Plaintext group channel `id`, created by `creator`, with `members` added as plain members.
 fn create_group(s: &mut Store, creator: &Identity, id: &str, members: &[&Identity]) {
     s.create_channel(
         NOW,
-        &op(creator, "channel.create", id, &members_arg(members)),
+        &op(creator, "channel.create", id, &members_arg(members, None)),
         &[],
     )
     .unwrap();
 }
 
-/// Wraps `key` for each of `to` as `sender`, under the AAD "{ch}#{epoch}".
+/// Wraps `key` for each of `to` as `sender`, at channel `ch` and key epoch `epoch`.
 fn wrap_all(
     sender: &Identity,
     ch: &str,
@@ -63,9 +71,13 @@ fn wrap_all(
     key: &ChannelKey,
     to: &[&Identity],
 ) -> Vec<(Pub, Vec<u8>)> {
-    let aad = format!("{ch}#{epoch}");
     to.iter()
-        .map(|m| (m.public(), sender.wrap_key(&m.public(), &aad, key).unwrap()))
+        .map(|m| {
+            (
+                m.public(),
+                sender.wrap_key(&m.public(), ch, epoch, key).unwrap(),
+            )
+        })
         .collect()
 }
 
@@ -82,12 +94,9 @@ fn create_encrypted(
         .chain(members.iter().copied())
         .collect();
     let keys = wrap_all(creator, id, 0, &key, &everyone);
-    s.create_channel(
-        NOW,
-        &op(creator, "channel.create", id, &members_arg(members)),
-        &keys,
-    )
-    .unwrap();
+    let arg = members_arg(members, Some(keys_digest(0, &keys)));
+    s.create_channel(NOW, &op(creator, "channel.create", id, &arg), &keys)
+        .unwrap();
     key
 }
 
@@ -103,12 +112,13 @@ fn rotated(w: &mut World) -> ChannelKey {
 fn remove_carol(w: &mut World) -> ChannelKey {
     let next = ChannelKey::generate().unwrap();
     let keys = wrap_all(&w.alice, "e", 1, &next, &[&w.alice, &w.bob]);
-    w.s.remove_member(
-        NOW,
-        &op(&w.alice, "channel.remove", "e", &pk_hex(&w.carol)),
-        &keys,
-    )
-    .unwrap();
+    let arg = format!(
+        r#"{{"pk":"{}","keys":"{}"}}"#,
+        pk_hex(&w.carol),
+        keys_digest(1, &keys)
+    );
+    w.s.remove_member(NOW, &op(&w.alice, "channel.remove", "e", &arg), &keys)
+        .unwrap();
     next
 }
 
@@ -136,6 +146,19 @@ fn inbox_of(s: &Store, who: &Identity) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Message ids of inbox rows, in order.
+fn ids_of(rows: Vec<(String, MessageRow)>) -> Vec<String> {
+    rows.into_iter().map(|(_, row)| row.id).collect()
+}
+
+/// Encrypted channel "e" with alice (admin), bob and carol at epoch 0, after the owner
+/// revokes bob. The revocation flags "e" for key rotation.
+fn revoked_bob(w: &mut World) {
+    create_encrypted(&mut w.s, &w.alice, "e", &[&w.bob, &w.carol]);
+    w.s.revoke_identity(NOW, &op(&w.owner, "identity.revoke", &pk_hex(&w.bob), ""))
+        .unwrap();
+}
+
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
@@ -144,9 +167,8 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 fn posted_message_reads_back_exactly_as_posted() {
     let mut w = world();
     create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
-    let seq =
-        w.s.post_message(NOW, &plain(&w.alice, "m1", "c", b"hello bob"))
-            .unwrap();
+    let posted = plain(&w.alice, "m1", "c", b"hello bob");
+    let seq = w.s.post_message(NOW, &posted).unwrap();
     let rows = w.s.read_channel(&w.bob.public(), "c", 0, 10).unwrap();
     assert_eq!(
         rows,
@@ -157,6 +179,62 @@ fn posted_message_reads_back_exactly_as_posted() {
             body: b"hello bob".to_vec(),
             encrypted: false,
             epoch: 0,
+            channel: "c".into(),
+            thread_of: None,
+            ts: NOW,
+            attachments: vec![],
+            sig: posted.sig.clone(),
+        }]
+    );
+}
+
+#[test]
+fn read_channel_fills_thread_ts_sig_and_attachments_as_posted() {
+    let mut w = world();
+    create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
+    let parent_seq =
+        w.s.post_message(NOW, &plain(&w.alice, "m1", "c", b"parent"))
+            .unwrap();
+    // Attachments are posted in an order that is neither hash order nor name order, so
+    // a row that sorted them would fail.
+    let mut blobs: Vec<String> = ["one", "two", "three"]
+        .iter()
+        .map(|t| w.s.put_blob(t.as_bytes()).unwrap())
+        .collect();
+    blobs.sort_by(|a, b| b.cmp(a));
+    let names = ["c.bin", "b.bin", "a.bin"];
+    let attachments: Vec<Attachment> = blobs
+        .into_iter()
+        .zip(names)
+        .map(|(hash, name)| Attachment {
+            hash,
+            name: name.into(),
+            mime: "application/octet-stream".into(),
+        })
+        .collect();
+    let mut unsigned = msg("r1", "c", NOW, false, 0, b"see attached");
+    unsigned.thread_of = Some("m1".into());
+    unsigned.attachments = attachments.clone();
+    let reply = unsigned.sign(&w.bob);
+    let seq = w.s.post_message(NOW, &reply).unwrap();
+
+    let rows =
+        w.s.read_channel(&w.alice.public(), "c", parent_seq, 10)
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![MessageRow {
+            seq,
+            id: "r1".into(),
+            sender: w.bob.public(),
+            body: b"see attached".to_vec(),
+            encrypted: false,
+            epoch: 0,
+            channel: "c".into(),
+            thread_of: Some("m1".into()),
+            ts: NOW,
+            attachments,
+            sig: reply.sig.clone(),
         }]
     );
 }
@@ -721,6 +799,156 @@ fn inbox_lists_unacked_messages_from_other_members() {
 }
 
 #[test]
+fn inbox_row_fills_thread_ts_sig_and_attachments_as_posted() {
+    let mut w = world();
+    create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
+    let hash = w.s.put_blob(b"run log").unwrap();
+    let parent = plain(&w.alice, "m1", "c", b"parent");
+    let parent_seq = w.s.post_message(NOW, &parent).unwrap();
+    let mut unsigned = msg("m2", "c", NOW, false, 0, b"see log");
+    unsigned.thread_of = Some("m1".into());
+    unsigned.attachments = vec![Attachment {
+        hash: hash.clone(),
+        name: "run.log".into(),
+        mime: "text/plain".into(),
+    }];
+    let reply = unsigned.sign(&w.alice);
+    let reply_seq = w.s.post_message(NOW, &reply).unwrap();
+    assert_eq!(
+        w.s.inbox(&w.bob.public(), 100).unwrap(),
+        vec![
+            (
+                "c".to_string(),
+                MessageRow {
+                    seq: parent_seq,
+                    id: "m1".into(),
+                    sender: w.alice.public(),
+                    body: b"parent".to_vec(),
+                    encrypted: false,
+                    epoch: 0,
+                    channel: "c".into(),
+                    thread_of: None,
+                    ts: NOW,
+                    attachments: vec![],
+                    sig: parent.sig.clone(),
+                }
+            ),
+            (
+                "c".to_string(),
+                MessageRow {
+                    seq: reply_seq,
+                    id: "m2".into(),
+                    sender: w.alice.public(),
+                    body: b"see log".to_vec(),
+                    encrypted: false,
+                    epoch: 0,
+                    channel: "c".into(),
+                    thread_of: Some("m1".into()),
+                    ts: NOW,
+                    attachments: vec![Attachment {
+                        hash,
+                        name: "run.log".into(),
+                        mime: "text/plain".into(),
+                    }],
+                    sig: reply.sig.clone(),
+                }
+            ),
+        ]
+    );
+}
+
+#[test]
+fn stored_row_reverifies_and_a_flipped_body_byte_fails_verification() {
+    let mut w = world();
+    create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
+    w.s.post_message(NOW, &plain(&w.alice, "m1", "c", b"pay 10"))
+        .unwrap();
+    let row =
+        w.s.read_channel(&w.bob.public(), "c", 0, 10)
+            .unwrap()
+            .remove(0);
+    let signed = row.to_signed();
+    signed.verify().unwrap();
+    let mut tampered = signed;
+    tampered.body[0] ^= 0x01;
+    assert!(matches!(tampered.verify(), Err(StoreError::Crypto(_))));
+}
+
+#[test]
+fn inbox_after_returns_only_rows_after_the_cursor() {
+    let mut w = world();
+    create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
+    let s1 =
+        w.s.post_message(NOW, &plain(&w.alice, "m1", "c", b"one"))
+            .unwrap();
+    w.s.post_message(NOW, &plain(&w.alice, "m2", "c", b"two"))
+        .unwrap();
+    let s3 =
+        w.s.post_message(NOW, &plain(&w.alice, "m3", "c", b"three"))
+            .unwrap();
+    let bob = w.bob.public();
+    assert_eq!(
+        ids_of(w.s.inbox_after(&bob, s1, 100).unwrap()),
+        vec!["m2", "m3"]
+    );
+    assert_eq!(
+        ids_of(w.s.inbox_after(&bob, s3, 100).unwrap()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn inbox_after_excludes_the_readers_own_messages() {
+    let mut w = world();
+    create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
+    w.s.post_message(NOW, &plain(&w.alice, "m1", "c", b"one"))
+        .unwrap();
+    w.s.post_message(NOW, &plain(&w.bob, "m2", "c", b"bob's own"))
+        .unwrap();
+    assert_eq!(
+        ids_of(w.s.inbox_after(&w.bob.public(), 0, 100).unwrap()),
+        vec!["m1"]
+    );
+}
+
+#[test]
+fn inbox_after_excludes_messages_the_reader_has_acked() {
+    let mut w = world();
+    create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
+    let s1 =
+        w.s.post_message(NOW, &plain(&w.alice, "m1", "c", b"one"))
+            .unwrap();
+    w.s.post_message(NOW, &plain(&w.alice, "m2", "c", b"two"))
+        .unwrap();
+    let bob = w.bob.public();
+    w.s.ack(&bob, "c", s1).unwrap();
+    assert_eq!(ids_of(w.s.inbox_after(&bob, 0, 100).unwrap()), vec!["m2"]);
+}
+
+#[test]
+fn inbox_after_caps_the_page_at_the_limit_after_the_cursor() {
+    let mut w = world();
+    create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
+    let s1 =
+        w.s.post_message(NOW, &plain(&w.alice, "m1", "c", b"one"))
+            .unwrap();
+    w.s.post_message(NOW, &plain(&w.alice, "m2", "c", b"two"))
+        .unwrap();
+    w.s.post_message(NOW, &plain(&w.alice, "m3", "c", b"three"))
+        .unwrap();
+    let bob = w.bob.public();
+    assert_eq!(
+        ids_of(w.s.inbox_after(&bob, 0, 2).unwrap()),
+        vec!["m1", "m2"]
+    );
+    assert_eq!(ids_of(w.s.inbox_after(&bob, s1, 1).unwrap()), vec!["m2"]);
+    assert_eq!(
+        ids_of(w.s.inbox_after(&bob, 0, 0).unwrap()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn ack_advances_past_acknowledged_messages() {
     let mut w = world();
     create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
@@ -799,11 +1027,10 @@ fn encrypted_message_opens_with_the_key_wrapped_for_the_member() {
     let mut w = world();
     let key = create_encrypted(&mut w.s, &w.alice, "e", &[&w.bob]);
     let plaintext: &[u8] = b"deploy window is 02:00 UTC";
-    let aad: &[u8] = b"e#0|m1";
-    let sealed = key.seal(aad, plaintext).unwrap();
-    let seq =
-        w.s.post_message(NOW, &msg("m1", "e", NOW, true, 0, &sealed).sign(&w.alice))
-            .unwrap();
+    let aad = body_aad("e", 0, "m1");
+    let sealed = key.seal(&aad, plaintext).unwrap();
+    let posted = msg("m1", "e", NOW, true, 0, &sealed).sign(&w.alice);
+    let seq = w.s.post_message(NOW, &posted).unwrap();
 
     let rows = w.s.read_channel(&w.bob.public(), "e", 0, 10).unwrap();
     assert_eq!(
@@ -815,6 +1042,11 @@ fn encrypted_message_opens_with_the_key_wrapped_for_the_member() {
             body: sealed.clone(),
             encrypted: true,
             epoch: 0,
+            channel: "e".into(),
+            thread_of: None,
+            ts: NOW,
+            attachments: vec![],
+            sig: posted.sig.clone(),
         }]
     );
     // The store keeps only the ciphertext.
@@ -826,9 +1058,9 @@ fn encrypted_message_opens_with_the_key_wrapped_for_the_member() {
             .expect("bob holds the epoch-0 key");
     let bob_key = w
         .bob
-        .unwrap_key(&w.alice.public(), "e#0", &wrapped)
+        .unwrap_key(&w.alice.public(), "e", 0, &wrapped)
         .unwrap();
-    assert_eq!(bob_key.open(aad, &rows[0].body).unwrap(), plaintext);
+    assert_eq!(bob_key.open(&aad, &rows[0].body).unwrap(), plaintext);
 }
 
 #[test]
@@ -901,7 +1133,12 @@ fn current_epoch_message_is_accepted_after_rotation() {
             sender: w.alice.public(),
             body,
             encrypted: true,
-            epoch: 1
+            epoch: 1,
+            channel: "e".into(),
+            thread_of: None,
+            ts: NOW,
+            attachments: vec![],
+            sig: m.sig.clone(),
         }]
     );
 }
@@ -955,6 +1192,34 @@ fn removed_member_cannot_read_or_fetch_the_new_key() {
 }
 
 #[test]
+fn post_is_refused_while_a_revoked_members_channel_awaits_rotation() {
+    let mut w = world();
+    revoked_bob(&mut w);
+    let m = msg("m1", "e", NOW, true, 0, &opaque_ciphertext()).sign(&w.alice);
+    assert!(matches!(
+        w.s.post_message(NOW, &m),
+        Err(StoreError::Invalid("channel key rotation pending"))
+    ));
+    assert_eq!(read_ids(&w.s, &w.carol, "e"), Vec::<String>::new());
+}
+
+#[test]
+fn post_succeeds_at_the_next_epoch_once_an_admin_rotates() {
+    let mut w = world();
+    revoked_bob(&mut w);
+    let next = ChannelKey::generate().unwrap();
+    let keys = wrap_all(&w.alice, "e", 1, &next, &[&w.alice, &w.carol]);
+    let arg = format!(r#"{{"keys":"{}"}}"#, keys_digest(1, &keys));
+    let epoch =
+        w.s.rotate_channel_key(NOW, &op(&w.alice, "channel.rotate", "e", &arg), &keys)
+            .unwrap();
+    assert_eq!(epoch, 1);
+    let m = msg("m1", "e", NOW, true, 1, &opaque_ciphertext()).sign(&w.alice);
+    w.s.post_message(NOW, &m).unwrap();
+    assert_eq!(read_ids(&w.s, &w.carol, "e"), vec!["m1"]);
+}
+
+#[test]
 fn encrypted_message_is_rejected_in_an_unencrypted_channel() {
     let mut w = world();
     create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
@@ -989,9 +1254,8 @@ fn nonzero_epoch_is_rejected_in_an_unencrypted_channel() {
 fn duplicate_message_id_is_rejected_and_the_original_is_kept() {
     let mut w = world();
     create_group(&mut w.s, &w.alice, "c", &[&w.bob]);
-    let seq =
-        w.s.post_message(NOW, &plain(&w.alice, "m1", "c", b"first"))
-            .unwrap();
+    let first = plain(&w.alice, "m1", "c", b"first");
+    let seq = w.s.post_message(NOW, &first).unwrap();
     assert!(matches!(
         w.s.post_message(NOW, &plain(&w.alice, "m1", "c", b"second")),
         Err(StoreError::Invalid("message id already exists"))
@@ -1005,6 +1269,11 @@ fn duplicate_message_id_is_rejected_and_the_original_is_kept() {
             body: b"first".to_vec(),
             encrypted: false,
             epoch: 0,
+            channel: "c".into(),
+            thread_of: None,
+            ts: NOW,
+            attachments: vec![],
+            sig: first.sig.clone(),
         }]
     );
 }

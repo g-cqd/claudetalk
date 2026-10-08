@@ -1,0 +1,332 @@
+//! Socket client: connect (auto-spawning the daemon), handshake, request/response.
+
+use crate::{CliError, Ctx};
+use agora_crypto::Identity;
+use agora_daemon::Paths;
+use agora_proto::{
+    ClientHello, MAX_WAIT_MS, Reply, Req, Request, ServerFrame, read_json, unb64, write_json,
+};
+use std::io::ErrorKind;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::process::CommandExt;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+use tokio::net::UnixStream;
+
+pub struct Client {
+    stream: UnixStream,
+    /// Id of the next request; the first request is 1 (0 is reserved for connection errors).
+    next: u64,
+}
+
+/// How long an auto-spawned daemon may take to start listening.
+const SPAWN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Interval between connection probes while the daemon starts.
+const SPAWN_POLL: Duration = Duration::from_millis(25);
+/// How long the handshake may take before the daemon counts as unresponsive.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long an ordinary request may take before the daemon counts as unresponsive.
+const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// Slack added to an InboxWait's own wait, for the reply to travel back.
+const WAIT_SLACK: Duration = Duration::from_secs(5);
+
+impl Client {
+    /// Connect to ctx.paths.socket. If the socket is missing or refuses (NotFound /
+    /// ConnectionRefused) and env AGORA_NO_SPAWN is not "1", call `ensure_daemon`
+    /// (in spawn_blocking) and connect again. Then handshake as ctx.identity with
+    /// ctx.label.
+    pub async fn connect(ctx: &Ctx) -> Result<Client, CliError> {
+        let socket = &ctx.paths.socket;
+        let stream = match UnixStream::connect(socket).await {
+            Ok(stream) => stream,
+            Err(e) if is_absent(&e) && !no_spawn_requested() => {
+                let paths = ctx.paths.clone();
+                tokio::task::spawn_blocking(move || ensure_daemon(&paths))
+                    .await
+                    .map_err(|e| CliError::Daemon(format!("spawn task failed: {e}")))??;
+                UnixStream::connect(socket).await?
+            }
+            Err(e) if is_absent(&e) => return Err(CliError::Daemon("not running".into())),
+            Err(e) => return Err(e.into()),
+        };
+        within(
+            HANDSHAKE_TIMEOUT,
+            Self::handshake(stream, &ctx.identity, &ctx.label),
+        )
+        .await
+    }
+
+    /// Connect and handshake without ever spawning. Missing/refused socket ->
+    /// CliError::Daemon("not running").
+    pub async fn connect_no_spawn(
+        paths: &Paths,
+        id: &Identity,
+        label: &str,
+    ) -> Result<Client, CliError> {
+        let stream = UnixStream::connect(&paths.socket).await.map_err(|e| {
+            if is_absent(&e) {
+                CliError::Daemon("not running".into())
+            } else {
+                CliError::Io(e)
+            }
+        })?;
+        within(HANDSHAKE_TIMEOUT, Self::handshake(stream, id, label)).await
+    }
+
+    /// Send `Request{id: next, req}` and read frames until the `Ok`/`Err` with that
+    /// id (Event frames are skipped). Err -> CliError::Remote(body). EOF ->
+    /// CliError::Daemon("connection closed"). No answer within the call's deadline ->
+    /// CliError::Daemon("daemon did not answer within N s").
+    pub async fn call(&mut self, req: Req) -> Result<Reply, CliError> {
+        let limit = if matches!(req, Req::InboxWait { .. }) {
+            Duration::from_millis(MAX_WAIT_MS) + WAIT_SLACK
+        } else {
+            CALL_TIMEOUT
+        };
+        let id = self.next;
+        self.next = self.next.saturating_add(1);
+        within(limit, self.exchange(id, req)).await
+    }
+
+    /// Write request `id` and read frames until its answer arrives.
+    async fn exchange(&mut self, id: u64, req: Req) -> Result<Reply, CliError> {
+        write_json(&mut self.stream, &Request { id, req }).await?;
+        loop {
+            match read_json::<ServerFrame, _>(&mut self.stream).await? {
+                Some(ServerFrame::Ok { id: got, reply }) if got == id => return Ok(reply),
+                Some(ServerFrame::Err { id: got, error }) if got == id => {
+                    return Err(CliError::Remote(error));
+                }
+                // Events and answers to other ids are not ours to act on.
+                Some(_) => continue,
+                None => return Err(CliError::Daemon("connection closed".into())),
+            }
+        }
+    }
+
+    /// Hello -> signed ClientHello -> Welcome. A server `Err` at either step is the
+    /// reason for refusal and is surfaced as `Remote`.
+    async fn handshake(
+        mut stream: UnixStream,
+        id: &Identity,
+        label: &str,
+    ) -> Result<Client, CliError> {
+        let hello = match read_json::<ServerFrame, _>(&mut stream).await? {
+            Some(ServerFrame::Hello(hello)) => hello,
+            Some(ServerFrame::Err { error, .. }) => return Err(CliError::Remote(error)),
+            Some(_) => return Err(CliError::UnexpectedReply),
+            None => return Err(CliError::Daemon("connection closed".into())),
+        };
+        let challenge = unb64(&hello.challenge, "challenge")?;
+        write_json(&mut stream, &ClientHello::sign(id, &challenge, label)).await?;
+        match read_json::<ServerFrame, _>(&mut stream).await? {
+            Some(ServerFrame::Welcome(_)) => Ok(Client { stream, next: 1 }),
+            Some(ServerFrame::Err { error, .. }) => Err(CliError::Remote(error)),
+            Some(_) => Err(CliError::UnexpectedReply),
+            None => Err(CliError::Daemon("connection closed".into())),
+        }
+    }
+}
+
+/// Run `fut` for at most `limit`; running out of time means the daemon did not answer.
+async fn within<T>(
+    limit: Duration,
+    fut: impl std::future::Future<Output = Result<T, CliError>>,
+) -> Result<T, CliError> {
+    match tokio::time::timeout(limit, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(CliError::Daemon(format!(
+            "daemon did not answer within {} s",
+            limit.as_secs()
+        ))),
+    }
+}
+
+/// The socket has no listener behind it: nothing is bound there, or the bound file
+/// is stale and refuses connections.
+fn is_absent(e: &std::io::Error) -> bool {
+    matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused)
+}
+
+fn no_spawn_requested() -> bool {
+    matches!(std::env::var("AGORA_NO_SPAWN").as_deref(), Ok("1"))
+}
+
+/// A blocking probe: is anything accepting connections on `socket`?
+fn socket_live(socket: &Path) -> bool {
+    std::os::unix::net::UnixStream::connect(socket).is_ok()
+}
+
+/// Make sure a daemon serves `paths.socket`. Under an exclusive blocking flock on
+/// `paths.spawn_lock` (std File::lock; home created 0700 first): if a connect now
+/// succeeds, return; else spawn `std::env::current_exe()` with args
+/// `["daemon", "--home", <home>]`, stdin/stdout null, stderr appended to
+/// `paths.log`, `process_group(0)` so it outlives us; then try to connect every
+/// 25 ms for up to 5 s (startup only). Timeout -> CliError::Daemon("did not start; see <log>");
+/// if the spawned process exited before the deadline, the error names its exit status:
+/// "daemon exited (<status>); see <log>".
+pub fn ensure_daemon(paths: &Paths) -> Result<(), CliError> {
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&paths.home)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&paths.spawn_lock)?;
+    lock.lock()?;
+
+    // Everything below runs under the lock; the lock is released when `lock` drops.
+    if socket_live(&paths.socket) {
+        return Ok(());
+    }
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(&paths.log)?;
+    // The daemon outlives this command, so the handle is only watched until the deadline.
+    let mut child = Command::new(std::env::current_exe()?)
+        .arg("daemon")
+        .arg("--home")
+        .arg(&paths.home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(log))
+        .process_group(0)
+        .spawn()?;
+
+    // A daemon that exits early may still lose to another one that holds the lock and
+    // becomes live in time, so the socket is polled to the deadline either way.
+    let deadline = Instant::now() + SPAWN_TIMEOUT;
+    let mut exited = None;
+    while !socket_live(&paths.socket) {
+        if Instant::now() >= deadline {
+            return Err(match exited {
+                Some(status) => CliError::Daemon(format!(
+                    "daemon exited ({status}); see {}",
+                    paths.log.display()
+                )),
+                None => CliError::Daemon(format!("did not start; see {}", paths.log.display())),
+            });
+        }
+        if exited.is_none() {
+            exited = child.try_wait()?;
+        }
+        std::thread::sleep(SPAWN_POLL);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agora_proto::{ErrorBody, ErrorCode, Event, PROTO_VERSION, ServerHello, Welcome, b64};
+    use tokio::net::UnixListener;
+
+    #[tokio::test]
+    async fn connect_no_spawn_to_missing_socket_is_not_running() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let paths = Paths::new(dir.path());
+        let id = Identity::from_seed([7u8; 32]);
+        match Client::connect_no_spawn(&paths, &id, "test").await {
+            Err(CliError::Daemon(m)) => assert_eq!(m, "not running"),
+            Err(other) => panic!("expected Daemon(not running), got {other:?}"),
+            Ok(_) => panic!("connected to a socket that does not exist"),
+        }
+    }
+
+    #[tokio::test]
+    async fn server_error_before_hello_surfaces_as_remote() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let paths = Paths::new(dir.path());
+        let listener = UnixListener::bind(&paths.socket).expect("bind fake daemon");
+        let server = tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.expect("accept");
+            let frame = ServerFrame::Err {
+                id: 0,
+                error: ErrorBody::new(ErrorCode::Unauthenticated, "peer uid mismatch"),
+            };
+            write_json(&mut conn, &frame).await.expect("send err");
+        });
+
+        let id = Identity::from_seed([7u8; 32]);
+        match Client::connect_no_spawn(&paths, &id, "test").await {
+            Err(CliError::Remote(body)) => assert_eq!(body.code, ErrorCode::Unauthenticated),
+            Err(other) => panic!("expected Remote, got {other:?}"),
+            Ok(_) => panic!("handshake succeeded against a refusing server"),
+        }
+        server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn handshake_then_call_skips_events_and_returns_matching_reply() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let paths = Paths::new(dir.path());
+        let listener = UnixListener::bind(&paths.socket).expect("bind fake daemon");
+        let challenge = [9u8; 32];
+        let expected_key = Identity::from_seed([7u8; 32]).public();
+        let server = tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.expect("accept");
+            let hello = ServerHello {
+                version: PROTO_VERSION,
+                challenge: b64(&challenge),
+                daemon: "agora/test".into(),
+            };
+            write_json(&mut conn, &ServerFrame::Hello(hello))
+                .await
+                .expect("send hello");
+            let client_hello: ClientHello = read_json(&mut conn)
+                .await
+                .expect("read client hello")
+                .expect("client hello frame");
+            let proven = client_hello.verify(&challenge).expect("signature verifies");
+            assert_eq!(proven, expected_key);
+            let welcome = Welcome {
+                pubkey: client_hello.pubkey.clone(),
+                pseudonym: "p".into(),
+            };
+            write_json(&mut conn, &ServerFrame::Welcome(welcome))
+                .await
+                .expect("send welcome");
+            let request: Request = read_json(&mut conn)
+                .await
+                .expect("read request")
+                .expect("request frame");
+            assert_eq!(
+                request,
+                Request {
+                    id: 1,
+                    req: Req::Ping
+                }
+            );
+            let event = Event::ChannelChanged {
+                channel: "c".into(),
+            };
+            write_json(&mut conn, &ServerFrame::Event { event })
+                .await
+                .expect("send event");
+            write_json(
+                &mut conn,
+                &ServerFrame::Ok {
+                    id: 1,
+                    reply: Reply::Pong,
+                },
+            )
+            .await
+            .expect("send reply");
+        });
+
+        let id = Identity::from_seed([7u8; 32]);
+        let mut client = Client::connect_no_spawn(&paths, &id, "test")
+            .await
+            .expect("handshake");
+        let reply = client.call(Req::Ping).await.expect("ping");
+        assert_eq!(reply, Reply::Pong);
+        server.await.expect("server task");
+    }
+}
