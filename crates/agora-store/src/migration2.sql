@@ -73,3 +73,9 @@ CREATE VIRTUAL TABLE knowledge_fts USING fts5(title, body, tags, content='knowle
 CREATE TRIGGER knowledge_ai AFTER INSERT ON knowledge BEGIN
     INSERT INTO knowledge_fts(rowid, title, body, tags) VALUES (new.rowid, new.title, new.body, new.tags);
 END;
+CREATE TABLE cursors (
+    reader  BLOB NOT NULL,
+    channel TEXT NOT NULL REFERENCES channels(id),
+    acked   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (reader, channel)
+);

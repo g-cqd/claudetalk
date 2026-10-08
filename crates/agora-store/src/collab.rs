@@ -272,6 +272,42 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Unacknowledged messages for `reader` across all their channels, oldest
+    /// first, never including their own. Delivery adapters call this to drain.
+    pub fn inbox(&self, reader: &Pub, limit: i64) -> Result<Vec<(String, MessageRow)>, StoreError> {
+        let mut st = self.conn.prepare_cached(
+            "SELECT m.channel, m.seq, m.id, m.sender, m.body, m.encrypted
+             FROM messages m
+             JOIN channel_members cm ON cm.channel=m.channel AND cm.pubkey=?1
+             LEFT JOIN cursors c ON c.channel=m.channel AND c.reader=?1
+             WHERE m.seq > COALESCE(c.acked,0) AND m.sender != ?1
+             ORDER BY m.seq LIMIT ?2",
+        )?;
+        let rows = st.query_map(params![reader.as_slice(), limit], |r| {
+            let s: Vec<u8> = r.get(3)?;
+            Ok((r.get(0)?, (r.get(1)?, r.get(2)?, s.try_into().unwrap_or([0; 32]), r.get(4)?, r.get(5)?)))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Advance the reader's cursor for a channel; never moves backwards.
+    pub fn ack(&mut self, reader: &Pub, channel: &str, seq: i64) -> Result<(), StoreError> {
+        let member: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM channel_members WHERE channel=? AND pubkey=?)",
+            params![channel, reader.as_slice()],
+            |r| r.get(0),
+        )?;
+        if !member {
+            return Err(StoreError::NotMember(channel.into()));
+        }
+        self.conn.execute(
+            "INSERT INTO cursors(reader,channel,acked) VALUES (?,?,?)
+             ON CONFLICT(reader,channel) DO UPDATE SET acked=MAX(acked, excluded.acked)",
+            params![reader.as_slice(), channel, seq],
+        )?;
+        Ok(())
+    }
+
     pub fn react(&mut self, r: &SignedReaction) -> Result<(), StoreError> {
         if r.emoji.is_empty() || r.emoji.len() > 64 {
             return Err(StoreError::Invalid("reaction must be 1..=64 bytes"));
@@ -469,6 +505,29 @@ mod tests {
         let mut spoof = msg("m3", "c").sign(&a);
         spoof.sender = b.public();
         assert!(s.post_message(&spoof).is_err());
+    }
+
+    #[test]
+    fn inbox_drains_with_monotonic_acks() {
+        let (mut s, a, b) = setup();
+        let s1 = s.post_message(&msg("m1", "c").sign(&a)).unwrap();
+        let s2 = s.post_message(&msg("m2", "c").sign(&a)).unwrap();
+        s.post_message(&msg("m3", "c").sign(&b)).unwrap();
+        // Own messages never appear: a sees only b's m3, b sees only a's m1/m2.
+        let a_in = s.inbox(&a.public(), 10).unwrap();
+        assert_eq!(a_in.iter().map(|(_, m)| m.1.as_str()).collect::<Vec<_>>(), ["m3"]);
+        let got = s.inbox(&b.public(), 10).unwrap();
+        assert_eq!(got.iter().map(|(_, m)| m.1.as_str()).collect::<Vec<_>>(), ["m1", "m2"]);
+        s.ack(&b.public(), "c", s1).unwrap();
+        assert_eq!(s.inbox(&b.public(), 10).unwrap().len(), 1);
+        // An older ack cannot resurrect delivered messages.
+        s.ack(&b.public(), "c", 0).unwrap();
+        assert_eq!(s.inbox(&b.public(), 10).unwrap().len(), 1);
+        s.ack(&b.public(), "c", s2).unwrap();
+        assert!(s.inbox(&b.public(), 10).unwrap().is_empty());
+        let eve = Identity::generate().unwrap();
+        assert!(s.ack(&eve.public(), "c", 1).is_err());
+        assert!(s.inbox(&eve.public(), 10).unwrap().is_empty());
     }
 
     #[test]
