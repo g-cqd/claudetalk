@@ -18,7 +18,6 @@ use agora_crypto::pseudonym;
 use agora_sched::claims::validate_name;
 use agora_sched::model::{TaskRecord, TimerRecord};
 use agora_sched::model_ops::{AddArgs, TimerArgs, TimerFireArgs};
-use agora_sched::settings::WorkSettings;
 use agora_sched::timer::{self, TimerSpec};
 use rusqlite::{Connection, OptionalExtension, Params, params};
 
@@ -70,7 +69,7 @@ impl Store {
             return Err(StoreError::Invalid("timer already exists"));
         }
         let checked = template::check_template(&tx, &owner, role, &args.template)?;
-        let quota = timer_quota(&tx)?;
+        let quota = crate::settings_read::settings_in(&tx)?.timer_quota;
         let enabled: i64 = tx.query_row(
             "SELECT COUNT(*) FROM timers WHERE owner=? AND enabled=1",
             [owner.as_str()],
@@ -214,21 +213,6 @@ fn next_timer_id(conn: &Connection) -> Result<String, StoreError> {
         if !exists(conn, "SELECT EXISTS(SELECT 1 FROM timers WHERE id=?)", &id)? {
             return Ok(id);
         }
-    }
-}
-
-/// The per-identity timer quota: the stored work settings, or the default when no row exists.
-fn timer_quota(conn: &Connection) -> Result<u32, StoreError> {
-    let json: Option<String> = conn
-        .query_row("SELECT json FROM work_settings WHERE id=1", [], |r| {
-            r.get(0)
-        })
-        .optional()?;
-    match json {
-        None => Ok(WorkSettings::default().timer_quota),
-        Some(json) => serde_json::from_str::<WorkSettings>(&json)
-            .map(|settings| settings.timer_quota)
-            .map_err(|_| StoreError::Invalid("corrupt work settings in database")),
     }
 }
 

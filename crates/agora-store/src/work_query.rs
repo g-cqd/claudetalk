@@ -18,7 +18,7 @@ use agora_sched::render::{Mode, render};
 use agora_sched::settings::WorkSettings;
 use agora_sched::signature::Signatures;
 use agora_sched::task::{Queued, Task};
-use row::{column_error, pseudonym_of, string_list};
+use row::{pseudonym_of, string_list};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row, named_params, params_from_iter};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -192,18 +192,7 @@ impl Store {
 
     /// The stored settings (`work_settings` row 1), or the defaults when no row exists.
     pub fn work_settings(&self) -> Result<WorkSettings, StoreError> {
-        let stored: Option<String> = self
-            .conn
-            .query_row("SELECT json FROM work_settings WHERE id = 1", [], |row| {
-                row.get(0)
-            })
-            .optional()?;
-        match stored {
-            None => Ok(WorkSettings::default()),
-            Some(text) => {
-                serde_json::from_str(&text).map_err(|e| StoreError::Sql(column_error(0, e)))
-            }
-        }
+        crate::settings_read::settings_in(&self.conn)
     }
 
     /// History for prediction (ref-admission section 2; tie-break ended DESC, seq DESC).

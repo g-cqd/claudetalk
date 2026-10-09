@@ -2,7 +2,7 @@
 
 use super::cursor::Cursor;
 use super::rules::compile_pattern;
-use super::turn::{Ctx, Found, Wake};
+use super::turn::{Ctx, Found, GROWTH_RECHECK, Wake};
 use crate::{DaemonError, watch};
 use agora_run::jobdir;
 use agora_sched::model::WaitResult;
@@ -23,7 +23,10 @@ pub(super) async fn log_wait(
     let re = compile_pattern(&pattern)?;
     let file = PathBuf::from(&path);
     let (mut offset, mut carry) = resumed.map_or((0, String::new()), |c| (c.offset, c.carry));
-    let mut wake = Wake::Fs(watch::Watcher::new(std::slice::from_ref(&file)));
+    let mut wake = Wake::Fs {
+        watcher: watch::Watcher::new(std::slice::from_ref(&file)),
+        recheck: GROWTH_RECHECK,
+    };
     loop {
         let (next, next_carry, matched) =
             scan(file.clone(), offset, carry.clone(), re.clone()).await?;

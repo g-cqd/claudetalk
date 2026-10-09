@@ -621,7 +621,7 @@ fn hello_frame_is_tagged_hello() {
     let frame = ServerFrame::Hello(ServerHello {
         version: PROTO_VERSION,
         challenge: b64(&CHALLENGE),
-        daemon: "agora/0.1.0".into(),
+        daemon: "agora/0.2.0".into(),
     });
     assert_eq!(
         serde_json::to_value(&frame).expect("serializes"),
@@ -629,7 +629,7 @@ fn hello_frame_is_tagged_hello() {
             "t": "hello",
             "version": 1,
             "challenge": b64(&CHALLENGE),
-            "daemon": "agora/0.1.0",
+            "daemon": "agora/0.2.0",
         })
     );
 }
@@ -1005,7 +1005,7 @@ async fn server_frames_round_trip_in_order_over_a_small_pipe() {
         ServerFrame::Hello(ServerHello {
             version: PROTO_VERSION,
             challenge: b64(&CHALLENGE),
-            daemon: "agora/0.1.0".into(),
+            daemon: "agora/0.2.0".into(),
         }),
         ServerFrame::Welcome(Welcome {
             pubkey: sender_hex(),

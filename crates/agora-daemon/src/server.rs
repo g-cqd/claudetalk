@@ -361,7 +361,14 @@ pub async fn serve_conn(sh: Shared, mut stream: UnixStream) {
     let uid = match auth::peer_uid(&stream) {
         Ok(uid) if uid == sh.daemon_uid => uid,
         peer => {
-            tracing::warn!(peer_uid = ?peer.ok(), "peer uid mismatch; closing connection");
+            match peer {
+                Ok(u) => tracing::warn!(peer_uid = u, "peer uid mismatch; closing connection"),
+                Err(_) => {
+                    tracing::debug!(
+                        "peer credentials unavailable (peer closed early?); closing connection"
+                    );
+                }
+            }
             reject(&mut stream, "peer uid mismatch").await;
             return;
         }

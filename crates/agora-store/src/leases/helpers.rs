@@ -27,16 +27,7 @@ pub(super) const POOL_SQL: &str = "SELECT p.name, p.capacity, p.unit, p.note, p.
 
 /// The stored work settings, or the defaults when no row exists.
 pub(super) fn settings(conn: &Connection) -> Result<WorkSettings, StoreError> {
-    let json: Option<String> = conn
-        .query_row("SELECT json FROM work_settings WHERE id=1", [], |r| {
-            r.get(0)
-        })
-        .optional()?;
-    match json {
-        None => Ok(WorkSettings::default()),
-        Some(text) => serde_json::from_str(&text)
-            .map_err(|_| StoreError::Invalid("corrupt work settings in database")),
-    }
+    crate::settings_read::settings_in(conn)
 }
 
 /// Milliseconds for a TTL in seconds: finite, above zero, at most seven days, at least one millisecond.

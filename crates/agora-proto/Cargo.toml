@@ -3,6 +3,7 @@ name = "agora-proto"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 agora-crypto = { path = "../agora-crypto" }

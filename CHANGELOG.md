@@ -6,6 +6,65 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-09
+
+Agora, a Rust workspace under `crates/`, replaces the TypeScript ClaudeTalk app as the main
+implementation. The TypeScript app is kept under `legacy/`.
+
+### Added
+
+- Agora milestones M1 to M6:
+  - M1 (`agora-store`, `agora-crypto`): signed operations, server-derived roles, identities, and
+    end-to-end encrypted channels with key epochs.
+  - M2 (`agora-proto`, `agora-daemon`, `agora-cli`): daemon with a single writer and event bus,
+    unix-socket protocol, and the `agora` CLI.
+  - M3 (`agora-mcp`): MCP server over stdio and stateless HTTP, with daemon push (33 tools; 57 since M5).
+  - M4 (`agora-hooks`, `agora-deliver`, `plugin/claude`): Claude Code plugin, hooks, and the
+    delivery ladder.
+  - M5 (`agora-sched`, `agora-run`): port of the `work.py` work scheduler, with supervisor, timers,
+    and reconciler.
+  - M6 (`agora-bridge`, `agora install`): installers, hook dialects, and bridges for Codex, Copilot
+    CLI, VS Code Copilot, Antigravity, opencode, and Cursor.
+- Documentation: `docs/ARCHITECTURE.md` and `benches/README.md` describing the benchmark method.
+- `scripts/e2e-smoke.sh`: hermetic end-to-end smoke test of the CLI, run in CI.
+- `benches/`: MCP-level benchmark harness comparing Agora with the legacy server
+  (`legacy/src/server.ts`).
+- `crates/agora-cli/tests/docs_commands.rs`: fails if documentation names an `agora` subcommand or
+  flag that does not exist.
+- CI: `.github/workflows/ci.yml` (fmt, clippy with warnings denied, tests on Linux and macOS, e2e
+  smoke); `supply-chain.yml` (cargo deny and cargo audit, nightly); `release.yml` (macOS arm64 and
+  x86_64 and Linux x86_64 archives with `SHA256SUMS`, draft release on `v*` tags); `mutation.yml`
+  (cargo-mutants nightly for `agora-core`, `agora-sched`, `agora-store`, informational);
+  `legacy.yml` (optional bun tests for `legacy/`); `deny.toml`; Dependabot for cargo, GitHub
+  Actions, and the legacy bun lockfile.
+
+### Changed
+
+- `README.md`, `docs/QUICKSTART.md`, and `SECURITY.md` rewritten for Agora.
+- Store errors for corrupt rows (`corrupt … in database`) are reported to clients as internal errors without detail.
+- The TypeScript app (`src`, `bin`, `hooks`, `test`, `relay`, configs) moved to `legacy/` with
+  history preserved. The `claudetalk` Claude Code plugin (0.10.6) now runs from `legacy/`:
+  `.mcp.json` points to `legacy/src/server.ts`, and the `hooks` entry in
+  `.claude-plugin/plugin.json` points to `legacy/hooks/hooks.json`. Users who installed legacy
+  hooks with the CLI must reinstall; see `legacy/README.md`. The relay moved to `legacy/relay` and
+  is deployed from `legacy/` as the build context.
+- Work settings: a stored `claim_ttl_s` below 60 s is clamped to 60 s on read, with a warning. Work
+  settings are read through one shared reader in `agora-store`.
+- Reconciler: the "claim expired" notice is posted only when the claim is actually released. A
+  pass expires at most 16 claims (`MAX_CLAIM_EXPIRIES_PER_PASS`).
+- Workspace crates are marked `publish = false`. `toml_edit` is pinned to `=0.25.16`.
+
+### Removed
+
+- The web dashboard: `src/web`, the `web` CLI command and script, and their tests.
+
+### Fixed
+
+- Linux: a test helper that was dead code under `clippy -D warnings`, found by cross-compiling for
+  `x86_64-unknown-linux-gnu`.
+- The opencode busy-delivery test no longer depends on sleeps. It uses paused-time unit tests and
+  state-based waits.
+
 ## [0.10.5] — 2026-05-24
 
 **Phase N1b-tools-5 — full stdio tool surface on the HTTP-MCP path.**

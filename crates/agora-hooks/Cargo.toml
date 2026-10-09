@@ -3,6 +3,7 @@ name = "agora-hooks"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 agora-client = { path = "../agora-client" }

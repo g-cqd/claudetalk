@@ -248,16 +248,30 @@ async fn symlinked_sessions_dir_makes_acquire_fail() {
     );
 }
 
+/// `try_advance` that expects to win the lock. `flock` belongs to the open file description, so a
+/// child forked by a concurrent test in this binary (e.g. `mkfifo` in `ops::tests`) keeps the lock
+/// alive until it execs; `try_advance` then reports `Ok(false)` ("busy") although every
+/// `SessionLock` is gone. Retry on busy; a seq that is genuinely not above the cursor still fails.
+fn advance_when_free(home: &Path, session_id: &str, seq: i64) -> bool {
+    for _ in 0..200 {
+        if try_advance(home, session_id, seq).expect("try_advance") {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
 #[test]
 fn try_advance_moves_the_cursor_forward() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let home = tmp.path();
-    assert!(try_advance(home, "adv", 5).expect("advance to 5"));
+    assert!(advance_when_free(home, "adv", 5), "advance to 5");
     let loaded = load(home, "adv");
     assert_eq!(loaded.cursor, 5);
     assert!(loaded.updated_ms > 0);
 
-    assert!(try_advance(home, "adv", 7).expect("advance to 7"));
+    assert!(advance_when_free(home, "adv", 7), "advance to 7");
     assert_eq!(load(home, "adv").cursor, 7);
 }
 
@@ -265,7 +279,7 @@ fn try_advance_moves_the_cursor_forward() {
 fn try_advance_ignores_a_seq_not_above_the_cursor() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let home = tmp.path();
-    assert!(try_advance(home, "low", 5).expect("advance to 5"));
+    assert!(advance_when_free(home, "low", 5), "advance to 5");
     assert!(!try_advance(home, "low", 3).expect("lower seq"));
     assert!(!try_advance(home, "low", 5).expect("equal seq"));
     assert_eq!(load(home, "low").cursor, 5);
@@ -283,7 +297,7 @@ async fn try_advance_returns_false_while_the_session_lock_is_held() {
     assert_eq!(load(home, "held").cursor, 1);
 
     drop(lock);
-    assert!(try_advance(home, "held", 9).expect("try after release"));
+    assert!(advance_when_free(home, "held", 9), "try after release");
     assert_eq!(load(home, "held").cursor, 9);
 }
 

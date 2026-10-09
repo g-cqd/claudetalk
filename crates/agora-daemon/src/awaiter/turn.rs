@@ -11,7 +11,12 @@ use tokio::sync::broadcast::{self, error::RecvError, error::TryRecvError};
 /// Longest one filesystem wake-up waits before the loop re-checks. A healthy watcher wakes on its own events, so this
 /// only bounds the cost of a missed event; the watcher's polling mode clamps itself to 1 s, and the deadline still
 /// bounds the whole wait.
-const FS_RECHECK: Duration = Duration::from_secs(60);
+pub(super) const FS_RECHECK: Duration = Duration::from_secs(60);
+/// Re-check for waits whose condition can become true without a further event (an append after a create).
+/// FSEvents does not report every append to a file that was just created (a job's first line can land after the
+/// create event and produce no event of its own, seen under host load), so such a wait cannot rely on events for
+/// new bytes. A scan reads only new bytes, so a 1 s cadence is cheap.
+pub(super) const GROWTH_RECHECK: Duration = Duration::from_secs(1);
 
 /// What wakes a waiting loop between two checks.
 pub(super) enum Wake {
@@ -20,8 +25,9 @@ pub(super) enum Wake {
         rx: broadcast::Receiver<Event>,
         relevant: Box<dyn Fn(&Event) -> bool + Send>,
     },
-    /// Changes seen by a watcher that was created before the first check and is kept for the whole wait.
-    Fs(Watcher),
+    /// Changes seen by a watcher that was created before the first check and is kept for the whole wait, and the
+    /// longest the loop waits for one before it re-checks anyway.
+    Fs { watcher: Watcher, recheck: Duration },
     /// Only the caller's pause (pid waits probe liveness on a timer).
     Timer,
 }
@@ -85,12 +91,12 @@ impl Ctx<'_> {
                 }
                 drain(rx);
             }
-            Wake::Fs(watcher) => {
+            Wake::Fs { watcher, recheck } => {
                 tokio::select! {
                     biased;
                     () = self.sh.shutdown.cancelled() => return Err(shutting_down()),
                     () = &mut timer => {}
-                    () = watcher.changed(FS_RECHECK) => {}
+                    () = watcher.changed(*recheck) => {}
                 }
             }
             Wake::Timer => {

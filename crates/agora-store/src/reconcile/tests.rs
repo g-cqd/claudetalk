@@ -3,6 +3,7 @@
 mod apply;
 mod blockers;
 mod claims;
+mod claims_notice;
 mod snapshot;
 
 use super::*;

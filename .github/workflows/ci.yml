@@ -1,85 +1,97 @@
+# CI for the Rust workspace (crates/*).
+#
+# Jobs:
+# CI for the Rust workspace (crates/*).
+#
+# Jobs:
+#   fmt           cargo fmt --all --check (Linux).
+#   clippy        cargo clippy --workspace --all-targets --locked, warnings denied
+#                 (Linux and macOS: agora-run has Linux-only cfg code).
+#   test          cargo test --workspace --locked --no-fail-fast (Linux and macOS).
+#   e2e           builds the agora binary and runs scripts/e2e-smoke.sh (Linux and macOS).
+#
+# Supply-chain checks (cargo deny, cargo audit) run in supply-chain.yml.
+# The policy for cargo deny is in deny.toml.
+#
+# The legacy TypeScript tree under legacy/ is not checked here. It has its own
+# optional workflow, legacy.yml.
+
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-permissions:
-  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  quality:
+  fmt:
+    name: Format (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          bun-version: 1.3.13
-      - run: bun install --frozen-lockfile
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
 
-      - name: Lint (Biome)
-        run: bun run lint
-
-      - name: Type check
-        run: bun run typecheck
-
-      - name: Unused code (Knip)
-        run: bun run lint:unused
-
-      - name: Code duplication (jscpd)
-        run: |
-          mkdir -p reports
-          bun run lint:duplication
-
-      - name: File-size budget
-        run: bun run lint:size
-
-      - name: Dependency audit
-        run: bun audit
-
-      - name: Upload quality reports
-        if: always()
-        uses: actions/upload-artifact@v7
+  clippy:
+    name: Clippy (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          name: quality-reports
-          path: reports/
-          retention-days: 30
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
+    name: Test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.13
-      - run: bun install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --workspace --locked --no-fail-fast
 
-      - name: Run tests with coverage
-        run: bun test --coverage --isolate
-
-      - name: Upload coverage artifact
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-lcov
-          path: coverage/
-          retention-days: 30
-
-      - name: Upload to Codecov
-        if: matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@v6
-        with:
-          files: coverage/lcov.info
-          fail_ci_if_error: false
-          flags: unittests
-          token: ${{ secrets.CODECOV_TOKEN }}
+  e2e:
+    name: E2E smoke (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build agora
+        run: cargo build -p agora --locked
+      - name: Run e2e smoke script
+        env:
+          AGORA_BIN: target/debug/agora
+        run: bash scripts/e2e-smoke.sh

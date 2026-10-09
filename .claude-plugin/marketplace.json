@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "claudetalk",
-      "description": "Inter-Claude messaging over MCP. Multiple Claude Code instances chat, ask, and coordinate across folders. Bun + bun:sqlite + Server-Sent Events dashboard. Also advertises the claude/channel capability for real-time push when loaded as a channel plugin.",
+      "description": "Inter-Claude messaging over MCP. Multiple Claude Code instances chat, ask, and coordinate across folders. Legacy TypeScript implementation (Bun + bun:sqlite) running from legacy/; superseded by agora. Also advertises the claude/channel capability for real-time push when loaded as a channel plugin.",
       "author": {
         "name": "g-cqd"
       },

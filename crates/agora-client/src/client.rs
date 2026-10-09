@@ -88,11 +88,7 @@ impl Client {
         if self.broken {
             return Err(unusable());
         }
-        let limit = if matches!(req, Req::InboxWait { .. }) {
-            Duration::from_millis(MAX_WAIT_MS) + WAIT_SLACK
-        } else {
-            CALL_TIMEOUT
-        };
+        let limit = call_limit(&req);
         let id = self.next;
         self.next = self.next.saturating_add(1);
         // Set before the exchange: if this future is dropped mid-exchange, the flag stays set.
@@ -250,6 +246,19 @@ impl EventStream {
     }
 }
 
+/// How long the daemon may take to answer `req`. A wait is held by the daemon for up to its own
+/// `timeout_ms` (clamped to `MAX_WAIT_MS`), so its limit is that wait plus `WAIT_SLACK`; any other
+/// request gets `CALL_TIMEOUT`.
+fn call_limit(req: &Req) -> Duration {
+    match req {
+        Req::InboxWait { .. } => Duration::from_millis(MAX_WAIT_MS) + WAIT_SLACK,
+        Req::WorkWait { timeout_ms, .. } => {
+            Duration::from_millis((*timeout_ms).min(MAX_WAIT_MS)) + WAIT_SLACK
+        }
+        _ => CALL_TIMEOUT,
+    }
+}
+
 /// Run `fut` for at most `limit`; running out of time means the daemon did not answer.
 async fn within<T>(
     limit: Duration,
@@ -365,6 +374,23 @@ mod tests {
     use agora_proto::{ErrorBody, ErrorCode, Event, PROTO_VERSION, ServerHello, Welcome, b64};
     use tokio::net::UnixListener;
     use tokio::time::timeout;
+
+    #[test]
+    fn a_work_wait_may_take_as_long_as_its_own_timeout() {
+        let wait = |timeout_ms| Req::WorkWait {
+            spec: agora_sched::model::WaitSpec::Tasks {
+                ids: vec!["job-1".into()],
+                any: false,
+            },
+            timeout_ms,
+            cursor: None,
+        };
+        // The daemon holds a wait for its timeout; a 30 s call limit would give up on a healthy daemon.
+        assert_eq!(call_limit(&wait(55_000)), Duration::from_secs(60));
+        assert_eq!(call_limit(&wait(u64::MAX)), Duration::from_secs(60));
+        assert_eq!(call_limit(&wait(1_000)), Duration::from_secs(6));
+        assert_eq!(call_limit(&Req::Whoami), CALL_TIMEOUT);
+    }
 
     #[tokio::test]
     async fn connect_no_spawn_to_missing_socket_is_not_running() {

@@ -67,7 +67,7 @@ async fn a_session_that_never_goes_idle_gets_its_prompt_after_the_busy_bound() {
     let driver = spawn_drive_bounded(client, SHORT_BUSY);
     fake.wait_for_stream().await;
     fake.push(status_frame(SESSION, "busy").as_bytes());
-    tokio::time::sleep(SETTLE).await;
+    driver.wait_busy().await;
 
     let mut answer = driver.deliver("stuck").await;
     assert!(
@@ -89,13 +89,22 @@ async fn shutdown_ends_the_driver_while_the_event_stream_never_answers() {
         .await
         .expect("bind loopback");
     let url = format!("http://{}", listener.local_addr().expect("local addr"));
+    let (accepted_tx, accepted) = oneshot::channel();
+    let mut accepted_tx = Some(accepted_tx);
     tokio::spawn(async move {
         let mut held = Vec::new();
         while let Ok((stream, _)) = listener.accept().await {
             held.push(stream);
+            if let Some(tx) = accepted_tx.take() {
+                let _ = tx.send(());
+            }
         }
     });
     let driver = spawn_drive(OpencodeHttp::new(&url, None).expect("loopback URL"));
-    tokio::time::sleep(SETTLE).await;
+    // Shutdown must land while the driver is waiting on the connection it opened.
+    timeout(T, accepted)
+        .await
+        .expect("driver connects in time")
+        .expect("listener alive");
     driver.finish().await;
 }

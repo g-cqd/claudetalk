@@ -13,7 +13,7 @@ dist/
 # Test + quality artifacts
 coverage/
 reports/
-test/.tmp-*
+legacy/test/.tmp-*
 .stryker-tmp/
 stryker.log
 
@@ -21,6 +21,8 @@ stryker.log
 .claudetalk-local/
 .smoke-home/
 .proof-sandbox/
+
+benches/results/
 
 # Safe-write backups of user config (never commit these — they contain personal data)
 *.bak.*

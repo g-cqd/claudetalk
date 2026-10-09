@@ -344,6 +344,21 @@ impl WorkSettings {
         ensure(self.max_waiting >= 1, "max_waiting must be at least 1")
     }
 
+    /// Clamps a stored claim TTL that is above zero but below `CLAIM_TTL_MIN_S` up to `CLAIM_TTL_MIN_S`, for rows that
+    /// bypassed `validate` (written by an older build or by hand). Returns true when it changed the value. Zero,
+    /// negative and non-finite TTLs keep their meaning (expiry off), so they are left alone.
+    pub fn normalize_stored(&mut self) -> bool {
+        if self.claim_ttl_s.is_finite()
+            && self.claim_ttl_s > 0.0
+            && self.claim_ttl_s < CLAIM_TTL_MIN_S
+        {
+            self.claim_ttl_s = CLAIM_TTL_MIN_S;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Apply a patch; Err(work.py message) on any invalid value (nothing applied); Ok(list of "key value" changes).
     pub fn apply(&mut self, patch: &SettingsPatch) -> Result<Vec<String>, String> {
         let mut next = self.clone();

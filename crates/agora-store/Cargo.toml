@@ -3,6 +3,7 @@ name = "agora-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 agora-core = { path = "../agora-core" }
@@ -11,3 +12,4 @@ agora-sched = { path = "../agora-sched" }
 rusqlite.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tracing.workspace = true

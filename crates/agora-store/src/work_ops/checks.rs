@@ -98,18 +98,6 @@ pub(super) fn check_card(
     }
 }
 
-pub(super) fn settings_in(conn: &Connection) -> Result<WorkSettings, StoreError> {
-    let raw: Option<String> = conn
-        .query_row("SELECT json FROM work_settings WHERE id=1", [], |r| {
-            r.get(0)
-        })
-        .optional()?;
-    match raw {
-        None => Ok(WorkSettings::default()),
-        Some(json) => serde_json::from_str(&json).map_err(|_| corrupt()),
-    }
-}
-
 /// D4 for acting on one task: a supervisor (or above) may act on any task; a worker only on its own, which is the
 /// author while the task is queued and the claimant once it is claimed. Otherwise `Forbidden(role)`.
 pub(super) fn may_act(role: Role, actor: &str, task: &TaskRecord) -> Result<(), StoreError> {

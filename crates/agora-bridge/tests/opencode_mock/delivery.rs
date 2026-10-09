@@ -52,7 +52,7 @@ async fn a_delivery_waits_while_the_server_reports_busy_and_goes_out_on_idle() {
     let (head, tail) = frame.as_bytes().split_at(12);
     fake.push(head);
     fake.push(tail);
-    tokio::time::sleep(SETTLE).await;
+    driver.wait_busy().await;
 
     let mut answer = driver.deliver("first").await;
     assert!(

@@ -22,7 +22,7 @@ use self::rules::{
     Caller, card_not_found, card_states, file_status, known_floor, need_worker, non_empty,
     non_final, refuse_job_paths, sole_path, task_done, task_status, within_targets,
 };
-use self::turn::{Ctx, Found, Wake};
+use self::turn::{Ctx, FS_RECHECK, Found, GROWTH_RECHECK, Wake};
 use crate::{Conn, DaemonError, Shared, watch};
 use agora_core::{CardState, Role};
 use agora_proto::{Event, MAX_WAIT_MS};
@@ -405,7 +405,10 @@ async fn pid_wait(ctx: &Ctx<'_>, pids: Vec<i64>) -> Result<WaitResult, DaemonErr
 async fn file_wait(ctx: &Ctx<'_>, paths: Vec<String>) -> Result<WaitResult, DaemonError> {
     non_empty(&paths, "name at least one file")?;
     within_targets(paths.len())?;
-    let mut wake = Wake::Fs(watch::Watcher::new(&to_paths(&paths)));
+    let mut wake = Wake::Fs {
+        watcher: watch::Watcher::new(&to_paths(&paths)),
+        recheck: GROWTH_RECHECK,
+    };
     loop {
         let pending: Vec<String> = paths
             .iter()
@@ -440,7 +443,10 @@ async fn file_wait(ctx: &Ctx<'_>, paths: Vec<String>) -> Result<WaitResult, Daem
 async fn gone_wait(ctx: &Ctx<'_>, paths: Vec<String>) -> Result<WaitResult, DaemonError> {
     non_empty(&paths, "name at least one path")?;
     within_targets(paths.len())?;
-    let mut wake = Wake::Fs(watch::Watcher::new(&to_paths(&paths)));
+    let mut wake = Wake::Fs {
+        watcher: watch::Watcher::new(&to_paths(&paths)),
+        recheck: FS_RECHECK,
+    };
     loop {
         let pending: Vec<String> = paths
             .iter()

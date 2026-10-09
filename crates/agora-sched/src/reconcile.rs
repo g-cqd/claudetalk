@@ -69,12 +69,17 @@ pub enum ReconcileAction {
         key: String,
         lease: String,
     },
-    /// R7: a claim that sat without a run request for `claim_ttl_s`; the task goes back to the queue.
+    /// R7: a claim that sat without a run request for `claim_ttl_s`; the task goes back to the queue. Its notice
+    /// (kind "claim_expired", target `agent`, subject `task`) is posted only if the claim is released.
     ExpireClaim {
         key: String,
         task: String,
         agent: String,
         claimed_ms: i64,
+        #[serde(default)]
+        notice_key: String,
+        #[serde(default)]
+        text: String,
     },
     CloseQuiet {
         key: String,
@@ -133,6 +138,9 @@ impl ReconcileAction {
 }
 
 pub const MAX_ACTIONS_PER_PASS: usize = 64;
+/// Claim expiries per pass. Bounds the burst of releases and notices after a long daemon pause; the rest are
+/// picked up on later passes.
+pub const MAX_CLAIM_EXPIRIES_PER_PASS: usize = 16;
 
 /// Owner action for a set of floor breaches (R5): one "free <resource> (<value> < floor <floor>)" clause per
 /// breach, joined with "; ", then the pause that lasts until they are gone.

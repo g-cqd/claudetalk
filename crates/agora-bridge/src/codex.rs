@@ -67,9 +67,10 @@ pub struct CodexOptions {
     pub approval: String,
     /// First prompt (`turn/start`) once the thread is ready.
     pub prompt: Option<String>,
-    /// Pre-approve the read-only agora MCP tools in `SAFE_AGORA_TOOLS` (default true). Every other
-    /// agora tool, `work_run` included, stays on prompt, which the bridge declines. Off: no agora
-    /// tool is pre-approved, so under `approval = never` they all fail.
+    /// Pre-approve the agora tools approved without prompting (including `chat`, `react`, `ack`,
+    /// which write) in `SAFE_AGORA_TOOLS` (default true). Every other agora tool, `work_run`
+    /// included, stays on prompt, which the bridge declines. Off: no agora tool is pre-approved, so
+    /// under `approval = never` they all fail.
     pub approve_agora_tools: bool,
     /// Bound on each `turn/start` and `turn/steer` (default 30 s). A timed-out delivery is refused.
     pub turn_timeout: Duration,

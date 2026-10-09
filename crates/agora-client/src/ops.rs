@@ -353,11 +353,10 @@ mod tests {
     fn write_private_file_refuses_a_fifo_without_blocking() {
         let dir = tempfile::tempdir().expect("temp dir");
         let fifo = dir.path().join("pipe.bin");
-        let status = std::process::Command::new("mkfifo")
-            .arg(&fifo)
-            .status()
-            .expect("mkfifo");
-        assert!(status.success());
+        let path =
+            std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).expect("nul-free path");
+        // in-process mkfifo: forking a command would let the child inherit other tests' lock file descriptions.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
         let err = write_private_file(&fifo, b"x", true).expect_err("fifo refused");
         assert!(matches!(err, ClientError::Usage(m) if m.contains("pipe.bin")));
     }

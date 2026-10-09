@@ -1,7 +1,7 @@
 version: 2
 updates:
-  # Bun / npm dependencies in package.json
-  - package-ecosystem: "npm"
+  # Rust workspace: root Cargo.toml and crates/*
+  - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -11,13 +11,14 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+      - "rust"
     commit-message:
       prefix: "deps"
-      include: "scope"
     groups:
       # Group minor/patch bumps to reduce PR noise
-      minor-and-patch:
-        applies-to: "version-updates"
+      cargo-minor-patch:
+        patterns:
+          - "*"
         update-types:
           - "minor"
           - "patch"
@@ -28,9 +29,26 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+      time: "06:00"
+      timezone: "Europe/Paris"
     open-pull-requests-limit: 3
     labels:
       - "dependencies"
       - "ci"
     commit-message:
       prefix: "ci"
+
+  # Legacy TypeScript app (retired, still deployed). Uses bun.lock only; CI runs
+  # `bun install --frozen-lockfile`, so updates must go through bun, not npm.
+  # Monthly, and only a few open PRs at a time; security updates still arrive
+  # through this entry. legacy/relay has no dependencies of its own.
+  - package-ecosystem: "bun"
+    directory: "/legacy"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "legacy"
+    commit-message:
+      prefix: "deps"

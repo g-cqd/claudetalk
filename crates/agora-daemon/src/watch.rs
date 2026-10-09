@@ -164,6 +164,9 @@ pub fn log_scan(path: &Path, offset: u64, carry: &str, re: &regex::Regex) -> (u6
         return (offset, carry.to_owned(), false);
     }
     let len = meta.len();
+    if len == offset {
+        return (offset, carry.to_owned(), false);
+    }
     let (offset, mut text) = if len < offset {
         (0, String::new())
     } else {

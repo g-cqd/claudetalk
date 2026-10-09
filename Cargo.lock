@@ -14,7 +14,7 @@ dependencies = [
 
 [[package]]
 name = "agora"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agora-bridge",
  "agora-client",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "agora-bridge"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agora-client",
  "agora-daemon",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "agora-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agora-crypto",
  "agora-daemon",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "agora-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "thiserror",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "agora-crypto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "agora-daemon"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agora-core",
  "agora-crypto",
@@ -122,11 +122,11 @@ dependencies = [
 
 [[package]]
 name = "agora-deliver"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "agora-hooks"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agora-client",
  "agora-daemon",
@@ -142,7 +142,7 @@ dependencies = [
 
 [[package]]
 name = "agora-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agora-client",
  "agora-crypto",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "agora-proto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agora-crypto",
  "agora-sched",
@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "agora-run"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agora-sched",
  "libc",
@@ -199,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "agora-sched"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "serde",
@@ -210,7 +210,7 @@ dependencies = [
 
 [[package]]
 name = "agora-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agora-core",
  "agora-crypto",
@@ -218,6 +218,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

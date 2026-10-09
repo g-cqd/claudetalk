@@ -173,7 +173,7 @@ A worker can cancel its own tasks. A supervisor, or higher, can cancel any task.
 - A notices wait with no `after` (`--after` on the CLI, `after` in MCP) waits for new notices only. The daemon treats `after < 0` as "the latest notice at call time", so a notice you already have does not return at once. To wait for notices after a given sequence number, pass `--after N` with `--notices` on the CLI, or `after` in MCP.
 - Task, card, message, and notice conditions use the event bus.
 - A pid condition polls liveness every 250 ms. There is no portable event source for process exit that the code can use without `unsafe`.
-- File, gone, and log conditions use a file watcher on the parent directory. A healthy watcher also re-checks the condition at most every 60 s, as a safety net that bounds the effect of a missed event. If the watcher cannot be created, the wait polls every 1 s instead.
+- File, gone, and log conditions use a file watcher on the parent directory. A healthy watcher also re-checks the condition at most every 60 s, as a safety net that bounds the effect of a missed event. A log wait re-scans every 1 s while it waits, because macOS FSEvents does not always report an append to a file that was just created. File waits use the same 1 s re-check for the same reason. If the watcher cannot be created, the wait polls every 1 s instead.
 - **Relative paths.** A relative path given to `--file`, `--gone`, or `--log` (or to the `file`, `gone`, or `log_path` fields over MCP) is joined to the caller's current directory before the request reaches the daemon. For the CLI that is the shell's directory. For the stdio MCP server it is the directory the server runs in.
 - **Resume hints.** A CLI wait that times out prints how to resume it. A task wait prints `agora work wait` with the ids of the tasks still open. A pid, file, gone, or log wait prints `agora work wait` with its targets (a log wait shows a `PATTERN` placeholder, because the pattern is not echoed). Every other condition (cards, messages, notices, and `--all`) prints `run the same wait again to keep waiting`. Over MCP, the command form is replaced by `work_wait` and the returned cursor.
 
@@ -257,7 +257,7 @@ Each action has a key. The daemon records the keys it has applied, so an action 
 | R4 | A team and lane with more claimed and doing cards than its `wip_limit` | Notice each supervisor | no limit | `wip:<team>/<lane>:<count>:<hour>:<target>` (O-2) |
 | R5 | Free disk, free memory, or idle CPU below its floor (checked only when both sides are known) | Pause admission and open a blocker card. Resume and close the card when all floors are met again. | disk floor 5 GiB; memory and idle floors off | `pause:` and `resume:` keyed to 10 minute buckets; `blocker:<bucket>`; `unblock:<card>` (O-1) |
 | R6 | An active sprint past its end | Notice each supervisor to roll the sprint over | `sprint_rollover` on | `sprint:<id>:<target>` (O-2) |
-| R7 | Claimed tasks with no run requested whose claim is older than `claim_ttl_s` | Return the task to queued (agent, claimed, and accepted cleared; note `claim expired`), record a `work.reclaimed` event, and notice the former claimant with kind `claim_expired`. The action is the system op `reconcile.claim_expire`. | `claim_ttl_s` 1800 s; checked each pass (`reconcile_interval`, 30 s) | `claim:<task>:<claimed_ms>`; `claim-notice:<task>:<claimed_ms>` |
+| R7 | Claimed tasks with no run requested whose claim is older than `claim_ttl_s` | Return the task to queued (agent, claimed, and accepted cleared; note `claim expired`), record a `work.reclaimed` event, and notice the former claimant with kind `claim_expired`, in the same transaction and only when the claim was released. The action is the system op `reconcile.claim_expire`. | `claim_ttl_s` 1800 s; checked each pass (`reconcile_interval`, 30 s) | `claim:<task>:<claimed_ms>`; `claim-notice:<task>:<claimed_ms>` |
 
 Notes on the rules:
 
@@ -267,6 +267,7 @@ Notes on the rules:
 - **R5 rate limit.** Pause and resume decisions are keyed by 10-minute buckets, so a breach that returns within the same bucket after a resume is re-paused at the next bucket.
 - **O-2.** The keys for R4 and R6 include the target's public key. A supervisor added later still receives the notice. The SPEC's shorter key format is replaced by this one.
 - **O-3.** The `owner_action` text is one string.
+- **R7 claim expiry.** The claimant's notice is posted only when its claim is actually released; a claim that was re-made, requested, or is still fresh gets no notice. At most 16 claims expire per pass, oldest claim first, and the rest are picked up on later passes.
 
 ### Policies
 
@@ -286,7 +287,7 @@ These are the only timed loops in the work code. Anything else waits on an event
 | Admission re-check | 2 s | daemon | only while a job is held by an idle, memory, pressure, or load gate |
 | Admission retry | 2 s | daemon | after an admission pass that fails |
 | Pid liveness probe | 250 ms | daemon, `wait --pid` only | the wait on a process |
-| Watcher safety re-check | 60 s | daemon, file, gone, and log waits | re-checks the condition while the watcher is healthy, bounding the effect of a missed event |
+| Watcher safety re-check | 60 s (1 s for log and file waits) | daemon, file, gone, and log waits | re-checks the condition while the watcher is healthy, bounding the effect of a missed event |
 | Watcher fallback | 1 s | daemon, file, gone, and log waits | only when the file watcher cannot be created |
 | Adopted supervisor check | 5 s | daemon, after a restart | liveness of supervisors the daemon did not start |
 | Reconciler | 30 s by default (`reconcile_interval`) | daemon | rules R1 to R7; no event kick |

@@ -19,6 +19,7 @@ fn bare_argv() -> Vec<&'static str> {
 }
 
 /// `prefix` followed by the bare argv.
+#[cfg(target_os = "macos")]
 fn prefixed(prefix: &[&'static str]) -> Vec<&'static str> {
     prefix.iter().copied().chain(bare_argv()).collect()
 }

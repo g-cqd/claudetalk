@@ -60,7 +60,7 @@ pub struct ServerHello {
     pub version: u32,
     /// base64 of 32 random bytes.
     pub challenge: String,
-    /// e.g. "agora/0.1.0".
+    /// e.g. "agora/0.2.0".
     pub daemon: String,
 }
 

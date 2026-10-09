@@ -29,6 +29,14 @@ const WATCHDOG_NOTICES: i64 = 50;
 /// this constant must change together; the snapshot test pins the whole note.
 const ORPHAN_NOTE: &str = "its supervisor";
 
+/// What applying one reconcile action did. `applied` is false when its key was already marked; `notice_posted` is
+/// true only when the action posted a notice in the same transaction.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ReconcileOutcome {
+    pub applied: bool,
+    pub notice_posted: bool,
+}
+
 impl Store {
     /// Snapshot of everything `agora_sched::reconcile::plan` reads.
     pub fn reconcile_input(
@@ -67,6 +75,16 @@ impl Store {
     /// Apply one action signed by the system (op.kind == action.op_kind(), arg = action JSON). Idempotent: if
     /// reconcile_marks has the key -> Ok(false) and nothing changes; else apply + insert the mark -> Ok(true).
     pub fn apply_reconcile(&mut self, now: i64, op: &SignedOp) -> Result<bool, StoreError> {
+        Ok(self.apply_reconcile_outcome(now, op)?.applied)
+    }
+
+    /// As `apply_reconcile`, and also reports whether the action posted a notice. Only a claim expiry posts one, and
+    /// only when it releases the claim.
+    pub fn apply_reconcile_outcome(
+        &mut self,
+        now: i64,
+        op: &SignedOp,
+    ) -> Result<ReconcileOutcome, StoreError> {
         let tx = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -84,9 +102,10 @@ impl Store {
         )?;
         if marked {
             // Nothing is committed: the transaction rolls back when it is dropped.
-            return Ok(false);
+            return Ok(ReconcileOutcome::default());
         }
         let actor = op.actor_hex();
+        let mut notice_posted = false;
         // The audit event's subject is the entity the action touched; its data carries the idempotency key.
         let subject: String = match &action {
             ReconcileAction::ExpireLease { lease, .. } => {
@@ -102,9 +121,24 @@ impl Store {
                 task,
                 agent,
                 claimed_ms,
+                notice_key,
+                text,
                 ..
             } => {
-                expire_claim(&tx, now, &actor, task, agent, *claimed_ms)?;
+                // The release and its notice share this transaction: a claim that was not released gets no notice.
+                if expire_claim(&tx, now, &actor, task, agent, *claimed_ms)? {
+                    // Old-shape actions (pre-0.2.0 planner) carry no notice; the store has no task title to rebuild
+                    // it, so it posts none.
+                    if !notice_key.is_empty() && !text.is_empty() {
+                        crate::policy::post_notice(&tx, now, agent, "claim_expired", task, text)?;
+                        // The notice-key mark is kept for continuity with the pre-0.2.0 mark set (pruned with the rest).
+                        tx.execute(
+                            "INSERT OR IGNORE INTO reconcile_marks(key, last, count) VALUES (?1, ?2, 1)",
+                            params![notice_key, now],
+                        )?;
+                        notice_posted = true;
+                    }
+                }
                 task.clone()
             }
             ReconcileAction::CloseQuiet { lease, .. } => {
@@ -155,7 +189,10 @@ impl Store {
             &serde_json::json!({"key": key}),
         )?;
         tx.commit()?;
-        Ok(true)
+        Ok(ReconcileOutcome {
+            applied: true,
+            notice_posted,
+        })
     }
 
     /// The reason admission is paused, if it is.

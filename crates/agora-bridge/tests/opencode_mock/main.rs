@@ -22,7 +22,8 @@ const SESSION: &str = "ses_test";
 const T: Duration = Duration::from_secs(5);
 /// How long a delivery must stay unanswered to count as blocked.
 const QUIET: Duration = Duration::from_millis(300);
-/// Lets the driver read the frames the fake has written before the test acts on them.
+/// Lets the driver read another session's frames, which leave no observable state, before the test
+/// acts. Used only where a late read cannot turn a passing check into a failing one.
 const SETTLE: Duration = Duration::from_millis(200);
 
 /// One request as the fake received it.
@@ -236,9 +237,11 @@ async fn stream_events(stream: &mut TcpStream, shared: &Shared) {
     }
 }
 
-/// A running `drive` and the handles the test uses to feed and stop it.
+/// A running `drive` and the handles the test uses to feed, observe and stop it.
 struct Driver {
     deliveries: mpsc::Sender<Delivery>,
+    /// The busy state `drive` publishes for the session.
+    busy: watch::Receiver<bool>,
     shutdown: CancellationToken,
     task: JoinHandle<Result<(), BridgeError>>,
 }
@@ -255,21 +258,35 @@ fn spawn_drive(client: OpencodeHttp) -> Driver {
 fn spawn_drive_bounded(client: OpencodeHttp, busy_max_wait: Duration) -> Driver {
     let (deliveries, rx) = mpsc::channel(4);
     let shutdown = CancellationToken::new();
+    let busy_tx = Arc::new(watch::channel(false).0);
+    let busy = busy_tx.subscribe();
     let task = tokio::spawn(drive(
         client,
         SESSION.to_owned(),
         rx,
         shutdown.clone(),
         busy_max_wait,
+        busy_tx,
     ));
     Driver {
         deliveries,
+        busy,
         shutdown,
         task,
     }
 }
 
 impl Driver {
+    /// Waits until the driver has applied a busy status from the event stream, within `T`. Frames
+    /// on one stream are applied in order, so a busy state seen here is the one the test sent.
+    async fn wait_busy(&self) {
+        let mut busy = self.busy.clone();
+        timeout(T, busy.wait_for(|b| *b))
+            .await
+            .expect("driver saw busy in time")
+            .expect("busy channel open");
+    }
+
     /// Sends one prompt; returns the receiver of its answer.
     async fn deliver(&self, text: &str) -> oneshot::Receiver<bool> {
         let (reply, answer) = oneshot::channel();

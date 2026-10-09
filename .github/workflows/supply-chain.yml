@@ -1,0 +1,36 @@
+# Supply-chain checks for the Rust workspace.
+#
+# Jobs:
+#   supply-chain  cargo deny --locked check (policy in deny.toml) and cargo audit
+#                 (RustSec advisories, reads Cargo.lock directly).
+#
+# Runs on pushes to main, on pull requests, daily at 06:00 UTC (so new advisories
+# are caught without a push), and on manual dispatch.
+
+name: Supply chain
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  supply-chain:
+    name: Supply chain (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+      - name: cargo deny check
+        run: cargo deny --locked check
+      - name: cargo audit
+        run: cargo audit

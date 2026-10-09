@@ -576,14 +576,86 @@ async fn unacceptable_accept_header_is_406() {
     world.shutdown().await;
 }
 
-/// A body over the 8 MiB cap is 413.
+/// A raw `POST /mcp` connection with a valid token, for tests that must control how much of
+/// the body is written. `head_extra` is the framing header (`Content-Length` or
+/// `Transfer-Encoding`).
+async fn raw_post(harness: &HttpHarness, head_extra: &str) -> TcpStream {
+    let addr = harness
+        .url()
+        .trim_start_matches("http://")
+        .trim_end_matches("/mcp")
+        .to_owned();
+    let mut stream = timeout(WAIT, TcpStream::connect(&addr))
+        .await
+        .expect("connect in time")
+        .expect("connect to the server");
+    let head = format!(
+        "POST /mcp HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {}\r\n\
+         Content-Type: application/json\r\nAccept: application/json\r\n{head_extra}\
+         Connection: close\r\n\r\n",
+        harness.token(0)
+    );
+    stream
+        .write_all(head.as_bytes())
+        .await
+        .expect("send the headers");
+    stream
+}
+
+/// A declared body over the 8 MiB cap is 413 before any of it is read. The request is written
+/// by hand: the server answers on the headers alone and closes with the body unread, so a client
+/// that uploads the whole body can see a reset instead of the reply (the race that made the
+/// reqwest version of this test flaky). The 1 KiB prefix is all that is sent; a server that
+/// buffered the body would wait for the other 8 MiB and the read would time out.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn body_over_eight_mebibytes_is_413() {
     let world = World::start().await;
     let harness = HttpHarness::start(&world, 1).await;
-    let oversize = "x".repeat(MAX_MESSAGE_BYTES + 1);
-    let (status, _, text) = harness.post(Some(harness.token(0)), &oversize, &[]).await;
-    assert_eq!(status, 413, "{text}");
+    let mut stream = raw_post(
+        &harness,
+        &format!("Content-Length: {}\r\n", MAX_MESSAGE_BYTES + 1),
+    )
+    .await;
+    // The server may already have replied and closed: a failed write is expected.
+    let _ = stream.write_all(&[b'x'; 1024]).await;
+    let reply = timeout(WAIT, read_head(&mut stream))
+        .await
+        .expect("the reply arrives in time");
+    assert!(reply.starts_with("HTTP/1.1 413 "), "{reply}");
+    harness.shutdown().await;
+    world.shutdown().await;
+}
+
+/// A chunked body (no Content-Length) is counted while it is read, and refused with 413 once it
+/// passes the cap. Exactly one byte over is sent, with the terminating chunk in the same write,
+/// so the server has consumed the whole request when it replies and closes: no unread upload
+/// is left to turn the close into a reset.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn chunked_body_over_eight_mebibytes_is_413() {
+    const PIECE: usize = 64 * 1024;
+    let world = World::start().await;
+    let harness = HttpHarness::start(&world, 1).await;
+    let mut stream = raw_post(&harness, "Transfer-Encoding: chunked\r\n").await;
+    let mut remaining = MAX_MESSAGE_BYTES + 1;
+    let piece = vec![b'x'; PIECE];
+    while remaining > 0 {
+        let n = remaining.min(PIECE);
+        let mut frame = format!("{n:x}\r\n").into_bytes();
+        frame.extend_from_slice(&piece[..n]);
+        frame.extend_from_slice(b"\r\n");
+        remaining -= n;
+        if remaining == 0 {
+            frame.extend_from_slice(b"0\r\n\r\n");
+        }
+        // The server may reply and close as soon as the cap is passed: stop writing then.
+        if stream.write_all(&frame).await.is_err() {
+            break;
+        }
+    }
+    let reply = timeout(WAIT, read_head(&mut stream))
+        .await
+        .expect("the reply arrives in time");
+    assert!(reply.starts_with("HTTP/1.1 413 "), "{reply}");
     harness.shutdown().await;
     world.shutdown().await;
 }

@@ -304,3 +304,49 @@ fn validate_accepts_defaults_and_rejects_impossible_stored_values() {
     };
     assert!(zero_kib.validate().is_err());
 }
+
+#[test]
+fn a_stored_claim_ttl_below_the_minimum_is_clamped_to_it() {
+    for stored in [1.0, 59.9] {
+        let mut settings = WorkSettings {
+            claim_ttl_s: stored,
+            ..WorkSettings::default()
+        };
+        assert!(settings.normalize_stored(), "{stored}");
+        assert_eq!(settings.claim_ttl_s, 60.0, "{stored}");
+    }
+}
+
+#[test]
+fn a_stored_claim_ttl_of_the_minimum_or_more_is_unchanged() {
+    for stored in [60.0, 3600.0] {
+        let mut settings = WorkSettings {
+            claim_ttl_s: stored,
+            ..WorkSettings::default()
+        };
+        assert!(!settings.normalize_stored(), "{stored}");
+        assert_eq!(settings.claim_ttl_s, stored);
+    }
+}
+
+#[test]
+fn a_stored_claim_ttl_of_zero_or_less_keeps_expiry_off() {
+    for stored in [0.0, -5.0] {
+        let mut settings = WorkSettings {
+            claim_ttl_s: stored,
+            ..WorkSettings::default()
+        };
+        assert!(!settings.normalize_stored(), "{stored}");
+        assert_eq!(settings.claim_ttl_s, stored);
+    }
+}
+
+#[test]
+fn a_stored_claim_ttl_that_is_not_finite_is_left_alone() {
+    let mut settings = WorkSettings {
+        claim_ttl_s: f64::NAN,
+        ..WorkSettings::default()
+    };
+    assert!(!settings.normalize_stored());
+    assert!(settings.claim_ttl_s.is_nan());
+}

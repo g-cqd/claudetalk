@@ -146,6 +146,8 @@ pub fn store_error(e: &StoreError) -> ErrorBody {
             | "blob file corrupt"
             | "blob file missing"
             | "blob hash malformed" => internal_logged(e),
+            // Any "corrupt ... in database" message is stored data the client cannot fix.
+            m if m.starts_with("corrupt ") && m.ends_with(" in database") => internal_logged(e),
             _ => ErrorBody::new(ErrorCode::Invalid, e.to_string()),
         },
     }
@@ -348,11 +350,25 @@ mod tests {
             "blob file corrupt",
             "blob file missing",
             "blob hash malformed",
+            "corrupt work settings in database",
+            "corrupt card link in database",
+            "corrupt timer owner in database",
+            "corrupt timer spec in database",
+            "corrupt timer template in database",
+            "corrupt fire count in database",
+            "corrupt policy in database",
+            "corrupt task files in database",
         ] {
             let body = store_error(&StoreError::Invalid(m));
             assert_eq!(body.code, ErrorCode::Internal, "{m}");
             assert_eq!(body.message, "internal error", "{m}");
         }
+    }
+
+    #[test]
+    fn corrupt_message_without_database_suffix_stays_invalid() {
+        let body = store_error(&StoreError::Invalid("corrupt input"));
+        assert_body(&body, ErrorCode::Invalid, "corrupt input");
     }
 
     #[test]

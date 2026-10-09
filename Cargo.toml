@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 
@@ -45,10 +45,10 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 signal-hook = "0.4"
 notify = "8"
 regex = "1"
-toml_edit = "0.25.16"
+toml_edit = "=0.25.16"
 # dev only
 proptest = "1"
-# dev only (agora-mcp tests)
+# agora-mcp tests (dev-dependency) and agora-bridge's optional `opencode` feature
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 
 # panic = "unwind" (default): the daemon isolates a panicking request (catch_unwind / JoinError) instead of dying.

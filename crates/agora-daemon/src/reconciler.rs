@@ -126,7 +126,8 @@ async fn apply(
     let require_review = sh.config.require_review;
     sh.writer
         .exec(move |store: &mut Store| {
-            if !store.apply_reconcile(now, &op)? {
+            let outcome = store.apply_reconcile_outcome(now, &op)?;
+            if !outcome.applied {
                 return Ok((false, Vec::new()));
             }
             // A newly opened blocker gets its id from the store; the snapshot knew none.
@@ -138,13 +139,21 @@ async fn apply(
                 }
                 (_, known) => known,
             };
-            Ok((true, events_for(&action, card.as_deref())))
+            Ok((
+                true,
+                events_for(&action, card.as_deref(), outcome.notice_posted),
+            ))
         })
         .await
 }
 
-/// The bus events an applied action produces, so watchers of the touched entity wake up.
-fn events_for(action: &ReconcileAction, blocker_card: Option<&str>) -> Vec<Event> {
+/// The bus events an applied action produces, so watchers of the touched entity wake up. `notice_posted` says
+/// whether the action posted a notice; only then does an expired claim publish `NoticePosted`.
+fn events_for(
+    action: &ReconcileAction,
+    blocker_card: Option<&str>,
+    notice_posted: bool,
+) -> Vec<Event> {
     match action {
         ReconcileAction::ExpireLease { lease, .. } | ReconcileAction::CloseQuiet { lease, .. } => {
             vec![Event::LeaseChanged {
@@ -166,8 +175,15 @@ fn events_for(action: &ReconcileAction, blocker_card: Option<&str>) -> Vec<Event
             .into_iter()
             .collect(),
         ReconcileAction::Admission { .. } => vec![Event::WorkSettingsChanged],
-        ReconcileAction::ExpireClaim { task, .. } => {
-            vec![Event::WorkChanged { task: task.clone() }]
+        ReconcileAction::ExpireClaim { task, agent, .. } => {
+            let mut events = vec![Event::WorkChanged { task: task.clone() }];
+            if notice_posted {
+                events.push(Event::NoticePosted {
+                    target: agent.clone(),
+                    seq: 0,
+                });
+            }
+            events
         }
     }
 }

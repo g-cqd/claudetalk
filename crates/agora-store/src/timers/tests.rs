@@ -7,6 +7,7 @@ use super::*;
 use crate::identity::hex;
 use agora_core::TransitionError;
 use agora_crypto::Identity;
+use agora_sched::settings::WorkSettings;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const NOW: i64 = 1_700_000_000_000;

@@ -28,11 +28,11 @@ fn events_map_leases_to_lease_changed() {
         lease: "q1".into(),
     };
     assert_eq!(
-        events_for(&expire, None),
+        events_for(&expire, None, false),
         vec![Event::LeaseChanged { lease: "l1".into() }]
     );
     assert_eq!(
-        events_for(&quiet, None),
+        events_for(&quiet, None, false),
         vec![Event::LeaseChanged { lease: "q1".into() }]
     );
 }
@@ -40,7 +40,7 @@ fn events_map_leases_to_lease_changed() {
 #[test]
 fn events_map_notice_to_notice_posted_with_seq_zero() {
     assert_eq!(
-        events_for(&notice(), None),
+        events_for(&notice(), None, false),
         vec![Event::NoticePosted {
             target: "pk1".into(),
             seq: 0
@@ -56,7 +56,7 @@ fn events_map_reclaim_to_card_changed() {
         owner: "pk1".into(),
     };
     assert_eq!(
-        events_for(&reclaim, None),
+        events_for(&reclaim, None, false),
         vec![Event::CardChanged { card: "c1".into() }]
     );
 }
@@ -70,13 +70,13 @@ fn events_map_blocker_to_its_card_or_nothing() {
         owner_action: "free disk".into(),
     };
     assert_eq!(
-        events_for(&open, Some("blocker-3")),
+        events_for(&open, Some("blocker-3"), false),
         vec![Event::CardChanged {
             card: "blocker-3".into()
         }]
     );
     // A blocker whose id the store did not report has no card to announce.
-    assert!(events_for(&open, None).is_empty());
+    assert!(events_for(&open, None, false).is_empty());
 }
 
 #[test]
@@ -85,22 +85,45 @@ fn events_map_admission_to_work_settings_changed() {
         key: "pause:1".into(),
         paused: Some("disk".into()),
     };
-    assert_eq!(events_for(&pause, None), vec![Event::WorkSettingsChanged]);
+    assert_eq!(
+        events_for(&pause, None, false),
+        vec![Event::WorkSettingsChanged]
+    );
 }
 
-#[test]
-fn an_expired_claim_publishes_work_changed_and_kicks_admission() {
-    let expire = ReconcileAction::ExpireClaim {
+fn claim_expiry() -> ReconcileAction {
+    ReconcileAction::ExpireClaim {
         key: "claim:t1:5".into(),
         task: "t1".into(),
         agent: "pk1".into(),
         claimed_ms: 5,
-    };
+        notice_key: "claim-notice:t1:5".into(),
+        text: "claim on task t1 expired".into(),
+    }
+}
+
+#[test]
+fn an_expired_claim_publishes_work_changed_and_kicks_admission() {
+    let expire = claim_expiry();
     assert_eq!(
-        events_for(&expire, None),
+        events_for(&expire, None, false),
         vec![Event::WorkChanged { task: "t1".into() }]
     );
     assert!(kicks_admission(&expire));
+}
+
+#[test]
+fn an_expired_claim_whose_notice_was_posted_publishes_notice_posted_to_the_agent() {
+    assert_eq!(
+        events_for(&claim_expiry(), None, true),
+        vec![
+            Event::WorkChanged { task: "t1".into() },
+            Event::NoticePosted {
+                target: "pk1".into(),
+                seq: 0
+            },
+        ]
+    );
 }
 
 #[test]

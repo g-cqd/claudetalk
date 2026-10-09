@@ -329,6 +329,7 @@ pub async fn run(
         delivery_rx,
         stop.clone(),
         BUSY_MAX_WAIT,
+        Arc::new(watch::channel(false).0),
     ));
     let mut pump_task = tokio::spawn(pump::run(
         PumpConfig::new(home, opts.cwd.clone(), session_id)
@@ -360,16 +361,17 @@ fn joined(outcome: Result<Result<(), BridgeError>, JoinError>) -> Result<(), Bri
 /// from `GET /event` for that session only; each delivery waits until the session is idle (at most
 /// `busy_max_wait`, then it is posted anyway), is posted with `prompt_async`, and is answered
 /// `true` on a 2xx, `false` otherwise. Runs until `deliveries` closes or `shutdown` fires;
-/// event-stream failures reconnect and never end it.
+/// event-stream failures reconnect and never end it. `busy_tx` receives the session's busy state
+/// as the event stream reports it; a caller may subscribe to it.
 pub async fn drive(
     client: OpencodeHttp,
     session_id: String,
     mut deliveries: mpsc::Receiver<Delivery>,
     shutdown: CancellationToken,
     busy_max_wait: Duration,
+    busy_tx: Arc<watch::Sender<bool>>,
 ) -> Result<(), BridgeError> {
     check_session_id(&session_id)?;
-    let busy_tx = Arc::new(watch::channel(false).0);
     let mut busy = busy_tx.subscribe();
     let stop = shutdown.child_token();
     let mut tracker = tokio::spawn(track(
@@ -394,8 +396,20 @@ fn joined_unit(outcome: Result<(), JoinError>) -> Result<(), BridgeError> {
     outcome.map_err(|e| BridgeError::Protocol(format!("bridge task failed: {e}")))
 }
 
+/// Posts one agora prompt. `OpencodeHttp` posts it over HTTP; the unit tests substitute a recorder,
+/// so the busy gate runs without a socket.
+trait PromptSink {
+    async fn post_prompt(&self, session_id: &str, text: &str) -> Result<(), BridgeError>;
+}
+
+impl PromptSink for OpencodeHttp {
+    async fn post_prompt(&self, session_id: &str, text: &str) -> Result<(), BridgeError> {
+        self.prompt_async(session_id, text).await
+    }
+}
+
 async fn deliver_loop(
-    client: &OpencodeHttp,
+    client: &impl PromptSink,
     session_id: &str,
     deliveries: &mut mpsc::Receiver<Delivery>,
     busy: &mut watch::Receiver<bool>,
@@ -428,7 +442,7 @@ async fn deliver_loop(
         // turn finished before the 2xx was read) then clears it, where a late mark would stick at
         // busy with no idle left to clear it. A refused POST clears it again.
         busy_tx.send_replace(true);
-        let accepted = match client.prompt_async(session_id, &delivery.text).await {
+        let accepted = match client.post_prompt(session_id, &delivery.text).await {
             Ok(()) => true,
             Err(e) => {
                 tracing::warn!(error = %e, "opencode refused the agora prompt");
@@ -439,3 +453,6 @@ async fn deliver_loop(
         let _ = delivery.reply.send(accepted);
     }
 }
+
+#[cfg(test)]
+mod tests;

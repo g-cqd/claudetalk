@@ -17,10 +17,10 @@ mod tests;
 use self::add::Placement;
 use self::checks::{
     TEXT_MAX, agent_label, check_request, check_runnable, check_text_field, detail_text, digest_of,
-    event, load_task, malformed, may_act, may_run, refusal, refuse, scope_exists, settings_in,
-    subject_task,
+    event, load_task, malformed, may_act, may_run, refusal, refuse, scope_exists, subject_task,
 };
 use crate::identity::{authorize, need};
+use crate::settings_read::settings_in;
 use crate::{SignedOp, Store, StoreError};
 use agora_core::Role;
 use agora_sched::claims;

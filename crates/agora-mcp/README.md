@@ -201,7 +201,7 @@ messages only when all of these hold:
 The `experimental.claude/channel` capability is declared under the same conditions.
 
 Claude Code 2.1.292 and later negotiate 2026-07-28 for stdio servers by default, so by default there
-is no push. Observed on Claude Code 2.1.293: with the default, the server works (33 tools,
+is no push. Observed on Claude Code 2.1.293: with the default, the server works (57 tools,
 `whoami` era modern, `push_enabled` false, ladder `stop_continue`, `hook_inject`, `wait_tool`).
 Started with `MCP_PROTOCOL_NEGOTIATION=legacy claude ...` the session is legacy (2025-11-25),
 `push_enabled` is true and the ladder starts with `channel_push`.
