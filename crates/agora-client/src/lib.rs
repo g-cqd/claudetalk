@@ -9,6 +9,7 @@ pub mod error;
 pub mod heartbeat;
 pub mod identity;
 pub mod ops;
+pub mod session_state;
 
 pub use error::ClientError;
 

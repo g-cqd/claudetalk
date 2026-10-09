@@ -1,0 +1,9 @@
+{
+  "timestamp": 1791486988057,
+  "cwd": "/private/tmp/agora-m6/probe-copilot2/proj",
+  "error": {
+    "message": "{\"message\":\"mock failure\",\"code\":\"server_error\"}",
+    "name": "Error",
+    "stack": "Error: {\"message\":\"mock failure\",\"code\":\"server_error\"}\n    at Zf.runAgenticLoop (file:///Users/gc/.bun/install/global/node_modules/@github/copilot/index.js:1824:14782)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async Zf.send (file:///Users/gc/.bun/install/global/node_modules/@github/copilot/index.js:1824:3169)\n    at async X$l (file:///Users/gc/.bun/install/global/node_modules/@github/copilot/index.js:2937:1424)\n    at async Csr (file:///Users/gc/.bun/install/global/node_modules/@github/copilot/index.js:2925:350)\n    at async t.<anonymous> (file:///Users/gc/.bun/install/global/node_modules/@github/copilot/index.js:3072:4203)\n    at async t.parseAsync (file:///Users/gc/.bun/install/global/node_modules/@github/copilot/index.js:43:4208)\n    at async file:///Users/gc/.bun/install/global/node_modules/@github/copilot/index.js:3074:24"
+  }
+}

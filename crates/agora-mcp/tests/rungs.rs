@@ -1,7 +1,7 @@
 //! Delivery rungs of a stdio session (SPEC M4 "Heartbeats", "Capabilities file", "Escalation in
 //! the shim"): which rungs the ladder reports for a Claude Code session from `capabilities.json`
-//! and the heartbeats of its identity, that a non-Claude harness only gets `wait_tool`, and how
-//! the tracker escalates an unacked message along an unarmed chain and past an armed rung.
+//! and the heartbeats of its identity, that a non-Claude harness counts only its own heartbeats,
+//! and how the tracker escalates an unacked message along an unarmed chain and past an armed rung.
 //!
 //! Capabilities and heartbeats are written before the session initializes, because `initialize`
 //! computes the ladder from them. The escalation test polls `delivery_status` (bounded) for the
@@ -10,10 +10,10 @@
 mod common;
 
 use agora_client::Ctx;
-use agora_client::capabilities::{self, CapabilitiesFile, ClaudeCapabilities};
+use agora_client::capabilities::{self, CapabilitiesFile, ClaudeCapabilities, HarnessCapabilities};
 use agora_client::heartbeat;
 use agora_client::ops::now_ms;
-use agora_deliver::Mechanism;
+use agora_deliver::{Harness, Mechanism};
 use agora_mcp::engine::EngineConfig;
 use agora_store::hex;
 use common::{StdioClient, World};
@@ -177,9 +177,10 @@ async fn a_hook_inject_heartbeat_seen_ten_minutes_ago_puts_hook_inject_before_wa
     let world = World::start().await;
     world.owner().await;
     let reader = world.agent(2).await;
-    heartbeat::beat(
+    heartbeat::beat_for(
         world.paths(),
         &pk_of(&reader),
+        Harness::ClaudeCode,
         Mechanism::HookInject,
         now_ms() - 10 * MINUTE_MS,
     )
@@ -200,9 +201,10 @@ async fn a_hook_inject_heartbeat_eight_days_old_is_not_in_the_ladder() {
     let world = World::start().await;
     world.owner().await;
     let reader = world.agent(2).await;
-    heartbeat::beat(
+    heartbeat::beat_for(
         world.paths(),
         &pk_of(&reader),
+        Harness::ClaudeCode,
         Mechanism::HookInject,
         now_ms() - 8 * DAY_MS,
     )
@@ -271,9 +273,10 @@ async fn an_unarmed_chain_fires_every_rung_in_one_tick_and_a_fresh_stop_heartbea
 
     // A fresh stop_continue heartbeat arms that rung for the next tick. The chain stops there,
     // and the wait_tool-armed first message is now spent.
-    heartbeat::beat(
+    heartbeat::beat_for(
         world.paths(),
         &pk_of(&reader),
+        Harness::ClaudeCode,
         Mechanism::StopContinue,
         now_ms(),
     )
@@ -307,7 +310,7 @@ async fn an_unarmed_chain_fires_every_rung_in_one_tick_and_a_fresh_stop_heartbea
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_non_claude_harness_gets_only_wait_tool_whatever_the_capabilities_and_heartbeats_say() {
+async fn a_non_claude_harness_counts_its_own_heartbeats_and_not_the_claude_entry() {
     let world = World::start().await;
     world.owner().await;
     let codex = world.agent(4).await;
@@ -327,13 +330,74 @@ async fn a_non_claude_harness_gets_only_wait_tool_whatever_the_capabilities_and_
         Mechanism::StopContinue,
         Mechanism::HookInject,
     ] {
-        heartbeat::beat(world.paths(), &pk_of(&codex), mechanism, now_ms())
-            .expect("write a heartbeat");
+        heartbeat::beat_for(
+            world.paths(),
+            &pk_of(&codex),
+            Harness::Codex,
+            mechanism,
+            now_ms(),
+        )
+        .expect("write a heartbeat");
     }
     let mut client = session(&world, 4, EngineConfig::stdio(), "codex-mcp-client").await;
 
+    // The Claude entry and the Claude-only heartbeats (mod, async rewake) do not reach Codex; the
+    // seen stop and context heartbeats do (SPEC M6 1.4).
     let whoami = whoami_of(&mut client).await;
-    assert_eq!(whoami["ladder"], json!(["wait_tool"]));
+    assert_eq!(
+        whoami["ladder"],
+        json!(["stop_continue", "hook_inject", "wait_tool"])
+    );
+    client.close().await;
+    world.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_claude_stop_beat_does_not_arm_the_codex_stop_continue_rung() {
+    let world = World::start().await;
+    let owner = world.owner().await;
+    let codex = world.agent(4).await;
+    let poster = world.agent(3).await;
+    world.channel(&owner, CHANNEL, &[&codex, &poster]).await;
+    // Codex has its stop and context hooks installed, so both rungs are in its ladder unarmed.
+    let mut file = CapabilitiesFile::default();
+    file.set_harness(
+        Harness::Codex,
+        Some(HarnessCapabilities {
+            stop_hook: true,
+            context_hook: true,
+            ..Default::default()
+        }),
+    );
+    capabilities::save(world.paths(), &file).expect("save capabilities.json in the world home");
+    // A fresh stop beat written by Claude Code for the same identity: it must not reach Codex.
+    heartbeat::beat_for(
+        world.paths(),
+        &pk_of(&codex),
+        Harness::ClaudeCode,
+        Mechanism::StopContinue,
+        now_ms(),
+    )
+    .expect("write the Claude stop_continue heartbeat");
+    let mut client = session(&world, 4, EngineConfig::stdio(), "codex-mcp-client").await;
+
+    let seq = world.post(&poster, CHANNEL, "codex message").await;
+    let status = status_until(
+        &mut client,
+        "the codex message's wait_tool escalation",
+        |s| rungs(&escalations_of(s, seq)).contains(&("wait_tool", true)),
+    )
+    .await;
+    assert_eq!(
+        rungs(&escalations_of(&status, seq)),
+        vec![
+            ("stop_continue", false),
+            ("hook_inject", false),
+            ("wait_tool", true)
+        ],
+        "the Claude beat armed a Codex rung: {status}"
+    );
+    assert_eq!(status["armed"], json!([]), "{status}");
     client.close().await;
     world.shutdown().await;
 }

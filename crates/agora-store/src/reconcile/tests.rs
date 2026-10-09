@@ -1,6 +1,8 @@
 //! Unit tests for the reconciler store: action application, the input snapshot and the watchdog report.
 
 mod apply;
+mod blockers;
+mod claims;
 mod snapshot;
 
 use super::*;

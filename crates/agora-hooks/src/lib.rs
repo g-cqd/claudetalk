@@ -26,7 +26,15 @@
 //! (exit 0, empty stdout, empty stderr), because exit code 2 would block a Stop or a
 //! UserPromptSubmit. Only `rewake` exits 2, on purpose, to wake an idle session. Nothing is
 //! printed except the protocol output; secrets and prompt text are never logged.
+//!
+//! Dialects (M6): `agora hook <kind> --dialect codex|copilot|copilot-vscode|agy|cursor [--event E]`
+//! runs the same entry points for another harness. The `dialect` module converts that harness's
+//! stdin into the Claude-shaped input before the entry point runs, and the entry point's
+//! Claude-shaped stdout into the harness's own output after it. A non-Claude dialect runs only
+//! `context`, `stop` and `session-start`; `rewake` and `poll` are silent for it. Such a run acts for
+//! the payload's `cwd` unless `AGORA_FOLDER` names a folder (see `dialect_folder`).
 
+use std::ffi::OsString;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -35,6 +43,7 @@ use schema::HookInput;
 
 pub mod context;
 pub mod daemon;
+pub mod dialect;
 pub mod input;
 pub mod poll;
 pub mod render;
@@ -81,10 +90,14 @@ pub struct HookOptions {
     pub session: Option<String>,
     /// `poll --folder`.
     pub folder: Option<PathBuf>,
+    /// `--dialect`: whose native stdin/stdout shape this run speaks (default `Claude`).
+    pub dialect: dialect::Dialect,
+    /// `--event`: the native event name passed on the command line (validated by the CLI).
+    pub event: Option<String>,
 }
 
 impl HookOptions {
-    /// The defaults above for `home`; `quick` false; `session` and `folder` `None`.
+    /// The defaults above for `home`; `quick` false; `session`, `folder` and `event` `None`; `dialect` `Claude`.
     pub fn new(home: PathBuf) -> Self {
         Self {
             home,
@@ -95,6 +108,8 @@ impl HookOptions {
             max_context_chars: DEFAULT_MAX_CONTEXT_CHARS,
             session: None,
             folder: None,
+            dialect: dialect::Dialect::Claude,
+            event: None,
         }
     }
 }
@@ -145,11 +160,10 @@ pub enum HookError {
     Timeout,
 }
 
-/// Parse stdin (`input::read_input`; `Poll` ignores stdin and uses a default `HookInput`),
-/// build a current-thread tokio runtime, run the kind's `run` (rewake without the budget
-/// timeout; every other kind inside `tokio::time::timeout(budget_ms)`), all inside
-/// `std::panic::catch_unwind`. Any `Err`, timeout or panic -> `HookOutcome::silent()`. The
-/// exit code is decided by `normalise`.
+/// Read and convert stdin (`run_guarded`), build a current-thread tokio runtime, run the kind's
+/// `run` (rewake without the budget timeout; every other kind inside
+/// `tokio::time::timeout(budget_ms)`), all inside `std::panic::catch_unwind`. Any `Err`, timeout
+/// or panic -> `HookOutcome::silent()`. The exit code is decided by `normalise`, which runs last.
 pub fn run(kind: HookKind, opts: &HookOptions, stdin: &mut dyn std::io::Read) -> HookOutcome {
     let guarded = std::panic::catch_unwind(AssertUnwindSafe(|| run_guarded(kind, opts, stdin)));
     normalise(kind, guarded.unwrap_or_else(|_| HookOutcome::silent()))
@@ -158,16 +172,61 @@ pub fn run(kind: HookKind, opts: &HookOptions, stdin: &mut dyn std::io::Read) ->
 /// Bound on the runtime's shutdown: a blocking task (a file lock) must not keep the hook alive.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
 
-/// The body of `run`, which may panic; `run` turns a panic into silence.
+/// The folder a non-Claude dialect run acts for when `AGORA_FOLDER` does not name one: the native
+/// payload's `cwd`, when `dialect` is not Claude, `agora_folder_env` is unset, empty or contains an
+/// unexpanded `${` placeholder, and `cwd` is non-empty. `None` otherwise, and the run keeps the
+/// usual resolution (`opts.folder`, then `AGORA_FOLDER`, `CLAUDE_PROJECT_DIR`, the payload `cwd`).
+/// Pure, so the rule is tested without the process environment.
+fn dialect_folder(
+    dialect: dialect::Dialect,
+    agora_folder_env: Option<OsString>,
+    cwd: Option<&str>,
+) -> Option<PathBuf> {
+    if dialect == dialect::Dialect::Claude {
+        return None;
+    }
+    let env_names_folder =
+        agora_folder_env.is_some_and(|v| !v.is_empty() && !v.to_string_lossy().contains("${"));
+    if env_names_folder {
+        return None;
+    }
+    cwd.filter(|c| !c.is_empty()).map(PathBuf::from)
+}
+
+/// The body of `run`, which may panic; `run` turns a panic into silence. For a non-Claude
+/// dialect, `Rewake` and `Poll` are silent before stdin is read. Otherwise `Poll` uses a default
+/// `HookInput` and every other kind reads the bytes (`input::read_bytes`) and converts them
+/// (`dialect::to_input`; an error is silent). A non-Claude run whose `AGORA_FOLDER` does not name
+/// a folder runs with the payload's `cwd` as its folder (`dialect_folder`). After the dispatch,
+/// `dialect::to_output` converts the outcome to the dialect's native output (identity for Claude).
 fn run_guarded(kind: HookKind, opts: &HookOptions, stdin: &mut dyn std::io::Read) -> HookOutcome {
+    let claude = opts.dialect == dialect::Dialect::Claude;
+    if !claude && matches!(kind, HookKind::Rewake | HookKind::Poll) {
+        return HookOutcome::silent();
+    }
     let hook_input = match kind {
         // The mod's poll never reads stdin.
         HookKind::Poll => HookInput::default(),
-        _ => match input::read_input(stdin) {
-            Ok(parsed) => parsed,
-            Err(_) => return HookOutcome::silent(),
-        },
+        _ => {
+            let Ok(bytes) = input::read_bytes(stdin) else {
+                return HookOutcome::silent();
+            };
+            match dialect::to_input(opts.dialect, opts.event.as_deref(), &bytes) {
+                Ok(parsed) => parsed,
+                Err(_) => return HookOutcome::silent(),
+            }
+        }
     };
+    let scoped = dialect_folder(
+        opts.dialect,
+        std::env::var_os("AGORA_FOLDER"),
+        hook_input.cwd.as_deref(),
+    )
+    .map(|folder| HookOptions {
+        folder: Some(folder),
+        ..opts.clone()
+    });
+    let opts = scoped.as_ref().unwrap_or(opts);
     let Ok(rt) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -179,7 +238,8 @@ fn run_guarded(kind: HookKind, opts: &HookOptions, stdin: &mut dyn std::io::Read
         rt.block_on(dispatch(kind, opts, &hook_input))
     }));
     rt.shutdown_timeout(SHUTDOWN_TIMEOUT);
-    ran.unwrap_or_else(|_| HookOutcome::silent())
+    let outcome = ran.unwrap_or_else(|_| HookOutcome::silent());
+    dialect::to_output(opts.dialect, kind, &hook_input, outcome)
 }
 
 /// Runs the kind's entry point inside its budget. Timeout or error -> silent.
@@ -224,6 +284,9 @@ fn normalise(kind: HookKind, outcome: HookOutcome) -> HookOutcome {
         ..outcome
     }
 }
+
+#[cfg(test)]
+mod lib_tests;
 
 #[cfg(test)]
 mod tests {

@@ -15,6 +15,7 @@ pub mod http;
 pub mod instructions;
 pub mod jsonrpc;
 pub mod push;
+pub mod session_cursor;
 pub mod stdio;
 pub mod tokens;
 pub mod tools;

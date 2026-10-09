@@ -1,0 +1,12 @@
+{
+  "conversation_id": "7c1e0a52-3b9d-4f6e-8a21-5d0c9b7e4f10",
+  "generation_id": "f7b8c9d0-6a7b-4c8d-9e4f-5a6b7c8d9e0f",
+  "model": "default",
+  "hook_event_name": "beforeSubmitPrompt",
+  "cursor_version": "1.7.0",
+  "workspace_roots": ["/Users/me/proj"],
+  "user_email": "user@example.com",
+  "transcript_path": null,
+  "prompt": "hello there",
+  "_source": "https://cursor.com/docs/hooks"
+}

@@ -1,0 +1,14 @@
+{
+  "conversation_id": "7c1e0a52-3b9d-4f6e-8a21-5d0c9b7e4f10",
+  "generation_id": "b3d4e5f6-2c3d-4e5f-9a0b-1c2d3e4f5a6b",
+  "model": "default",
+  "hook_event_name": "postToolUse",
+  "cursor_version": "1.7.0",
+  "workspace_roots": ["/Users/me/proj"],
+  "user_email": "user@example.com",
+  "transcript_path": null,
+  "tool_name": "Shell",
+  "tool_input": {"command": "ls -la"},
+  "tool_output": "{\"exitCode\":0,\"stdout\":\"README.md\\n\"}",
+  "_source": "https://cursor.com/docs/hooks"
+}

@@ -1,6 +1,7 @@
 //! `agora hook <sub>`: maps the clap arguments onto `agora_hooks` and prints the protocol output.
 
 use crate::{HookArgs, HookCmd};
+use agora_hooks::dialect::Dialect;
 use agora_hooks::{HookKind, HookOptions, HookOutcome};
 use std::io::{Cursor, IsTerminal, Read, Write};
 use std::path::PathBuf;
@@ -14,19 +15,24 @@ const MAX_BUDGET_MS: u64 = 600_000;
 const MIN_CONTEXT_CHARS: usize = 200;
 const MAX_CONTEXT_CHARS: usize = 9_500;
 const MAX_BLOCKS_CAP: u32 = 100;
+/// Longest accepted `--event` name.
+const MAX_EVENT_CHARS: usize = 64;
 
 /// Build `agora_hooks::HookOptions` from `args` (`budget_ms` from env `AGORA_HOOK_BUDGET_MS`
 /// when it parses as a positive integer; `--max-wait-secs`, `--quick`, `--max-blocks`,
-/// `--max-chars`, `--session`, `--folder` as given), read stdin (an empty reader when stdin is
-/// a terminal), call `agora_hooks::run`, write `stdout` / `stderr` of the outcome exactly
-/// (no added newline) and return the exit code: 0 or 2 only, anything else -> 0. Never prints
-/// anything else, never panics on a closed pipe. Stdin is read on a helper thread, so a writer
-/// that never closes the pipe ends the hook silently at the budget (exit 0, no output).
+/// `--max-chars`, `--session`, `--folder`, `--dialect`, `--event` as given), read stdin (an empty
+/// reader when stdin is a terminal), call `agora_hooks::run`, write `stdout` / `stderr` of the
+/// outcome exactly (no added newline) and return the exit code: 0 or 2 only, anything else -> 0.
+/// Never prints anything else, never panics on a closed pipe. Stdin is read on a helper thread, so
+/// a writer that never closes the pipe ends the hook silently at the budget (exit 0, no output).
+/// An unknown `--dialect` runs nothing: exit 0 with no output, before stdin is read.
 pub fn run(home: PathBuf, args: HookArgs) -> ExitCode {
     // agora_hooks::run catches panics; keep the default hook from writing to stderr.
     std::panic::set_hook(Box::new(|_| {}));
     let budget_env = std::env::var(BUDGET_ENV).ok();
-    let (kind, mut opts) = options(home, &args.cmd, budget_env.as_deref());
+    let Some((kind, mut opts)) = options(home, &args, budget_env.as_deref()) else {
+        return ExitCode::SUCCESS;
+    };
     let t0 = Instant::now();
     let stdin = if kind == HookKind::Poll || std::io::stdin().is_terminal() {
         Vec::new()
@@ -81,13 +87,20 @@ fn millis_saturating(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// The hook kind and options for `cmd`; `budget_env` is the raw value of `AGORA_HOOK_BUDGET_MS`.
-fn options(home: PathBuf, cmd: &HookCmd, budget_env: Option<&str>) -> (HookKind, HookOptions) {
+/// The hook kind and options for `args`; `budget_env` is the raw value of `AGORA_HOOK_BUDGET_MS`.
+/// `None` when `--dialect` names no known dialect: the hook then runs nothing.
+fn options(
+    home: PathBuf,
+    args: &HookArgs,
+    budget_env: Option<&str>,
+) -> Option<(HookKind, HookOptions)> {
     let mut opts = HookOptions::new(home);
+    opts.dialect = dialect_option(args.dialect.as_deref())?;
+    opts.event = event_option(args.event.as_deref());
     if let Some(ms) = budget_env.and_then(parse_budget) {
         opts.budget_ms = ms;
     }
-    let kind = match cmd {
+    let kind = match &args.cmd {
         HookCmd::Rewake {
             quick,
             max_wait_secs,
@@ -119,7 +132,24 @@ fn options(home: PathBuf, cmd: &HookCmd, budget_env: Option<&str>) -> (HookKind,
             HookKind::Poll
         }
     };
-    (kind, opts)
+    Some((kind, opts))
+}
+
+/// `--dialect`: absent means Claude; a name `Dialect::parse` does not know is `None`.
+fn dialect_option(raw: Option<&str>) -> Option<Dialect> {
+    match raw {
+        None => Some(Dialect::Claude),
+        Some(name) => Dialect::parse(name),
+    }
+}
+
+/// `--event`: 1 to 64 ASCII letters or underscores; anything else is ignored.
+fn event_option(raw: Option<&str>) -> Option<String> {
+    raw.filter(|e| {
+        (1..=MAX_EVENT_CHARS).contains(&e.len())
+            && e.bytes().all(|b| b.is_ascii_alphabetic() || b == b'_')
+    })
+    .map(str::to_owned)
 }
 
 /// `AGORA_HOOK_BUDGET_MS`: an integer in `1..=600_000`; anything else is ignored.
@@ -160,13 +190,40 @@ mod tests {
         DEFAULT_BUDGET_MS, DEFAULT_MAX_BLOCKS, DEFAULT_MAX_CONTEXT_CHARS, DEFAULT_MAX_WAIT_MS,
     };
 
-    fn opts_for(cmd: &HookCmd) -> (HookKind, HookOptions) {
-        options(PathBuf::from("/tmp/agora-home-test"), cmd, None)
+    fn args_with(cmd: HookCmd, dialect: Option<&str>, event: Option<&str>) -> HookArgs {
+        HookArgs {
+            cmd,
+            dialect: dialect.map(str::to_owned),
+            event: event.map(str::to_owned),
+        }
+    }
+
+    fn opts_for(cmd: HookCmd) -> (HookKind, HookOptions) {
+        options(
+            PathBuf::from("/tmp/agora-home-test"),
+            &args_with(cmd, None, None),
+            None,
+        )
+        .expect("no --dialect is always known")
+    }
+
+    /// `options` for a SessionStart hook with the given `--dialect` and `--event` values.
+    fn with_flags(dialect: Option<&str>, event: Option<&str>) -> Option<(HookKind, HookOptions)> {
+        options(
+            PathBuf::from("/tmp/agora-home-test"),
+            &args_with(HookCmd::SessionStart, dialect, event),
+            None,
+        )
+    }
+
+    /// The `--event` value that `options` keeps for `event`, or `None` when it is ignored.
+    fn kept_event(event: &str) -> Option<String> {
+        with_flags(None, Some(event)).and_then(|(_, o)| o.event)
     }
 
     #[test]
     fn rewake_quick_keeps_default_wait() {
-        let (kind, o) = opts_for(&HookCmd::Rewake {
+        let (kind, o) = opts_for(HookCmd::Rewake {
             quick: true,
             max_wait_secs: None,
         });
@@ -177,7 +234,7 @@ mod tests {
 
     #[test]
     fn rewake_max_wait_secs_becomes_ms() {
-        let (kind, o) = opts_for(&HookCmd::Rewake {
+        let (kind, o) = opts_for(HookCmd::Rewake {
             quick: false,
             max_wait_secs: Some(5),
         });
@@ -188,7 +245,7 @@ mod tests {
 
     #[test]
     fn rewake_max_wait_secs_saturates() {
-        let (_, o) = opts_for(&HookCmd::Rewake {
+        let (_, o) = opts_for(HookCmd::Rewake {
             quick: false,
             max_wait_secs: Some(u64::MAX),
         });
@@ -197,7 +254,7 @@ mod tests {
 
     #[test]
     fn context_defaults_when_no_max_chars() {
-        let (kind, o) = opts_for(&HookCmd::Context { max_chars: None });
+        let (kind, o) = opts_for(HookCmd::Context { max_chars: None });
         assert_eq!(kind, HookKind::Context);
         assert_eq!(o.max_context_chars, DEFAULT_MAX_CONTEXT_CHARS);
     }
@@ -205,7 +262,7 @@ mod tests {
     #[test]
     fn context_max_chars_is_clamped() {
         let chars = |n| {
-            opts_for(&HookCmd::Context { max_chars: Some(n) })
+            opts_for(HookCmd::Context { max_chars: Some(n) })
                 .1
                 .max_context_chars
         };
@@ -216,7 +273,7 @@ mod tests {
 
     #[test]
     fn stop_defaults() {
-        let (kind, o) = opts_for(&HookCmd::Stop {
+        let (kind, o) = opts_for(HookCmd::Stop {
             max_blocks: None,
             max_chars: None,
         });
@@ -227,14 +284,14 @@ mod tests {
 
     #[test]
     fn stop_limits_are_clamped() {
-        let (_, o) = opts_for(&HookCmd::Stop {
+        let (_, o) = opts_for(HookCmd::Stop {
             max_blocks: Some(500),
             max_chars: Some(10),
         });
         assert_eq!(o.max_blocks, 100);
         assert_eq!(o.max_context_chars, 200);
 
-        let (_, o) = opts_for(&HookCmd::Stop {
+        let (_, o) = opts_for(HookCmd::Stop {
             max_blocks: Some(0),
             max_chars: None,
         });
@@ -243,7 +300,7 @@ mod tests {
 
     #[test]
     fn session_start_maps_kind_and_keeps_defaults() {
-        let (kind, o) = opts_for(&HookCmd::SessionStart);
+        let (kind, o) = opts_for(HookCmd::SessionStart);
         assert_eq!(kind, HookKind::SessionStart);
         assert_eq!(o.max_context_chars, DEFAULT_MAX_CONTEXT_CHARS);
         assert!(!o.quick);
@@ -251,7 +308,7 @@ mod tests {
 
     #[test]
     fn poll_carries_session_and_folder() {
-        let (kind, o) = opts_for(&HookCmd::Poll {
+        let (kind, o) = opts_for(HookCmd::Poll {
             session: "abc-123".to_string(),
             folder: PathBuf::from("/work/project"),
         });
@@ -263,9 +320,14 @@ mod tests {
     #[test]
     fn budget_env_is_parsed_and_bounded() {
         let budget = |raw: Option<&str>| {
-            options(PathBuf::from("/h"), &HookCmd::SessionStart, raw)
-                .1
-                .budget_ms
+            options(
+                PathBuf::from("/h"),
+                &args_with(HookCmd::SessionStart, None, None),
+                raw,
+            )
+            .expect("no --dialect is always known")
+            .1
+            .budget_ms
         };
         assert_eq!(budget(None), DEFAULT_BUDGET_MS);
         assert_eq!(budget(Some("garbage")), DEFAULT_BUDGET_MS);
@@ -276,6 +338,62 @@ mod tests {
         assert_eq!(budget(Some("99999999999999999999999")), DEFAULT_BUDGET_MS);
         assert_eq!(budget(Some("1")), 1);
         assert_eq!(budget(Some("600000")), 600_000);
+    }
+
+    #[test]
+    fn dialect_defaults_to_claude() {
+        let (_, o) = with_flags(None, None).expect("no --dialect is always known");
+        assert_eq!(o.dialect, Dialect::Claude);
+    }
+
+    #[test]
+    fn known_dialect_names_are_kept() {
+        let dialect = |raw| with_flags(Some(raw), None).map(|(_, o)| o.dialect);
+        assert_eq!(dialect("claude"), Some(Dialect::Claude));
+        assert_eq!(dialect("codex"), Some(Dialect::Codex));
+        assert_eq!(dialect("copilot"), Some(Dialect::Copilot));
+        assert_eq!(dialect("copilot-vscode"), Some(Dialect::CopilotVsCode));
+        assert_eq!(dialect("agy"), Some(Dialect::Agy));
+        assert_eq!(dialect("cursor"), Some(Dialect::Cursor));
+    }
+
+    #[test]
+    fn unknown_dialect_skips_the_hook() {
+        // Exact, case-sensitive names only; everything else runs nothing.
+        for raw in ["", "gemini", "Codex", "copilot_vscode", " codex"] {
+            assert!(with_flags(Some(raw), None).is_none(), "{raw:?}");
+        }
+        let cmd = HookCmd::Rewake {
+            quick: true,
+            max_wait_secs: None,
+        };
+        let args = args_with(cmd, Some("nope"), None);
+        assert!(options(PathBuf::from("/h"), &args, None).is_none());
+    }
+
+    #[test]
+    fn valid_event_names_are_kept() {
+        assert_eq!(kept_event("sessionStart").as_deref(), Some("sessionStart"));
+        assert_eq!(kept_event("_").as_deref(), Some("_"));
+        assert_eq!(kept_event("agentStop").as_deref(), Some("agentStop"));
+        let max = "a".repeat(MAX_EVENT_CHARS);
+        assert_eq!(kept_event(&max).as_deref(), Some(max.as_str()));
+    }
+
+    #[test]
+    fn invalid_event_names_are_ignored() {
+        assert_eq!(kept_event(""), None);
+        assert_eq!(kept_event("bad event"), None);
+        assert_eq!(kept_event("event1"), None);
+        assert_eq!(kept_event("dash-name"), None);
+        assert_eq!(kept_event("é"), None);
+        assert_eq!(kept_event(&"a".repeat(MAX_EVENT_CHARS + 1)), None);
+    }
+
+    #[test]
+    fn absent_event_is_none() {
+        let (_, o) = with_flags(None, None).expect("no --dialect is always known");
+        assert_eq!(o.event, None);
     }
 
     #[test]

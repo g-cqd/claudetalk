@@ -1,6 +1,6 @@
 //! `agora hook poll --session ID --folder DIR`: called by the plugin mod every few seconds.
 
-use crate::daemon::{ctx_for, fetch, heartbeat, resolve_folder, seq_of};
+use crate::daemon::{ctx_for, fetch, heartbeat_for, resolve_folder, seq_of};
 use crate::render::{Rendered, render_messages};
 use crate::schema::HookInput;
 use crate::state::SessionLock;
@@ -26,7 +26,7 @@ pub async fn run(opts: &HookOptions, _input: &HookInput) -> Result<HookOutcome, 
     };
     let folder = resolve_folder(opts.folder.as_deref(), None)?;
     let ctx = ctx_for(&opts.home, &folder)?;
-    heartbeat(&ctx, Mechanism::ModSubmit);
+    heartbeat_for(&ctx, opts.dialect.harness(), Mechanism::ModSubmit);
 
     let mut lock = SessionLock::acquire(&opts.home, session).await?;
     let cursor = lock.state().cursor;

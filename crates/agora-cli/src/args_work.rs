@@ -388,6 +388,9 @@ pub struct WorkSettingsArgs {
     pub reconcile_interval: Option<String>,
     #[arg(long)]
     pub lease_ttl: Option<String>,
+    /// Seconds a claimed task may stay unrun before it returns to the queue (default 1800).
+    #[arg(long)]
+    pub claim_ttl: Option<String>,
     /// The role an identity needs to run or accept a command: worker | supervisor | controller | owner.
     #[arg(long)]
     pub run_role: Option<String>,
@@ -425,6 +428,7 @@ impl WorkSettingsArgs {
             idle_floor: self.idle_floor.clone(),
             reconcile_interval: self.reconcile_interval.clone(),
             lease_ttl: self.lease_ttl.clone(),
+            claim_ttl: self.claim_ttl.clone(),
             run_role: self.run_role.clone(),
             max_waiting: self.max_waiting.clone(),
         }

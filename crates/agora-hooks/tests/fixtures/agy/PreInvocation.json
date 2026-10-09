@@ -1,0 +1,10 @@
+{
+  "_source": "https://antigravity.google/docs/hooks/",
+  "conversationId": "ec33ebf9-0cba-4100-8142-c61503f6c587",
+  "workspacePaths": ["/Users/me/proj"],
+  "transcriptPath": "/Users/me/.gemini/antigravity/conversations/ec33ebf9-0cba-4100-8142-c61503f6c587/transcript.jsonl",
+  "artifactDirectoryPath": "/Users/me/.gemini/antigravity/conversations/ec33ebf9-0cba-4100-8142-c61503f6c587/artifacts",
+  "modelName": "gemini-3.6-flash-medium",
+  "invocationNum": 3,
+  "initialNumSteps": 10
+}

@@ -292,13 +292,15 @@ fn poll_line(env: &Env, args: &[&str]) -> Value {
     one_json_line(&String::from_utf8(out.stdout.clone()).expect("utf-8 stdout"))
 }
 
-/// The heartbeat file of `mechanism` for the identity with public key `pk`.
+/// The heartbeat file of `mechanism` for the identity with public key `pk`, under the `claude`
+/// harness slug: hooks run without `--dialect` beat under Claude Code.
 fn heartbeat_file(env: &Env, pk: &str, mechanism: &str) -> PathBuf {
     env.home
         .path()
         .join("delivery")
         .join("heartbeats")
         .join(pk)
+        .join("claude")
         .join(mechanism)
 }
 

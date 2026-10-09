@@ -1,0 +1,6 @@
+{
+  "timestamp": 1791486750772,
+  "cwd": "/private/tmp/agora-m6/probe-copilot2/proj",
+  "source": "new",
+  "initialPrompt": "CALLPING: call the ping tool, then reply ok"
+}

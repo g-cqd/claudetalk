@@ -253,24 +253,25 @@ impl Engine {
     }
 
     /// Refreshes the delivery state of `peer` from what its ladder depends on, and returns the
-    /// rungs that are armed at `now_ms`. The file reads come first, with no lock held:
+    /// rungs that are armed at `now_ms`. The harness (`peer_harness`) comes first, since the
+    /// heartbeats are read from that harness's directory. Then, with no lock held, the file reads:
     /// `capabilities.json` and the heartbeats (stdio only; an HTTP peer's hooks are not on this
-    /// host), then the harness (`peer_harness`) and the push flag (`push_enabled`). The delivery
-    /// lock is taken once, at the end: the tracker is reconfigured only when its ladder differs
-    /// from the new one, and then `refresh` stores the heartbeats and the armed rungs (kept to the
-    /// ladder) so `status_json` shows live values. Used by the push tick before `tick_with`, and by
+    /// host), then the push flag (`push_enabled`). The delivery lock is taken once, at the end:
+    /// the tracker is reconfigured only when its ladder differs from the new one, and then
+    /// `refresh` stores the heartbeats and the armed rungs (kept to the ladder) so `status_json`
+    /// shows live values. Used by the push tick before `tick_with`, and by
     /// `delivery_status` before `status_json`.
     pub fn sync_delivery(&self, peer: &Peer, now_ms: i64) -> BTreeSet<Mechanism> {
+        let harness = self.peer_harness(peer);
         let (caps, beats) = if peer.transport == Transport::Stdio {
             let pk = hex(&peer.ctx.identity.public());
             (
                 agora_client::capabilities::load(&peer.ctx.paths),
-                heartbeat::read_all(&peer.ctx.paths, &pk),
+                heartbeat::read_all_for(&peer.ctx.paths, &pk, harness),
             )
         } else {
             (None, BTreeMap::new())
         };
-        let harness = self.peer_harness(peer);
         let push = self.push_enabled(peer);
         let ladder = ladder_from(peer, harness, push, caps.as_ref(), &beats, now_ms);
         let mut armed = heartbeat::armed(&beats, now_ms);
@@ -560,7 +561,8 @@ pub fn release_inflight(peer: &Peer, id: &Value) {
 
 /// The delivery ladder for `peer` whose client is `harness`, from the given install-time
 /// capabilities `caps` (`capabilities.json`, `None` when absent) and heartbeats `beats` of the
-/// peer's identity, at `now_ms`: `clients::ladder_for_caps` on the Claude capabilities of `caps`.
+/// peer's identity, at `now_ms`: `clients::ladder_for_caps` with the whole `caps` file. Claude
+/// reads `caps.claude`; every other harness reads its `caps.harness(h)` entry.
 /// An HTTP peer's hooks are not on this host, so for it `caps` is ignored and `beats` is treated
 /// as empty (R4-5). Pure apart from reading `peer.transport`.
 pub fn ladder_from(
@@ -575,26 +577,21 @@ pub fn ladder_from(
     let caps = if stdio { caps } else { None };
     let no_beats = BTreeMap::new();
     let beats = if stdio { beats } else { &no_beats };
-    clients::ladder_for_caps(
-        harness,
-        push_enabled,
-        caps.and_then(|f| f.claude.as_ref()),
-        beats,
-        now_ms,
-    )
+    clients::ladder_for_caps(harness, push_enabled, caps, beats, now_ms)
 }
 
 /// The delivery ladder for `peer` whose client is `harness`: `ladder_from` with the installed
 /// `$AGORA_HOME/capabilities.json` (`capabilities::load`; a missing or unreadable file counts as
-/// none) and the heartbeats of the peer's identity (`heartbeat::read_all`), at the current time.
-/// Only a stdio peer reads those files (its hooks run on this host). Callers that need the ladder
-/// `initialize` uses (for example `whoami`) should call this rather than recompute it.
+/// none) and the heartbeats of the peer's identity for `harness` (`heartbeat::read_all_for`), at
+/// the current time. Only a stdio peer reads those files (its hooks run on this host). Callers
+/// that need the ladder `initialize` uses (for example `whoami`) should call this rather than
+/// recompute it.
 pub fn ladder_for_peer(peer: &Peer, harness: Harness, push_enabled: bool) -> Vec<Mechanism> {
     let (caps, beats) = if peer.transport == Transport::Stdio {
         let pk = hex(&peer.ctx.identity.public());
         (
             agora_client::capabilities::load(&peer.ctx.paths),
-            heartbeat::read_all(&peer.ctx.paths, &pk),
+            heartbeat::read_all_for(&peer.ctx.paths, &pk, harness),
         )
     } else {
         (None, BTreeMap::new())
@@ -1509,6 +1506,31 @@ mod tests {
             status["heartbeats"]["stop_continue"],
             json!(NOW),
             "{status}"
+        );
+    }
+
+    #[test]
+    fn sync_delivery_a_claude_beat_does_not_arm_a_codex_peer() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path());
+        let (engine, peer) = stdio_peer(&home, EngineConfig::stdio());
+        lock(&peer.session).client = Some(ClientInfo {
+            name: "codex-mcp-client".into(),
+            version: "1.0".into(),
+        });
+        let pk = hex(&peer.ctx.identity.public());
+        heartbeat::beat(&paths, &pk, Mechanism::StopContinue, NOW).expect("claude beat");
+        assert!(
+            engine.sync_delivery(&peer, NOW).is_empty(),
+            "a Claude beat must not arm a Codex peer"
+        );
+
+        heartbeat::beat_for(&paths, &pk, Harness::Codex, Mechanism::StopContinue, NOW)
+            .expect("codex beat");
+        assert_eq!(
+            engine.sync_delivery(&peer, NOW),
+            BTreeSet::from([Mechanism::StopContinue]),
+            "a Codex beat arms the Codex peer"
         );
     }
 

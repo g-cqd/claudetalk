@@ -16,12 +16,15 @@ agora-run = { path = "../agora-run" }
 agora-mcp = { path = "../agora-mcp" }
 agora-hooks = { path = "../agora-hooks" }
 agora-deliver = { path = "../agora-deliver" }
+agora-bridge = { path = "../agora-bridge" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
+toml_edit.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,6 +1,6 @@
 //! `agora hook context`: UserPromptSubmit, PostToolUse and PostToolBatch.
 
-use crate::daemon::{ctx_for, fetch, heartbeat, resolve_folder, seq_of};
+use crate::daemon::{ctx_for, fetch, heartbeat_for, resolve_folder, seq_of};
 use crate::render::render_messages;
 use crate::schema::{HookEvent, HookInput, context_json};
 use crate::state::SessionLock;
@@ -38,7 +38,7 @@ pub async fn run(opts: &HookOptions, input: &HookInput) -> Result<HookOutcome, H
         HookEvent::UserPromptSubmit | HookEvent::PostToolUse | HookEvent::PostToolBatch => {}
         HookEvent::SubagentStop => {
             if let Ok(ctx) = build_ctx(opts, input) {
-                heartbeat(&ctx, Mechanism::HookInject);
+                heartbeat_for(&ctx, opts.dialect.harness(), Mechanism::HookInject);
             }
             return Ok(HookOutcome::silent());
         }
@@ -48,7 +48,7 @@ pub async fn run(opts: &HookOptions, input: &HookInput) -> Result<HookOutcome, H
     }
 
     let ctx = build_ctx(opts, input)?;
-    heartbeat(&ctx, Mechanism::HookInject);
+    heartbeat_for(&ctx, opts.dialect.harness(), Mechanism::HookInject);
     if input.agent_id.as_deref().is_some_and(|id| !id.is_empty()) {
         return Ok(HookOutcome::silent());
     }

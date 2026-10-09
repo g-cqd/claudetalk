@@ -422,6 +422,7 @@ pub(super) fn settings_patch(a: WorkSettingsArgs) -> SettingsPatch {
         idle_floor: a.idle_floor,
         reconcile_interval: a.reconcile_interval,
         lease_ttl: a.lease_ttl,
+        claim_ttl: a.claim_ttl,
         run_role: a.run_role,
         max_waiting: a.max_waiting,
     }

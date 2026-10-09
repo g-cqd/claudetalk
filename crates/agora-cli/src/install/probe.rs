@@ -64,7 +64,7 @@ fn pick_claude(override_bin: Option<OsString>, path: Option<OsString>) -> Option
         .find(|candidate| is_executable_file(candidate))
 }
 
-fn is_executable_file(p: &Path) -> bool {
+pub(crate) fn is_executable_file(p: &Path) -> bool {
     std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 

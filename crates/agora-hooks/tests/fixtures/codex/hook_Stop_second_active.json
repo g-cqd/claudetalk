@@ -1,0 +1,11 @@
+{
+ "session_id": "01a11ce4-ca2b-7231-ab98-290de32f5168",
+ "turn_id": "01a11ce4-ca6a-76a0-a8b1-f10afe8ba00c",
+ "transcript_path": "/private/tmp/agora-m6/probe-codex/home/sessions/2026/10/08/rollout-2026-10-08T21-01-58-01a11ce4-ca2b-7231-ab98-290de32f5168.jsonl",
+ "cwd": "/private/tmp/agora-m6/probe-codex/proj",
+ "hook_event_name": "Stop",
+ "model": "gpt-5.6-luna",
+ "permission_mode": "bypassPermissions",
+ "stop_hook_active": true,
+ "last_assistant_message": "MARKER-STOP"
+}

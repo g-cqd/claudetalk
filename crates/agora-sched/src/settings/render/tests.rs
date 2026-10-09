@@ -66,6 +66,7 @@ fn json_defaults_match_the_work_py_example_on_eight_cpus_and_16_gib() {
         "idle_floor_pct": null,
         "reconcile_interval_s": 30.0,
         "lease_ttl_s": 900.0,
+        "claim_ttl_s": 1800.0,
         "run_role": "worker",
         "max_waiting": 64,
     });
@@ -114,7 +115,7 @@ fn json_reports_overrides_and_fractional_cpus() {
 fn text_first_and_last_lines_on_the_default_machine() {
     let text = settings_text(&WorkSettings::default(), &default_machine(), true);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 24);
+    assert_eq!(lines.len(), 25);
     assert_eq!(
         lines[0],
         "cpu budget: 8 cores (the default: the effective CPU capacity); the running jobs' predicted cores fit it"
@@ -155,6 +156,7 @@ fn text_first_and_last_lines_on_the_default_machine() {
     );
     assert_eq!(lines[22], "reconcile interval: 30.0 s");
     assert_eq!(lines[23], "lease ttl: 15 min 0 s");
+    assert_eq!(lines[24], "claim ttl: 30 min 0 s");
 }
 
 #[test]

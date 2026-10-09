@@ -1,0 +1,12 @@
+{
+  "_source": "https://docs.github.com/en/copilot/reference/hooks-reference (Copilot CLI >= 1.0.72), DOCS-DERIVED",
+  "sessionId": "7d3e1f0a-2b4c-4d5e-9f60-1a2b3c4d5e6f",
+  "timestamp": 1791486751318,
+  "cwd": "/Users/me/proj",
+  "toolName": "agora-inbox",
+  "toolArgs": {},
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "[{\"seq\":3,\"from\":\"bob\",\"text\":\"ping\"}]"
+  }
+}

@@ -37,7 +37,7 @@ use agora_deliver::Mechanism;
 use serde_json::Value;
 use tokio::time::Instant;
 
-use crate::daemon::{ctx_for, fetch, heartbeat, resolve_folder, seq_of};
+use crate::daemon::{ctx_for, fetch, heartbeat_for, resolve_folder, seq_of};
 use crate::render::render_messages;
 use crate::schema::HookInput;
 use crate::state::{SessionLock, load};
@@ -86,7 +86,7 @@ pub async fn run(opts: &HookOptions, input: &HookInput) -> Result<HookOutcome, H
     if opts.quick {
         return quick(opts, &ctx, session).await;
     }
-    heartbeat(&ctx, Mechanism::AsyncRewakeHook);
+    heartbeat_for(&ctx, opts.dialect.harness(), Mechanism::AsyncRewakeHook);
 
     let token = format!("{}-{}", std::process::id(), now_ms());
     {
@@ -116,7 +116,7 @@ pub async fn run(opts: &HookOptions, input: &HookInput) -> Result<HookOutcome, H
             // Daemon absent or failing: nothing to wait for.
             Err(_) => return Ok(HookOutcome::silent()),
         };
-        heartbeat(&ctx, Mechanism::AsyncRewakeHook);
+        heartbeat_for(&ctx, opts.dialect.harness(), Mechanism::AsyncRewakeHook);
         let fast = round.elapsed() < MIN_ROUND;
 
         if inbox.messages.is_empty() {

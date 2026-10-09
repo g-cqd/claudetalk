@@ -8,16 +8,21 @@ use crate::schema::HookInput;
 /// Largest stdin a hook reads.
 pub const MAX_STDIN_BYTES: usize = 256 * 1024;
 
-/// Read at most `MAX_STDIN_BYTES + 1` bytes from `r`; more than `MAX_STDIN_BYTES` ->
-/// `Err(HookError::Input("stdin too large"))`; then `parse_input`. Read errors -> `Io`.
-pub fn read_input(r: &mut dyn std::io::Read) -> Result<HookInput, HookError> {
+/// Read at most `MAX_STDIN_BYTES + 1` bytes from `r` and return them unparsed; more than
+/// `MAX_STDIN_BYTES` -> `Err(HookError::Input("stdin too large"))`. Read errors -> `Io`.
+pub fn read_bytes(r: &mut dyn std::io::Read) -> Result<Vec<u8>, HookError> {
     let limit = u64::try_from(MAX_STDIN_BYTES + 1).unwrap_or(u64::MAX);
     let mut buf = Vec::new();
     r.take(limit).read_to_end(&mut buf)?;
     if buf.len() > MAX_STDIN_BYTES {
         return Err(HookError::Input("stdin too large".into()));
     }
-    parse_input(&buf)
+    Ok(buf)
+}
+
+/// `read_bytes` followed by `parse_input` (the Claude-shaped stdin path).
+pub fn read_input(r: &mut dyn std::io::Read) -> Result<HookInput, HookError> {
+    parse_input(&read_bytes(r)?)
 }
 
 /// Empty or whitespace-only input, invalid UTF-8, invalid JSON, or a JSON value that is not an
@@ -140,5 +145,36 @@ mod tests {
     #[test]
     fn read_error_is_io() {
         assert!(matches!(read_input(&mut Broken), Err(HookError::Io(_))));
+    }
+
+    #[test]
+    fn read_bytes_returns_the_input_unparsed() {
+        let raw = b"\xEF\xBB\xBF[1, 2] not json";
+        assert_eq!(read_bytes(&mut raw.as_slice()).expect("bytes"), raw);
+    }
+
+    #[test]
+    fn read_bytes_exact_max_accepted_and_one_over_rejected() {
+        let exact = padded(MAX_STDIN_BYTES);
+        assert_eq!(read_bytes(&mut exact.as_slice()).expect("max"), exact);
+        let over = padded(MAX_STDIN_BYTES + 1);
+        assert!(matches!(
+            read_bytes(&mut over.as_slice()),
+            Err(HookError::Input(m)) if m == "stdin too large"
+        ));
+    }
+
+    #[test]
+    fn read_bytes_ten_mib_rejected_without_reading_it_all() {
+        let mut big = std::io::repeat(b' ').take(10 << 20);
+        assert!(matches!(
+            read_bytes(&mut big),
+            Err(HookError::Input(m)) if m == "stdin too large"
+        ));
+    }
+
+    #[test]
+    fn read_bytes_read_error_is_io() {
+        assert!(matches!(read_bytes(&mut Broken), Err(HookError::Io(_))));
     }
 }

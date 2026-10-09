@@ -7,7 +7,7 @@
 //! messages stay unseen and are delivered by the next rung or the next prompt. `UserPromptSubmit`
 //! (the `context` hook) resets the count to 0.
 
-use crate::daemon::{ctx_for, fetch, heartbeat, resolve_folder, seq_of};
+use crate::daemon::{ctx_for, fetch, heartbeat_for, resolve_folder, seq_of};
 use crate::render::{cap_chars, render_messages};
 use crate::schema::{HookEvent, HookInput, block_json};
 use crate::state::{SessionLock, SessionState};
@@ -42,7 +42,7 @@ pub async fn run(opts: &HookOptions, input: &HookInput) -> Result<HookOutcome, H
     }
     let folder = resolve_folder(opts.folder.as_deref(), input.cwd.as_deref())?;
     let ctx = ctx_for(&opts.home, &folder)?;
-    heartbeat(&ctx, Mechanism::StopContinue);
+    heartbeat_for(&ctx, opts.dialect.harness(), Mechanism::StopContinue);
     if input.stop_hook_active {
         return Ok(HookOutcome::silent());
     }
@@ -265,6 +265,35 @@ mod tests {
         let pk = agora_store::hex(&ctx.identity.public());
         let beat = agora_client::heartbeat::dir(&paths, &pk).join(Mechanism::StopContinue.as_str());
         assert!(beat.is_file(), "missing {}", beat.display());
+    }
+
+    #[tokio::test]
+    async fn a_codex_dialect_stop_heartbeat_lands_under_codex_only() {
+        let home = temp_dir();
+        let folder = temp_dir();
+        let paths = Paths::new(home.path());
+        agora_client::identity::load_or_create_machine_seed(&paths).expect("machine seed");
+        let opts = HookOptions {
+            folder: Some(folder.path().to_path_buf()),
+            dialect: crate::dialect::Dialect::Codex,
+            ..HookOptions::new(home.path().to_path_buf())
+        };
+        let input = HookInput {
+            hook_event_name: "Stop".to_owned(),
+            session_id: "stop-codex".to_owned(),
+            stop_hook_active: true,
+            ..HookInput::default()
+        };
+        let out = run(&opts, &input).await.expect("silent");
+        assert_eq!(out, HookOutcome::silent());
+
+        let ctx = ctx_for(home.path(), folder.path()).expect("ctx");
+        let pk = agora_store::hex(&ctx.identity.public());
+        let codex = agora_client::heartbeat::dir_for(&paths, &pk, agora_deliver::Harness::Codex)
+            .join(Mechanism::StopContinue.as_str());
+        assert!(codex.is_file(), "missing {}", codex.display());
+        let claude = agora_client::heartbeat::dir(&paths, &pk);
+        assert!(!claude.exists(), "a codex beat wrote {}", claude.display());
     }
 
     #[tokio::test]

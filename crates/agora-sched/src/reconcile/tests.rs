@@ -19,6 +19,7 @@ fn key(tag: &str) -> String {
 
 fn input() -> ReconcileInput {
     ReconcileInput {
+        claims: vec![],
         now_ms: NOW,
         settings: WorkSettings::default(),
         machine: None,
@@ -139,6 +140,7 @@ fn policy_of(stale_s: f64) -> TeamPolicy {
     }
 }
 
+mod rules_claims;
 mod rules_r1_r3;
 mod rules_r4_r6;
 
@@ -208,6 +210,7 @@ fn plan_is_independent_of_input_order() {
     let mut q = lease("q1", LeaseKind::Quiet);
     q.expected_end_ms = Some(NOW - 900_000);
     let base = ReconcileInput {
+        claims: vec![],
         now_ms: NOW,
         settings: WorkSettings::default(),
         machine: Some(machine(GIB_KIB)),
@@ -353,6 +356,7 @@ fn generated_input(state: &mut u64) -> ReconcileInput {
         Vec::new()
     };
     ReconcileInput {
+        claims: vec![],
         now_ms: NOW,
         settings,
         machine: Some(machine),

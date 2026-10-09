@@ -474,7 +474,7 @@ pub fn materialize(o: &Options) -> Result<Vec<(PathBuf, Vec<u8>)>, CliError> {
     Ok(out)
 }
 
-fn action(path: &Path, result: &str, detail: String) -> Action {
+pub(crate) fn action(path: &Path, result: &str, detail: String) -> Action {
     Action {
         path: path.display().to_string(),
         result: result.to_owned(),
@@ -483,7 +483,7 @@ fn action(path: &Path, result: &str, detail: String) -> Action {
 }
 
 /// An `Action` from a write: `lines` first, then the backup path or the dry-run diff.
-fn from_write(path: &Path, res: WriteResult, mut lines: Vec<String>) -> Action {
+pub(crate) fn from_write(path: &Path, res: WriteResult, mut lines: Vec<String>) -> Action {
     let result = match res {
         WriteResult::Wrote { backup } => {
             lines.extend(backup.map(|b| format!("backup {}", b.display())));

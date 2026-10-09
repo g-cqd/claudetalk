@@ -13,11 +13,13 @@ use crate::delivery::Tracker;
 use crate::engine::{Engine, Notifier, Peer, PushConfig};
 use crate::framing::{escape_line, frame_batch};
 use crate::jsonrpc::notification;
+use crate::session_cursor;
 use crate::tools::ToolError;
 use agora_client::ClientError;
 use agora_client::api::chat::{self, InboxParams};
 use agora_client::client::{Client, EventStream};
 use agora_client::ops::now_ms;
+use agora_client::session_state;
 use agora_proto::Event;
 use agora_store::hex;
 use serde_json::{Map, Value, json};
@@ -149,21 +151,29 @@ fn period_ms(refill_ms: u64) -> i64 {
 /// "\nCall the agora inbox tool to read, ack when handled." (always last), with the text before
 /// it cut by `cap_content` so that C stays within `cfg.max_content_bytes`. M = `meta_for(msgs)`.
 pub fn build_notification(msgs: &[Value], cfg: &PushConfig) -> Value {
+    build_notification_counted(msgs, cfg).0
+}
+
+/// `build_notification`, and the number of leading messages of `msgs` whose block is whole in the
+/// final content (the blocks that survive `frame_batch` and `cap_content`). A message past that
+/// count is not shown, so a cursor must not move past the last of the first `count` messages.
+pub fn build_notification_counted(msgs: &[Value], cfg: &PushConfig) -> (Value, usize) {
     let shown = msgs.get(..cfg.max_messages).unwrap_or(msgs);
     let more = msgs.len().saturating_sub(shown.len());
     let mut content = frame_batch(shown);
     if more > 0 {
         content.push_str(&format!("\n[+{more} more unread; call inbox]"));
     }
-    cap_content(
+    let whole = cap_content(
         &mut content,
         cfg.max_content_bytes.saturating_sub(READ_HINT.len()),
     );
     content.push_str(READ_HINT);
-    notification(
+    let note = notification(
         CHANNEL_METHOD,
         json!({"content": content, "meta": Value::Object(meta_for(msgs))}),
-    )
+    );
+    (note, whole)
 }
 
 /// Cut `content` to `max - TRUNCATION_RESERVE` bytes at a char boundary, then back to the last
@@ -172,9 +182,12 @@ pub fn build_notification(msgs: &[Value], cfg: &PushConfig) -> Value {
 /// opening tag; without a line break nothing is kept. A cut that leaves a message block open
 /// closes it first, so the marker is not read as part of that message. The reserve covers the
 /// closing tag and the marker, so the result is at most `max` bytes.
-fn cap_content(content: &mut String, max: usize) {
+///
+/// Returns the number of message blocks whole in the result: the closing tags that survive the
+/// cut, counted before a forced close is added.
+fn cap_content(content: &mut String, max: usize) -> usize {
     if content.len() <= max {
-        return;
+        return content.matches(MESSAGE_CLOSE).count();
     }
     let mut end = max.saturating_sub(TRUNCATION_RESERVE).min(content.len());
     // Byte 0 is always a boundary, so this stops at or before it.
@@ -183,10 +196,12 @@ fn cap_content(content: &mut String, max: usize) {
     }
     content.truncate(end);
     content.truncate(content.rfind('\n').unwrap_or(0));
+    let whole = content.matches(MESSAGE_CLOSE).count();
     if block_left_open(content) {
         content.push_str(MESSAGE_CLOSE);
     }
     content.push_str(TRUNCATION_MARKER);
+    whole
 }
 
 /// Whether the last message block opened in `s` has no closing tag after its opening tag.
@@ -233,7 +248,7 @@ fn str_of<'a>(m: &'a Value, key: &str) -> &'a str {
     m.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
-fn seq_of(m: &Value) -> Option<i64> {
+pub(crate) fn seq_of(m: &Value) -> Option<i64> {
     m.get("seq").and_then(Value::as_i64)
 }
 
@@ -252,6 +267,21 @@ fn trim_pending(pending: &mut Vec<Value>) -> usize {
     let excess = pending.len().saturating_sub(PENDING_CAP);
     pending.drain(..excess);
     excess
+}
+
+/// Where the session's hook cursor may move after a send showed messages up to `shown_max`, or
+/// None when it would not move past `cursor`. `unsent_floor` (the lowest seq fetched but never
+/// queued) is cleared once the hook cursor has passed it, since the hooks delivered those; while
+/// it stands, the mark stays below it, because a mark past it would hide those messages.
+fn mark_target(shown_max: i64, cursor: i64, unsent_floor: &mut Option<i64>) -> Option<i64> {
+    if unsent_floor.is_some_and(|floor| floor <= cursor) {
+        *unsent_floor = None;
+    }
+    let target = match *unsent_floor {
+        Some(floor) => shown_max.min(floor.saturating_sub(1)),
+        None => shown_max,
+    };
+    (target > cursor).then_some(target)
 }
 
 /// The `messages` array of an inbox reply (taken out of the JSON); empty when absent.
@@ -384,6 +414,12 @@ struct Push {
     hold_until_ms: i64,
     /// Hex of this identity's public key: the `reader` of this session's own acks.
     me: String,
+    /// Claude Code session id of this process: the cursor key shared with the hooks.
+    session: Option<String>,
+    /// Lowest seq fetched but never shown by a notification (a first-link backlog, a message
+    /// dropped from the queue, or one a notification named or cut). The session mark stays below
+    /// it until the hook cursor passes it.
+    unsent_floor: Option<i64>,
 }
 
 impl Push {
@@ -405,6 +441,8 @@ impl Push {
             pending: Vec::new(),
             hold_until_ms: 0,
             me,
+            session: session_cursor::from_env(),
+            unsent_floor: None,
         }
     }
 
@@ -554,8 +592,9 @@ impl Push {
     }
 
     /// Record fetched messages as seen and advance the cursor. With `push`, a message past the
-    /// cursor is queued for a notification; the queue keeps the newest `PENDING_CAP` and the
-    /// dropped ones are counted as coalesced. Returns whether the cursor moved.
+    /// cursor is queued for a notification; without it, the message is recorded in `unsent_floor`.
+    /// The queue keeps the newest `PENDING_CAP` and the dropped ones are counted as coalesced and
+    /// recorded in `unsent_floor`. Returns whether the cursor moved.
     fn absorb(&mut self, messages: Vec<Value>, push: bool) -> bool {
         let before = self.seen_upto;
         for m in messages {
@@ -563,10 +602,19 @@ impl Push {
                 continue;
             };
             delivery(&self.peer).on_seen(channel, seq);
-            if push && seq > self.seen_upto {
-                self.pending.push(m);
+            if seq > self.seen_upto {
+                if push {
+                    self.pending.push(m);
+                } else {
+                    self.note_unsent(seq);
+                }
             }
             self.seen_upto = self.seen_upto.max(seq);
+        }
+        let excess = self.pending.len().saturating_sub(PENDING_CAP);
+        let lowest_dropped = self.pending.iter().take(excess).filter_map(seq_of).min();
+        if let Some(seq) = lowest_dropped {
+            self.note_unsent(seq);
         }
         let dropped = trim_pending(&mut self.pending);
         if dropped > 0 {
@@ -575,19 +623,37 @@ impl Push {
         self.seen_upto > before
     }
 
+    /// Record a fetched message that is not queued for a notification: the session mark stays
+    /// below the lowest such seq until the hook cursor passes it.
+    fn note_unsent(&mut self, seq: i64) {
+        self.unsent_floor = Some(self.unsent_floor.map_or(seq, |floor| floor.min(seq)));
+    }
+
     /// The earliest time a batch may be sent: a token is free, and no failed write holds it.
     fn send_due(&self, wall_ms: i64) -> i64 {
         self.bucket.next_at(wall_ms).max(self.hold_until_ms)
     }
 
-    /// Send the pending batch as one notification when a token is free.
+    /// Send the pending batch as one notification when a token is free. Messages the session's
+    /// hooks already delivered are dropped first, without spending a token.
     fn send_pending(&mut self) {
         let wall = now_ms();
-        if self.pending.is_empty() || wall < self.hold_until_ms || !self.bucket.try_take(wall) {
+        if self.pending.is_empty() || wall < self.hold_until_ms {
             return;
         }
+        if let Some(sid) = &self.session {
+            session_cursor::drop_delivered(&self.peer.ctx.paths.home, sid, &mut self.pending);
+            if self.pending.is_empty() {
+                return;
+            }
+        }
+        if !self.bucket.try_take(wall) {
+            return;
+        }
+        // Framing follows the queue order, so the first `whole` messages are the lowest seqs.
+        self.pending.sort_by_key(seq_of);
         let cfg = &self.engine.config.push;
-        let mut note = build_notification(&self.pending, cfg);
+        let (mut note, whole) = build_notification_counted(&self.pending, cfg);
         let params = note
             .get_mut("params")
             .map(Value::take)
@@ -599,8 +665,33 @@ impl Push {
             return;
         }
         let batch = std::mem::take(&mut self.pending);
+        // With a session, only the messages framed whole count as shown. The rest are named by the
+        // "more unread" line or cut, and leave the queue unshown: the hook mark stays below the
+        // lowest of them until the hooks pass it.
+        // Without a session `shown` is the whole batch, so nothing below applies to it.
+        let shown = if self.session.is_some() {
+            whole
+        } else {
+            batch.len()
+        };
+        if let Some(low) = batch.iter().skip(shown).filter_map(seq_of).min() {
+            self.note_unsent(low);
+        }
+        if let Some(sid) = &self.session {
+            let shown_max = batch.iter().take(shown).filter_map(seq_of).max();
+            if let Some(max_seq) = shown_max {
+                let home = &self.peer.ctx.paths.home;
+                let cursor = session_state::load(home, sid).cursor;
+                if let Some(target) = mark_target(max_seq, cursor, &mut self.unsent_floor) {
+                    session_cursor::mark_delivered(home, sid, target);
+                }
+            }
+        }
         let now = now_ms();
         let mut tracker = delivery(&self.peer);
+        // Every message in the batch counts as pushed: the cut ones are still named by the "more
+        // unread" line, and escalation is driven by the missing ack, not by this count. What keeps
+        // the unshown ones from being lost is the hook-mark floor set above.
         for m in &batch {
             if let Some((channel, seq)) = key_of(m) {
                 tracker.on_pushed(channel, seq, now);
@@ -901,3 +992,6 @@ mod tests {
         assert_eq!(flush_deadline(last, t0, c), t0 + c * 4);
     }
 }
+
+#[cfg(test)]
+mod cursor_tests;

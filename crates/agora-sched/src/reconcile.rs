@@ -8,9 +8,12 @@ use crate::policy::{EffectivePolicy, TeamPolicy, effective};
 use crate::settings::WorkSettings;
 use crate::textfmt::span;
 
+mod claims;
 mod floors;
 #[cfg(test)]
 mod tests;
+
+pub use claims::ClaimSnap;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CardSnap {
@@ -55,6 +58,8 @@ pub struct ReconcileInput {
     /// id of the open (not cancelled) blocker card created by the reconciler, if any.
     pub blocker_card: Option<String>,
     pub sprints: Vec<SprintSnap>,
+    /// Work tasks in state `claimed` with no run request yet, oldest first (R7 claim expiry).
+    pub claims: Vec<ClaimSnap>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -63,6 +68,13 @@ pub enum ReconcileAction {
     ExpireLease {
         key: String,
         lease: String,
+    },
+    /// R7: a claim that sat without a run request for `claim_ttl_s`; the task goes back to the queue.
+    ExpireClaim {
+        key: String,
+        task: String,
+        agent: String,
+        claimed_ms: i64,
     },
     CloseQuiet {
         key: String,
@@ -96,6 +108,7 @@ impl ReconcileAction {
     pub fn key(&self) -> &str {
         match self {
             ReconcileAction::ExpireLease { key, .. }
+            | ReconcileAction::ExpireClaim { key, .. }
             | ReconcileAction::CloseQuiet { key, .. }
             | ReconcileAction::Notice { key, .. }
             | ReconcileAction::ReclaimCard { key, .. }
@@ -105,10 +118,11 @@ impl ReconcileAction {
     }
 
     /// system op kind: reconcile.expire | reconcile.quiet_close | reconcile.notice | reconcile.reclaim |
-    /// reconcile.blocker | reconcile.admission
+    /// reconcile.blocker | reconcile.admission | reconcile.claim_expire
     pub fn op_kind(&self) -> &'static str {
         match self {
             ReconcileAction::ExpireLease { .. } => "reconcile.expire",
+            ReconcileAction::ExpireClaim { .. } => "reconcile.claim_expire",
             ReconcileAction::CloseQuiet { .. } => "reconcile.quiet_close",
             ReconcileAction::Notice { .. } => "reconcile.notice",
             ReconcileAction::ReclaimCard { .. } => "reconcile.reclaim",
@@ -130,12 +144,13 @@ fn floor_owner_action(breaches: &[floors::Breach]) -> String {
     format!("{} — admission is paused until then", clauses.join("; "))
 }
 
-/// Plans one reconciler pass: rules R1 to R6 in order, each sorted internally, actions whose key is
-/// already marked or already emitted in this pass dropped, and the whole pass capped at
-/// `MAX_ACTIONS_PER_PASS`.
+/// Plans one reconciler pass: the two expiries first (R1 leases, then R7 claims), then rules R2 to R6 in
+/// order, each sorted internally, actions whose key is already marked or already emitted in this pass
+/// dropped, and the whole pass capped at `MAX_ACTIONS_PER_PASS`.
 pub fn plan(input: &ReconcileInput) -> Vec<ReconcileAction> {
     let mut planner = Planner::new(input);
     planner.expire_leases();
+    planner.expire_claims();
     planner.close_quiet_windows();
     planner.stale_cards();
     planner.wip_limits();

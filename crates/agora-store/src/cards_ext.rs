@@ -1,10 +1,12 @@
 //! Card extensions: priority/value/size/team, dependencies, links, escalation, WIP limits,
 //! and the card side of job completion (D7). Submodules: `fields` (create-arg validation),
-//! `job_sync` (D7) and `board` (the board summary).
+//! `job_sync` (D7), `board` (the board summary) and `roster` (effective policy and identity
+//! lookups).
 
 mod board;
 mod fields;
 mod job_sync;
+mod roster;
 #[cfg(test)]
 mod testkit;
 #[cfg(test)]
@@ -24,10 +26,10 @@ use agora_sched::model::{
     BoardExtras, CardDepArgs, CardExt, CardLink, CardLinkArgs, CardUpdateArgs, EscalateArgs,
     LinkRel,
 };
-use agora_sched::policy::{EffectivePolicy, TeamPolicy, effective};
 use agora_sched::task::{Task, tier_of};
 use board::{count_u32, count_u32_at, needs_owner_cards, quiet_view, wip_views};
 use fields::{check_positive, check_team, unique};
+use roster::{effective_for, is_active_person, supervisors};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
 
@@ -434,60 +436,6 @@ fn column_strings(conn: &Connection, sql: &str, id: &str) -> Result<Vec<String>,
     let mut st = conn.prepare(sql)?;
     let rows = st.query_map([id], |r| r.get(0))?;
     Ok(rows.collect::<Result<Vec<String>, _>>()?)
-}
-
-/// The effective policy for a team and lane: the four layers of `policies` (`*`/`*`, team/`*`,
-/// `*`/lane, team/lane), most general first, combined by `agora_sched::policy::effective`.
-fn effective_for(
-    conn: &Connection,
-    team: &str,
-    lane: &str,
-    require_review_default: bool,
-) -> Result<EffectivePolicy, StoreError> {
-    let keys = [("*", "*"), (team, "*"), ("*", lane), (team, lane)];
-    let mut layers: Vec<TeamPolicy> = Vec::with_capacity(keys.len());
-    for (t, l) in keys {
-        let json: Option<String> = conn
-            .query_row(
-                "SELECT json FROM policies WHERE team=? AND lane=?",
-                params![t, l],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if let Some(json) = json {
-            layers.push(
-                serde_json::from_str(&json)
-                    .map_err(|_| StoreError::Invalid("corrupt policy in database"))?,
-            );
-        }
-    }
-    let refs: Vec<&TeamPolicy> = layers.iter().collect();
-    Ok(effective(&refs, require_review_default))
-}
-
-/// True when `pk` is a registered identity that is not revoked and not the system identity.
-fn is_active_person(conn: &Connection, pk: &[u8]) -> Result<bool, StoreError> {
-    Ok(conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM identities WHERE pubkey=? AND revoked=0 AND system=0)",
-        [pk],
-        |r| r.get(0),
-    )?)
-}
-
-/// Hex keys of the active, non-system identities with role Supervisor or higher, sorted.
-fn supervisors(conn: &Connection) -> Result<Vec<String>, StoreError> {
-    let mut st = conn.prepare(
-        "SELECT lower(hex(pubkey)), role FROM identities WHERE revoked=0 AND system=0 ORDER BY 1",
-    )?;
-    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-    let mut out = Vec::new();
-    for row in rows {
-        let (pk, role) = row?;
-        if Role::parse(&role).is_some_and(|r| r >= Role::Supervisor) {
-            out.push(pk);
-        }
-    }
-    Ok(out)
 }
 
 /// Fails with the cycle message unless the card dependency graph is acyclic. Self and unknown

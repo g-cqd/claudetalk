@@ -239,7 +239,7 @@ It can sign only these operation kinds:
 - `job.start`, `job.finish`, `job.note`
 - `card.job_sync`
 - `timer.fire`
-- `reconcile.expire`, `reconcile.notice`, `reconcile.reclaim`, `reconcile.blocker`, `reconcile.admission`, `reconcile.quiet_close`
+- `reconcile.expire`, `reconcile.notice`, `reconcile.reclaim`, `reconcile.blocker`, `reconcile.admission`, `reconcile.quiet_close`, `reconcile.claim_expire`
 
 Agent operations refuse the system identity. The system path refuses any non-system identity, and any kind not in this list. Both checks are covered by the authorization tests.
 
@@ -257,6 +257,7 @@ Each action has a key. The daemon records the keys it has applied, so an action 
 | R4 | A team and lane with more claimed and doing cards than its `wip_limit` | Notice each supervisor | no limit | `wip:<team>/<lane>:<count>:<hour>:<target>` (O-2) |
 | R5 | Free disk, free memory, or idle CPU below its floor (checked only when both sides are known) | Pause admission and open a blocker card. Resume and close the card when all floors are met again. | disk floor 5 GiB; memory and idle floors off | `pause:` and `resume:` keyed to 10 minute buckets; `blocker:<bucket>`; `unblock:<card>` (O-1) |
 | R6 | An active sprint past its end | Notice each supervisor to roll the sprint over | `sprint_rollover` on | `sprint:<id>:<target>` (O-2) |
+| R7 | Claimed tasks with no run requested whose claim is older than `claim_ttl_s` | Return the task to queued (agent, claimed, and accepted cleared; note `claim expired`), record a `work.reclaimed` event, and notice the former claimant with kind `claim_expired`. The action is the system op `reconcile.claim_expire`. | `claim_ttl_s` 1800 s; checked each pass (`reconcile_interval`, 30 s) | `claim:<task>:<claimed_ms>`; `claim-notice:<task>:<claimed_ms>` |
 
 Notes on the rules:
 
@@ -288,7 +289,7 @@ These are the only timed loops in the work code. Anything else waits on an event
 | Watcher safety re-check | 60 s | daemon, file, gone, and log waits | re-checks the condition while the watcher is healthy, bounding the effect of a missed event |
 | Watcher fallback | 1 s | daemon, file, gone, and log waits | only when the file watcher cannot be created |
 | Adopted supervisor check | 5 s | daemon, after a restart | liveness of supervisors the daemon did not start |
-| Reconciler | 30 s by default (`reconcile_interval`) | daemon | rules R1 to R6; no event kick |
+| Reconciler | 30 s by default (`reconcile_interval`) | daemon | rules R1 to R7; no event kick |
 | Timer wake | until the next due fire | daemon (`Clock::sleep_until`) | fires timers; a sleep, not a loop |
 
 Fixed timeouts, which end a call and do not repeat:
@@ -343,7 +344,7 @@ Tests replace the clock and the machine probe, so no test depends on wall time o
 | `order` and `plan` with `--tasks` or `--task` | Reference output. | Byte-compatible (D18). |
 | Agent count for `plan` | Not capped. | At most 256. Above that the CLI exits 2: `'N' is more than 256` with `--tasks` or `--task`, and `agents must be between 1 and 256` on the queue path. Plans are also capped at 2000 tasks (section 19). |
 | Environment of a job | The claimant's full environment, plus `PWD`. Not stored. | The environment is scrubbed (section 19) and capped at 256 KiB. `PWD` is added. |
-| Stuck claims | No timeout. Only the same name can close a claim. | `agora work reclaim` (supervisor or higher), and reclaim of stale cards by rule R3. |
+| Stuck claims | No timeout. Only the same name can close a claim. | A claim expires after `claim_ttl_s` (default 1800 s) if no run was requested (rule R7). Also `agora work reclaim` (supervisor or higher), and reclaim of stale cards by rule R3. |
 | Retention | `keep_days`, pruned at most hourly. | Same setting. The reconciler deletes old job directories and events (section 17). |
 | Error texts | Python wording. | Rust `io::Error` wording (D18 allows this). |
 | Shell | Never used. | Never used. |
@@ -376,6 +377,7 @@ Tests replace the clock and the machine probe, so no test depends on wall time o
 | `idle_floor` (agora) | `--idle-floor` | off | Reconciler floor for idle CPU percent (R5). |
 | `reconcile_interval` (agora) | `--reconcile-interval` | 30 s | Reconciler period. |
 | `lease_ttl` (agora) | `--lease-ttl` | 900 s | Default lease time to live. |
+| `claim_ttl_s` (agora) | `--claim-ttl SECONDS` | 1800 s | Positive and finite. A claim older than this, on a task whose run was not requested, returns to the queue (R7). |
 | `run_role` (agora) | `--run-role` | worker | The lowest role that may run or accept a command: `worker`, `supervisor`, `controller`, or `owner`. Section 19. |
 | `max_waiting` (agora) | `--max-waiting` | 64 | Jobs one identity may hold claimed, requested, or waiting to start. Section 19. |
 
@@ -466,7 +468,7 @@ Each residual has one sentence on what it is and one on what helps today.
 - **F1, Sybil keys.** Keys are free, and while `open_registration` is `true` anyone who can reach the socket can register new identities, so roles and the digest gate protect only cooperating agents. Set `open_registration` to `false` and grant roles explicitly.
 - **F3, content changes after accept.** The digest binds the argv, the working directory, and the file list, not the bytes of the program or of the files it reads, so content can change after accept. Read the program and the files it uses before you accept, and do not accept a command whose inputs another agent can write.
 - **F7, self-declared priority.** The kind and priority of a task are declared by its author, so an author can claim a validity kind to move up the queue. A supervisor can reprioritise the task with `agora work update`.
-- **F8, claim squatting.** A claimant can hold a task it never runs, because claims have no time to live yet, and automatic reclaim of claimed-but-never-run tasks is a follow-up. A supervisor can free the task with `agora work reclaim`.
+- **F8, claim squatting.** A claimant can hold a task it never runs. Rule R7 returns the task to the queue once its claim is older than `claim_ttl_s` (default 1800 s), so one hold lasts at most `claim_ttl_s` plus one reconcile interval. A claimant can still re-claim the task after it expires, so the bound limits each hold, not repeated claims. A supervisor can free the task sooner with `agora work reclaim`.
 - **F9, daemon-side path waits.** The `pid`, `file`, `gone`, and `log` waits run in the daemon, so they are not limited by an MCP host's sandbox. These waits are refused over HTTP. Keep sandboxed agents off the stdio MCP server, or do not use these conditions.
 - **F11, filesystem probes in the writer.** Placement probes read the filesystem while the single writer holds the database, so a hung path can stall work operations. Keep queued working directories off network or otherwise hung mounts.
 - **F12, inherited descriptors.** The supervisor does not close descriptors it inherited before it starts the command, so the command can use them. Start the daemon without sensitive files open.

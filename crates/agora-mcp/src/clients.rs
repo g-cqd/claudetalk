@@ -7,7 +7,7 @@
 
 use crate::engine::Transport;
 use crate::version::{ClientInfo, Era, truncate_at_char_boundary};
-use agora_client::capabilities::ClaudeCapabilities;
+use agora_client::capabilities::CapabilitiesFile;
 use agora_client::heartbeat;
 use agora_deliver::{Capabilities, Harness, Mechanism, ladder};
 use serde::Serialize;
@@ -201,38 +201,63 @@ pub fn ladder_for(h: Harness, push_enabled: bool) -> Vec<Mechanism> {
 }
 
 /// The ladder for `h` given the install-time `caps` (`capabilities.json`, `None` when the file is
-/// absent) and the heartbeats `beats` of this identity at `now_ms`.
+/// absent) and the heartbeats `beats` of this identity at `now_ms`. `beats` must be the map of
+/// harness `h` alone, `heartbeat::read_all_for(paths, pk, h)`: beats are stored per harness, so
+/// no other harness's beat can reach this ladder through that read.
 ///
-/// Inclusion rule: a rung is in the ladder when it is installed per `caps` OR its heartbeat was
-/// seen within 7 days (`agora_client::heartbeat::seen`). Only `ClaudeCode` consults these: its
-/// `mods`, `async_rewake`, `stop_hook` and `context_hook` are `caps.<flag> || seen(<rung>)`,
-/// `channels_loaded` is `push_enabled`, and `owned_session` is false. Every other harness: exactly
-/// `ladder_for(h, push_enabled)`.
+/// `caps` is the whole file. Inclusion rule: a rung is in the ladder when it is installed per
+/// `caps` OR its heartbeat was seen within 7 days (`agora_client::heartbeat::seen`).
+/// - `ClaudeCode` reads `caps.claude`: `mods`, `async_rewake`, `stop_hook` and `context_hook` are
+///   `caps.<flag> || seen(<rung>)`, `channels_loaded` is `push_enabled`, `owned_session` is false.
+/// - Every other known harness reads `caps.harness(h)` (SPEC 1.4). Its `stop_hook` and
+///   `context_hook` count when installed and not `hooks_trusted == Some(false)` (Codex writes
+///   hooks that do not run until they are trusted), or when seen. `owned_session` is true only
+///   while a bridge is alive (`heartbeat::armed` on `OwnedSessionApi`, a 90 s window), never from
+///   the install flag. `channels_loaded`, `mods` and `async_rewake` are false.
+///   `ladder` keeps `OwnedSessionApi` only for Codex, Copilot CLI, opencode and Antigravity.
+/// - `Unknown` names no client, so its ladder is `[WaitTool]`.
 ///
 /// Arming is not decided here. Whether a pull rung is armed right now (its shorter heartbeat
 /// window) is decided per tick by the delivery tracker, from `heartbeat::armed`.
 pub fn ladder_for_caps(
     h: Harness,
     push_enabled: bool,
-    caps: Option<&ClaudeCapabilities>,
+    caps: Option<&CapabilitiesFile>,
     beats: &BTreeMap<Mechanism, i64>,
     now_ms: i64,
 ) -> Vec<Mechanism> {
-    if h != Harness::ClaudeCode {
-        return ladder_for(h, push_enabled);
-    }
     let seen = heartbeat::seen(beats, now_ms);
+    if h == Harness::ClaudeCode {
+        let caps = caps.and_then(|f| f.claude.as_ref());
+        return ladder(
+            h,
+            Capabilities {
+                channels_loaded: push_enabled,
+                mods: caps.is_some_and(|c| c.mods) || seen.contains(&Mechanism::ModSubmit),
+                async_rewake: caps.is_some_and(|c| c.async_rewake)
+                    || seen.contains(&Mechanism::AsyncRewakeHook),
+                stop_hook: caps.is_some_and(|c| c.stop_hook)
+                    || seen.contains(&Mechanism::StopContinue),
+                context_hook: caps.is_some_and(|c| c.context_hook)
+                    || seen.contains(&Mechanism::HookInject),
+                owned_session: false,
+            },
+        );
+    }
+    let (stop_installed, context_installed) = match caps.and_then(|f| f.harness(h)) {
+        Some(c) if c.hooks_trusted != Some(false) => (c.stop_hook, c.context_hook),
+        _ => (false, false),
+    };
+    let armed = heartbeat::armed(beats, now_ms);
     ladder(
         h,
         Capabilities {
-            channels_loaded: push_enabled,
-            mods: caps.is_some_and(|c| c.mods) || seen.contains(&Mechanism::ModSubmit),
-            async_rewake: caps.is_some_and(|c| c.async_rewake)
-                || seen.contains(&Mechanism::AsyncRewakeHook),
-            stop_hook: caps.is_some_and(|c| c.stop_hook) || seen.contains(&Mechanism::StopContinue),
-            context_hook: caps.is_some_and(|c| c.context_hook)
-                || seen.contains(&Mechanism::HookInject),
-            owned_session: false,
+            channels_loaded: false,
+            mods: false,
+            async_rewake: false,
+            owned_session: armed.contains(&Mechanism::OwnedSessionApi),
+            stop_hook: stop_installed || seen.contains(&Mechanism::StopContinue),
+            context_hook: context_installed || seen.contains(&Mechanism::HookInject),
         },
     )
 }
@@ -245,6 +270,7 @@ pub fn ladder_json(l: &[Mechanism]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agora_client::capabilities::ClaudeCapabilities;
     use serde_json::json;
 
     fn info(name: &str, version: &str) -> ClientInfo {
@@ -528,12 +554,15 @@ mod tests {
     const NOW: i64 = 1_800_000_000_000;
     const HOUR_MS: i64 = 60 * 60 * 1000;
 
-    fn full_caps() -> ClaudeCapabilities {
-        ClaudeCapabilities {
-            mods: true,
-            async_rewake: true,
-            stop_hook: true,
-            context_hook: true,
+    fn full_caps() -> CapabilitiesFile {
+        CapabilitiesFile {
+            claude: Some(ClaudeCapabilities {
+                mods: true,
+                async_rewake: true,
+                stop_hook: true,
+                context_hook: true,
+                ..Default::default()
+            }),
             ..Default::default()
         }
     }
@@ -606,17 +635,47 @@ mod tests {
     }
 
     #[test]
-    fn codex_ignores_caps_and_beats() {
-        let beats = BTreeMap::from([
-            (Mechanism::HookInject, NOW),
-            (Mechanism::StopContinue, NOW),
-            (Mechanism::OwnedSessionApi, NOW),
-        ]);
+    fn codex_ignores_the_claude_entry() {
+        // The `claude` entry is Claude Code's alone; a Codex ladder reads `other["codex"]`.
+        let none = BTreeMap::new();
         for push in [true, false] {
             assert_eq!(
-                ladder_for_caps(Harness::Codex, push, Some(&full_caps()), &beats, NOW),
-                ladder_for(Harness::Codex, push)
+                ladder_for_caps(Harness::Codex, push, Some(&full_caps()), &none, NOW),
+                [Mechanism::WaitTool]
             );
         }
+    }
+
+    const PK: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn a_claude_beat_never_arms_a_codex_rung() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = agora_daemon::Paths::new(home.path());
+        let claude = Harness::ClaudeCode;
+        heartbeat::beat_for(&paths, PK, claude, Mechanism::StopContinue, NOW).expect("stop beat");
+        heartbeat::beat_for(&paths, PK, claude, Mechanism::OwnedSessionApi, NOW).expect("bridge");
+        let codex = heartbeat::read_all_for(&paths, PK, Harness::Codex);
+        assert_eq!(
+            ladder_for_caps(Harness::Codex, false, None, &codex, NOW),
+            [Mechanism::WaitTool]
+        );
+        let own = heartbeat::read_all_for(&paths, PK, claude);
+        let l = ladder_for_caps(claude, false, None, &own, NOW);
+        assert!(l.contains(&Mechanism::StopContinue));
+    }
+
+    #[test]
+    fn a_codex_bridge_beat_arms_codex_and_no_other_harness() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = agora_daemon::Paths::new(home.path());
+        heartbeat::beat_for(&paths, PK, Harness::Codex, Mechanism::OwnedSessionApi, NOW)
+            .expect("bridge beat");
+        let codex = heartbeat::read_all_for(&paths, PK, Harness::Codex);
+        let l = ladder_for_caps(Harness::Codex, false, None, &codex, NOW);
+        assert!(l.contains(&Mechanism::OwnedSessionApi));
+        let copilot = heartbeat::read_all_for(&paths, PK, Harness::CopilotCli);
+        let l = ladder_for_caps(Harness::CopilotCli, false, None, &copilot, NOW);
+        assert!(!l.contains(&Mechanism::OwnedSessionApi));
     }
 }

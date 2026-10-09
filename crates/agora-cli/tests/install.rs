@@ -738,13 +738,17 @@ fn probe_override_selects_an_older_claude_that_gets_no_mods() {
 }
 
 #[test]
-fn unknown_client_is_refused_and_points_at_m6() {
+fn unknown_client_is_refused_and_nothing_is_written() {
     let w = World::new();
     let before = snapshot(&w.base);
 
-    let out = run(&mut w.agora(&["install", "--client", "codex"]));
+    let out = run(&mut w.agora(&["install", "--client", "bogus"]));
     assert!(!out.ok, "{}", out.json);
-    assert!(error_message(&out).contains("M6"), "{}", out.json);
+    assert!(
+        error_message(&out).contains("unknown client"),
+        "{}",
+        out.json
+    );
     assert_eq!(snapshot(&w.base), before, "nothing is written");
 }
 

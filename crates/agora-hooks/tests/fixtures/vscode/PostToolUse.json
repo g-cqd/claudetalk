@@ -1,0 +1,22 @@
+{
+  "_source": "VS Code 1.141.0 / Copilot Chat 0.69.0 bundle (extension.js executeHook) + code.visualstudio.com/docs/agents/reference/hooks-reference",
+  "timestamp": "2026-10-08T09:17:12.455Z",
+  "hook_event_name": "PostToolUse",
+  "session_id": "5c1e8a2f-3b7d-4e9a-8f10-2d6c4b7a9e31",
+  "transcript_path": "/Users/me/Library/Application Support/Code/User/workspaceStorage/3f9a0c1e/GitHub.copilot-chat/transcripts/5c1e8a2f-3b7d-4e9a-8f10-2d6c4b7a9e31.jsonl",
+  "cwd": "/Users/me/proj",
+  "tool_name": "mcp_agora_chat",
+  "tool_input": {
+    "channel": "general",
+    "text": "build is green"
+  },
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"ok\":true,\"seq\":42}"
+      }
+    ]
+  },
+  "tool_use_id": "call_8f2d1c0a"
+}

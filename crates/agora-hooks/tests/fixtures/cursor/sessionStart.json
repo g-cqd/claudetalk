@@ -1,0 +1,14 @@
+{
+  "conversation_id": "7c1e0a52-3b9d-4f6e-8a21-5d0c9b7e4f10",
+  "generation_id": "9f2b3c4d-1a2b-4c3d-8e9f-0a1b2c3d4e5f",
+  "model": "default",
+  "hook_event_name": "sessionStart",
+  "cursor_version": "1.7.0",
+  "workspace_roots": ["/Users/me/proj"],
+  "user_email": "user@example.com",
+  "transcript_path": null,
+  "session_id": "7c1e0a52-3b9d-4f6e-8a21-5d0c9b7e4f10",
+  "is_background_agent": false,
+  "composer_mode": "agent",
+  "_source": "https://cursor.com/docs/hooks"
+}

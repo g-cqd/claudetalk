@@ -1,0 +1,15 @@
+{
+ "session_id": "01a11ce8-12e1-7180-8e01-853b98ebf200",
+ "turn_id": "01a11ce8-1aed-7990-ab3e-13f80bacf208",
+ "transcript_path": "/private/tmp/agora-m6/probe-codex/home/sessions/2026/10/08/rollout-2026-10-08T21-05-33-01a11ce8-12e1-7180-8e01-853b98ebf200.jsonl",
+ "cwd": "/tmp/agora-m6/probe-codex/proj",
+ "hook_event_name": "PostToolUse",
+ "model": "gpt-5.6-luna",
+ "permission_mode": "default",
+ "tool_name": "Bash",
+ "tool_input": {
+  "command": "echo one"
+ },
+ "tool_response": "one\n",
+ "tool_use_id": "exec-2f625f01-636e-4926-9093-a14ca8aa46d4"
+}

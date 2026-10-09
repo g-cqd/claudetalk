@@ -2,7 +2,7 @@
 
 use crate::HookError;
 use agora_daemon::Paths;
-use agora_deliver::Mechanism;
+use agora_deliver::{Harness, Mechanism};
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -115,11 +115,16 @@ fn inbox_of(mut json: Value, after: i64) -> Inbox {
     }
 }
 
-/// `agora_client::heartbeat::beat` for the ctx identity (hex of its public key) at the current
-/// time. Errors are ignored.
-pub fn heartbeat(ctx: &agora_client::Ctx, m: Mechanism) {
+/// `agora_client::heartbeat::beat_for` for the ctx identity (hex of its public key) and harness
+/// `h` at the current time. Errors are ignored.
+pub fn heartbeat_for(ctx: &agora_client::Ctx, h: Harness, m: Mechanism) {
     let pk = agora_store::hex(&ctx.identity.public());
-    let _ = agora_client::heartbeat::beat(&ctx.paths, &pk, m, agora_client::ops::now_ms());
+    let _ = agora_client::heartbeat::beat_for(&ctx.paths, &pk, h, m, agora_client::ops::now_ms());
+}
+
+/// `heartbeat_for` with Claude Code, the default harness. Kept for callers that name none.
+pub fn heartbeat(ctx: &agora_client::Ctx, m: Mechanism) {
+    heartbeat_for(ctx, Harness::ClaudeCode, m);
 }
 
 /// The `seq` field of a message JSON, `None` when absent or not an integer.
@@ -269,21 +274,31 @@ mod tests {
     }
 
     #[test]
-    fn heartbeat_writes_the_hook_inject_file() {
+    fn heartbeat_for_writes_the_hook_inject_file_under_its_harness() {
         let (home, folder) = seeded_home();
         let ctx = ctx_for(home.path(), folder.path()).expect("ctx");
         let before = agora_client::ops::now_ms();
-        heartbeat(&ctx, Mechanism::HookInject);
+        heartbeat_for(&ctx, Harness::Codex, Mechanism::HookInject);
         let pk = agora_store::hex(&ctx.identity.public());
         let file = home
             .path()
             .join("delivery")
             .join("heartbeats")
             .join(&pk)
+            .join("codex")
             .join("hook_inject");
         let text = std::fs::read_to_string(&file).expect("heartbeat file");
         let ts: i64 = text.trim().parse().expect("decimal ms timestamp");
         assert!(ts >= before);
+        assert!(
+            !home
+                .path()
+                .join("delivery/heartbeats")
+                .join(&pk)
+                .join("claude")
+                .exists(),
+            "a codex beat must not create the claude directory"
+        );
     }
 
     #[test]

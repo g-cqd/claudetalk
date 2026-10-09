@@ -20,6 +20,7 @@ pub const SYSTEM_KINDS: &[&str] = &[
     "reconcile.blocker",
     "reconcile.admission",
     "reconcile.quiet_close",
+    "reconcile.claim_expire",
 ];
 
 impl Store {

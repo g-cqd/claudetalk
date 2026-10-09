@@ -2,13 +2,17 @@
 //! alive, so the MCP shim can tell which rungs are "armed" before it escalates past them.
 //!
 //! Each writer stores the decimal millisecond timestamp of its latest run in
-//! `$AGORA_HOME/delivery/heartbeats/<pk_hex>/<mechanism>` (`Mechanism::as_str()`), where
-//! `pk_hex` is the 64 lowercase hex characters of the folder identity's public key.
+//! `$AGORA_HOME/delivery/heartbeats/<pk_hex>/<harness>/<mechanism>` (`Mechanism::as_str()`), where
+//! `pk_hex` is the 64 lowercase hex characters of the folder identity's public key and `harness`
+//! is `harness_slug` of the client the writer serves. Beats are namespaced by harness because one
+//! folder identity can serve several clients (Claude Code and Codex in the same repo): a Claude
+//! Stop hook must not arm a rung of a Codex session. The flat `heartbeats/<pk_hex>/<mechanism>`
+//! layout of older builds is never read.
 //! Writes are atomic (temp file + rename); directories are 0700 and files 0600. Nothing is
 //! created when `$AGORA_HOME` itself does not exist.
 
 use agora_daemon::Paths;
-use agora_deliver::Mechanism;
+use agora_deliver::{Harness, Mechanism};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{DirBuilder, OpenOptions};
 use std::io::{Read, Write};
@@ -26,16 +30,52 @@ const FUTURE_SKEW_MS: i64 = 60_000;
 /// A heartbeat file holds one decimal timestamp; anything longer is not one.
 const MAX_BEAT_BYTES: u64 = 64;
 
-/// `paths.home/delivery/heartbeats/<pk_hex>`.
-pub fn dir(paths: &Paths, pk_hex: &str) -> PathBuf {
-    paths.home.join("delivery").join("heartbeats").join(pk_hex)
+/// The short lowercase name of a harness, used as a path component of its heartbeats.
+/// Injective over `Harness::ALL`: no two harnesses share a slug.
+pub fn harness_slug(h: Harness) -> &'static str {
+    match h {
+        Harness::ClaudeCode => "claude",
+        Harness::Codex => "codex",
+        Harness::CopilotCli => "copilot",
+        Harness::CopilotVsCode => "copilot-vscode",
+        Harness::Antigravity => "agy",
+        Harness::OpenCode => "opencode",
+        Harness::Cursor => "cursor",
+        Harness::Unknown => "unknown",
+    }
 }
 
-/// Record that mechanism `m` ran at `now_ms`: atomically write the decimal timestamp to
-/// `dir(paths, pk_hex)/<m.as_str()>` (temp file + rename; dirs 0700, file 0600). A no-op
-/// `Ok(())` when `paths.home` is not a directory. `pk_hex` that is not exactly 64 lowercase
-/// hex characters -> `ErrorKind::InvalidInput` (it becomes a path component).
-pub fn beat(paths: &Paths, pk_hex: &str, m: Mechanism, now_ms: i64) -> std::io::Result<()> {
+/// Inverse of `harness_slug`: `Some(h)` iff `harness_slug(h) == s` exactly, else `None`.
+pub fn harness_from_slug(s: &str) -> Option<Harness> {
+    Harness::ALL.into_iter().find(|h| harness_slug(*h) == s)
+}
+
+/// `paths.home/delivery/heartbeats/<pk_hex>/<harness_slug(h)>`.
+pub fn dir_for(paths: &Paths, pk_hex: &str, h: Harness) -> PathBuf {
+    paths
+        .home
+        .join("delivery")
+        .join("heartbeats")
+        .join(pk_hex)
+        .join(harness_slug(h))
+}
+
+/// `dir_for` with Claude Code, the harness a caller that names none is taken to be.
+pub fn dir(paths: &Paths, pk_hex: &str) -> PathBuf {
+    dir_for(paths, pk_hex, Harness::ClaudeCode)
+}
+
+/// Record that mechanism `m` of harness `h` ran at `now_ms`: atomically write the decimal
+/// timestamp to `dir_for(paths, pk_hex, h)/<m.as_str()>` (temp file + rename; dirs 0700, file
+/// 0600). A no-op `Ok(())` when `paths.home` is not a directory. `pk_hex` that is not exactly 64
+/// lowercase hex characters -> `ErrorKind::InvalidInput` (it becomes a path component).
+pub fn beat_for(
+    paths: &Paths,
+    pk_hex: &str,
+    h: Harness,
+    m: Mechanism,
+    now_ms: i64,
+) -> std::io::Result<()> {
     if !paths.home.is_dir() {
         return Ok(());
     }
@@ -49,19 +89,27 @@ pub fn beat(paths: &Paths, pk_hex: &str, m: Mechanism, now_ms: i64) -> std::io::
     make_dir(&delivery)?;
     let heartbeats = delivery.join("heartbeats");
     make_dir(&heartbeats)?;
-    let target_dir = heartbeats.join(pk_hex);
+    let key_dir = heartbeats.join(pk_hex);
+    make_dir(&key_dir)?;
+    let target_dir = key_dir.join(harness_slug(h));
     make_dir(&target_dir)?;
     write_atomic(&target_dir, m.as_str(), now_ms.to_string().as_bytes())
 }
 
-/// Latest heartbeat per mechanism for `pk_hex`. Missing directory, unknown file names,
-/// unreadable or garbage contents and files larger than 64 bytes are ignored.
-pub fn read_all(paths: &Paths, pk_hex: &str) -> BTreeMap<Mechanism, i64> {
+/// `beat_for` with Claude Code, the default harness. Kept for callers that name no harness.
+pub fn beat(paths: &Paths, pk_hex: &str, m: Mechanism, now_ms: i64) -> std::io::Result<()> {
+    beat_for(paths, pk_hex, Harness::ClaudeCode, m, now_ms)
+}
+
+/// Latest heartbeat per mechanism for harness `h` of `pk_hex`, read from that harness's
+/// subdirectory only. Missing directory, unknown file names, unreadable or garbage contents and
+/// files larger than 64 bytes are ignored.
+pub fn read_all_for(paths: &Paths, pk_hex: &str, h: Harness) -> BTreeMap<Mechanism, i64> {
     let mut out = BTreeMap::new();
     if !valid_pk(pk_hex) {
         return out;
     }
-    let target_dir = dir(paths, pk_hex);
+    let target_dir = dir_for(paths, pk_hex, h);
     for m in Mechanism::ALL {
         if let Some(t) = read_one(&target_dir.join(m.as_str())) {
             out.insert(m, t);
@@ -70,14 +118,22 @@ pub fn read_all(paths: &Paths, pk_hex: &str) -> BTreeMap<Mechanism, i64> {
     out
 }
 
+/// `read_all_for` with Claude Code, the default harness.
+pub fn read_all(paths: &Paths, pk_hex: &str) -> BTreeMap<Mechanism, i64> {
+    read_all_for(paths, pk_hex, Harness::ClaudeCode)
+}
+
 /// How long after a heartbeat the rung counts as armed (ms): `ModSubmit` 60 s,
-/// `AsyncRewakeHook` 120 s, `StopContinue` 30 min, `HookInject` 30 min, every other rung 0.
+/// `AsyncRewakeHook` 120 s, `OwnedSessionApi` 90 s (the bridge beats every 30 s, so one missed
+/// beat still counts as armed), `StopContinue` 30 min, `HookInject` 30 min, and `ChannelPush`
+/// and `WaitTool` 0 (never armed by a heartbeat).
 pub fn armed_window_ms(m: Mechanism) -> i64 {
     match m {
         Mechanism::ModSubmit => 60_000,
         Mechanism::AsyncRewakeHook => 120_000,
+        Mechanism::OwnedSessionApi => 90_000,
         Mechanism::StopContinue | Mechanism::HookInject => 1_800_000,
-        Mechanism::ChannelPush | Mechanism::OwnedSessionApi | Mechanism::WaitTool => 0,
+        Mechanism::ChannelPush | Mechanism::WaitTool => 0,
     }
 }
 
@@ -271,6 +327,100 @@ mod tests {
             mode(&dir(&p, PK).join(Mechanism::HookInject.as_str())),
             0o600
         );
+        assert_eq!(mode(&t.path().join("delivery/heartbeats").join(PK)), 0o700);
+    }
+
+    #[test]
+    fn a_claude_beat_is_not_read_under_codex() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let p = Paths::new(t.path());
+        beat_for(&p, PK, Harness::ClaudeCode, Mechanism::StopContinue, NOW).expect("beat");
+        assert!(read_all_for(&p, PK, Harness::Codex).is_empty());
+        let codex_armed = armed(&read_all_for(&p, PK, Harness::Codex), NOW);
+        assert!(!codex_armed.contains(&Mechanism::StopContinue));
+        assert_eq!(read_all_for(&p, PK, Harness::ClaudeCode).len(), 1);
+    }
+
+    #[test]
+    fn a_codex_beat_arms_codex_and_not_claude() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let p = Paths::new(t.path());
+        beat_for(&p, PK, Harness::Codex, Mechanism::OwnedSessionApi, NOW).expect("beat");
+        let codex = read_all_for(&p, PK, Harness::Codex);
+        assert!(armed(&codex, NOW).contains(&Mechanism::OwnedSessionApi));
+        assert!(read_all_for(&p, PK, Harness::ClaudeCode).is_empty());
+        assert!(read_all_for(&p, PK, Harness::CopilotCli).is_empty());
+        assert!(read_all(&p, PK).is_empty());
+    }
+
+    #[test]
+    fn per_harness_beats_expire_as_before() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let p = Paths::new(t.path());
+        beat_for(
+            &p,
+            PK,
+            Harness::Codex,
+            Mechanism::StopContinue,
+            NOW - 1_800_001,
+        )
+        .expect("beat");
+        beat_for(
+            &p,
+            PK,
+            Harness::Codex,
+            Mechanism::HookInject,
+            NOW - SEEN_WINDOW_MS - 1,
+        )
+        .expect("beat");
+        let codex = read_all_for(&p, PK, Harness::Codex);
+        assert!(armed(&codex, NOW).is_empty(), "30 min window is over");
+        assert_eq!(seen(&codex, NOW), BTreeSet::from([Mechanism::StopContinue]));
+    }
+
+    #[test]
+    fn the_old_flat_layout_is_ignored() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let p = Paths::new(t.path());
+        let flat = t.path().join("delivery/heartbeats").join(PK);
+        std::fs::create_dir_all(&flat).expect("mkdir");
+        std::fs::write(flat.join(Mechanism::StopContinue.as_str()), NOW.to_string())
+            .expect("write");
+        std::fs::write(
+            flat.join(Mechanism::OwnedSessionApi.as_str()),
+            NOW.to_string(),
+        )
+        .expect("write");
+        for h in Harness::ALL {
+            let beats = read_all_for(&p, PK, h);
+            assert!(beats.is_empty(), "{h:?} read the flat layout");
+            assert!(armed(&beats, NOW).is_empty());
+            assert!(seen(&beats, NOW).is_empty());
+        }
+        assert!(read_all(&p, PK).is_empty());
+    }
+
+    #[test]
+    fn harness_slugs_are_short_unique_and_round_trip() {
+        let slugs: Vec<_> = Harness::ALL.into_iter().map(harness_slug).collect();
+        assert_eq!(
+            slugs,
+            [
+                "claude",
+                "codex",
+                "copilot",
+                "copilot-vscode",
+                "opencode",
+                "cursor",
+                "agy",
+                "unknown"
+            ]
+        );
+        for h in Harness::ALL {
+            assert_eq!(harness_from_slug(harness_slug(h)), Some(h));
+        }
+        assert_eq!(harness_from_slug("Claude"), None);
+        assert_eq!(harness_from_slug("claude_code"), None);
     }
 
     #[test]
@@ -278,6 +428,7 @@ mod tests {
         let cases = [
             (Mechanism::ModSubmit, 60_000),
             (Mechanism::AsyncRewakeHook, 120_000),
+            (Mechanism::OwnedSessionApi, 90_000),
             (Mechanism::StopContinue, 1_800_000),
             (Mechanism::HookInject, 1_800_000),
         ];
@@ -302,14 +453,18 @@ mod tests {
     }
 
     #[test]
-    fn wait_tool_and_zero_window_rungs_are_never_armed() {
-        let beats = BTreeMap::from([
-            (Mechanism::WaitTool, NOW),
-            (Mechanism::ChannelPush, NOW),
-            (Mechanism::OwnedSessionApi, NOW),
-        ]);
+    fn wait_tool_and_channel_push_are_never_armed() {
+        let beats = BTreeMap::from([(Mechanism::WaitTool, NOW), (Mechanism::ChannelPush, NOW)]);
         assert!(armed(&beats, NOW).is_empty());
-        assert_eq!(seen(&beats, NOW).len(), 3);
+        assert_eq!(seen(&beats, NOW).len(), 2);
+    }
+
+    #[test]
+    fn owned_session_api_is_armed_for_90_seconds() {
+        let fresh = BTreeMap::from([(Mechanism::OwnedSessionApi, NOW - 89_000)]);
+        assert!(armed(&fresh, NOW).contains(&Mechanism::OwnedSessionApi));
+        let stale = BTreeMap::from([(Mechanism::OwnedSessionApi, NOW - 91_000)]);
+        assert!(!armed(&stale, NOW).contains(&Mechanism::OwnedSessionApi));
     }
 
     #[test]

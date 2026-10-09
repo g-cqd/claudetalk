@@ -60,6 +60,7 @@ pub fn settings_json(s: &WorkSettings, m: &MachineSnapshot) -> serde_json::Value
         "idle_floor_pct": s.idle_floor_pct,
         "reconcile_interval_s": s.reconcile_interval_s,
         "lease_ttl_s": s.lease_ttl_s,
+        "claim_ttl_s": s.claim_ttl_s,
         "run_role": s.run_role,
         "max_waiting": s.max_waiting,
     })
@@ -210,6 +211,7 @@ pub fn settings_text(s: &WorkSettings, m: &MachineSnapshot, macos: bool) -> Stri
         span(Some(s.reconcile_interval_s))
     ));
     lines.push(format!("lease ttl: {}", span(Some(s.lease_ttl_s))));
+    lines.push(format!("claim ttl: {}", span(Some(s.claim_ttl_s))));
     lines.join("\n")
 }
 

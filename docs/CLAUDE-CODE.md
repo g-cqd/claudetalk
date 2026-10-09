@@ -1,6 +1,6 @@
 # Agora in Claude Code: message delivery
 
-Reference for milestone M4 of the Rust rewrite: how Agora messages reach a Claude Code session, how to install the pieces, and what has and has not been tested. Claims about Claude Code are marked VERIFIED (observed on Claude Code 2.1.293, 2026-10-08) or DOCS-ONLY (read in the Claude Code documentation) in [section 9](#9-verified-locally-vs-docs-only). Known gaps are listed in [section 11](#11-known-limitations).
+Reference for milestones M4 and M6 of the Rust rewrite: how Agora messages reach a Claude Code session, how to install the pieces, and what has and has not been tested. Claims about Claude Code are marked VERIFIED (observed on Claude Code 2.1.293, 2026-10-08) or DOCS-ONLY (read in the Claude Code documentation) in [section 9](#9-verified-locally-vs-docs-only). Known gaps are listed in [section 11](#11-known-limitations).
 
 ## 1. Overview
 
@@ -33,8 +33,8 @@ Hook rungs exist only for stdio peers, because the hooks run on the same host as
 
 - All rungs are armed together. Each rung only triggers delivery of unacked inbox messages.
 - The inbox ack is the single source of truth. The agent acks a message with the `ack` tool after it has handled it. Nothing acks for the agent: not a hook, not the mod, not the channel push.
-- The hook rungs (context, stop, rewake, mod poll) share one dedupe cursor per Claude session: the highest `seq` already delivered to that session. It lives in a per-session state file under an exclusive file lock. A message is delivered once per session by whichever hook rung sees it first. `seq` is global across channels.
-- Channel push is separate. It runs in the MCP server process and has its own record of what it pushed. A message can therefore be shown once by channel push and once by a hook. This is expected and documented ([section 10](#10-troubleshooting)).
+- The hook rungs (context, stop, rewake, mod poll) and channel push share one dedupe cursor per Claude session: the highest `seq` already delivered to that session. It lives in a per-session state file under an exclusive file lock. A message is delivered once per session by whichever rung sees it first, except in the duplicate cases listed in [Per-session state](#per-session-state). `seq` is global across channels.
+- Channel push reads and advances that same cursor when the MCP server knows the Claude session id (`CLAUDE_CODE_SESSION_ID`). The exact rules, and the cases that still produce a duplicate, are in [Per-session state](#per-session-state) and [section 10](#10-troubleshooting).
 - After a SessionStart with `source` of `compact` or `clear`, the session cursor is reset to 0. Messages that are still unacked are delivered again, because the model may have lost them.
 
 ### Escalation in the MCP server
@@ -115,17 +115,18 @@ Sources: [channels](https://code.claude.com/docs/en/channels), [channels referen
 ### With the installer
 
 ```
-agora install   --client claude [--scope user|project] [--mode plugin|entries] [--probe] [--dry-run]
-agora uninstall --client claude [--scope user|project] [--mode plugin|entries] [--dry-run]
+agora install   --client <list> [--scope user|project] [--mode plugin|entries] [--probe] [--dry-run] [--trust-hooks]
+agora uninstall --client <list> [--scope user|project] [--mode plugin|entries] [--dry-run]
 ```
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--client` | required | Only `claude` is accepted in M4. Other values fail with "client X is planned for M6". |
+| `--client` | required | `claude`, `codex`, `copilot-cli`, `copilot-vscode`, `agy`, `opencode`, `cursor`, a comma-separated list of them, or `all`. With exactly `claude`, the behaviour and output are those described in this section. The other clients are documented in [docs/HARNESSES.md](HARNESSES.md). |
 | `--scope` | `user` | `user`: `~/.claude/settings.json` and `~/.claude.json`. `project`: `<project>/.claude/settings.json` and `<project>/.mcp.json`, where the project is the current directory. |
-| `--mode` | `plugin` | See below. |
+| `--mode` | `plugin` | Claude only. See below. |
 | `--probe` | off | Run `claude --version` and `claude --help` and record the result. |
 | `--dry-run` | off | Print structural diff lines and write nothing. |
+| `--trust-hooks` | off | Codex only. Records trust for the hooks Agora writes, so Codex runs them without a `/hooks` review. Without it, Codex skips the hooks until they are reviewed. |
 
 The installer does not load an Agora identity. `<exe>` is the path of the running `agora` binary as the operating system reports it for this invocation. It is recorded as is and is not canonicalized, so a symlinked install location stays a symlink in the written files. `<home>` is the resolved absolute Agora home. The installer refuses an `<exe>` or `<home>` that contains `${`: Agora treats such a value as an unexpanded placeholder ([section 8](#8-security)).
 
@@ -138,6 +139,8 @@ Output is JSON:
  "actions":[{"path":"...","result":"wrote|unchanged|dry_run|removed|absent|kept|backed_up","detail":"..."}],
  "probe":null,"capabilities":{}}
 ```
+
+With a list or `all`, the output is `{"clients":[...]}`, one object per client. The Claude object in that list has the same shape as the one above.
 
 #### Plugin mode (default)
 
@@ -314,6 +317,7 @@ The framed part is limited to the 9,000-character cap minus the header and one n
 - Output: MCP notification `notifications/claude/channel` carrying framed unread messages. Claude Code shows it as a `<channel source="...">` tag. Meta keys other than `[A-Za-z0-9_]` are silently dropped by Claude Code.
 - Limits: 300 ms quiet window, at most four windows; at most 5 messages and 8 KiB per notification; a burst of 3, then one notification every 2 s.
 - Each message is pushed at most once per process. Messages that are already unread when the link is first made are recorded as seen and not pushed. They stay in `inbox`.
+- Shares the session's hook cursor when `CLAUDE_CODE_SESSION_ID` is set. The rules are in [Per-session state](#per-session-state).
 - If the session did not load the server as a channel, or policy blocks it, Claude Code drops the notification silently. Use `whoami` and `delivery_status` to see what the server thinks.
 
 Details: `crates/agora-mcp/README.md`, section 5.
@@ -434,6 +438,23 @@ Event: `SessionStart`. Timeout 10.
 | Cleanup | `session-start` removes files older than 7 days |
 | Safety | The lock file and the state file are opened without following symlinks. The lock file must also be a regular file (checked with `fstat` after opening); anything else is an I/O error and the hook is silent. Files are 0600, directories 0700. A state file over 64 KiB or with unreadable content counts as empty. |
 
+#### Shared with channel push
+
+Channel push uses the same cursor. The MCP server reads `CLAUDE_CODE_SESSION_ID` once, when its push task starts. Claude Code sets this variable for the processes it starts. If it is missing, empty or longer than 256 bytes, the server keeps no shared cursor and push works as it did before.
+
+With a session id, channel push follows these rules:
+
+- Before a push, it drops every message whose `seq` is at or below the session's hook cursor. A hook has already shown those.
+- After a successful push, it advances the cursor, but only up to the last message whose block was sent whole in that notification. A notification holds at most 5 messages and 8 KiB of content. A message cut by either limit, and every message after it, is not marked. It stays unacked for the hooks and the inbox.
+- It never advances past a message it fetched but did not push. That covers messages already unread when the link was first made, and messages dropped when the push queue overflowed. They stay for the hooks and the inbox.
+- The advance takes a non-blocking lock. If a hook holds the lock, the advance is skipped. The message can then be shown twice, but it is not lost.
+
+Messages that a notification announces only as "+N more unread" count as channel-pushed in `delivery_status`, but the shared hook cursor advances only past messages shown whole.
+
+After `/clear`, the variable still names the previous session. Channel push therefore uses that session's cursor while the hooks use the new session's cursor, which the SessionStart reset set to 0. A message can be shown twice, but none is lost.
+
+Status: implemented from the M6 spec. Not yet verified in a live session.
+
 ## 5. The SessionStart asyncRewake bug (#89960)
 
 Issue [anthropics/claude-code#89960](https://github.com/anthropics/claude-code/issues/89960), open when this was written (created 2026-08-27). In `-p` mode and in desktop (stream-json) mode, an `asyncRewake` hook on SessionStart runs synchronously. It blocks startup for its full duration, and its exit 2 is dropped. The interactive TUI works. A comment on the issue, for 2.1.284 on macOS, traces the cause to backgrounding requiring `isInteractive()` or `hasStreamingInput()`, which are not yet true at SessionStart. The workaround in the issue is an async hook with its own time limit.
@@ -479,7 +500,7 @@ Not implemented. Observed on 2.1.293:
 
 Possible use: one Claude session could deliver text to another session without the mod's timer. This is a candidate for later work. It depends on an undocumented protocol and a token, so it is treated as an experiment, and the ladder does not include it.
 
-Related follow-up: the MCP server has `CLAUDE_CODE_SESSION_ID` in its env. It could share the hook session cursor and so remove the single duplicate between channel push and hooks.
+Related: the MCP server shares the hook session cursor through `CLAUDE_CODE_SESSION_ID`, which removes most duplicates between channel push and hooks. See [Per-session state](#per-session-state).
 
 ## 8. Security
 
@@ -628,7 +649,7 @@ With unacked messages, the output is one line of `hookSpecificOutput` JSON. Sile
 - The daemon is not running. Hooks never start it. The `agora mcp` server starts it. Start it by running any `agora` command that uses it, or by opening a session with the MCP server.
 - No machine seed exists. Hooks never create it. Run any `agora` command once.
 - The identity differs between the folder the MCP server used and the one the hook resolves. Check `echo $AGORA_FOLDER $CLAUDE_PROJECT_DIR`. Check that `whoami` in the session and the session-start identity line show the same key prefix. Symlinked project paths can differ until canonicalized; both sides canonicalize.
-- The cursor already moved past the message. The hook has delivered it to this session (to the model's context). Reset it by running `/clear`, or delete `<agora home>/hooks/sessions/<key>.json`.
+- The cursor already moved past the message. A hook, or channel push through the shared cursor, has delivered it to this session (to the model's context). Reset it by running `/clear`, or delete `<agora home>/hooks/sessions/<key>.json`.
 - The event came from inside a subagent (its input has `agent_id`). `context` is silent there by design.
 - `rewake` only: `CLAUDE_CODE_ENTRYPOINT` is set to something other than `cli` (print mode, SDK, desktop, IDE), or the TUI inherited the value from a parent Claude Code session. `rewake` is silent by design there.
 - The agent read its inbox with the `inbox` or `inbox_wait` tool. The next hook then has nothing new, because the cursor moved to the highest `seq` in the tool result (absorb).
@@ -647,11 +668,12 @@ With unacked messages, the output is one line of `hookSpecificOutput` JSON. Sile
 
 ### Duplicate messages
 
-A message can be shown twice: once by channel push and once by a hook, because the server and the hooks keep separate cursors. Acking stops both. The model should ack after it handles a message. This is not a bug; a follow-up may share the cursor through `CLAUDE_CODE_SESSION_ID`.
+Channel push and the hooks share the session cursor ([Per-session state](#per-session-state)), so a message is normally shown once. A message can still be shown by channel push and again by a hook when channel push sends it but its cursor advance is skipped because a hook holds the lock. Acking stops both. The model should ack after it handles a message.
 
 Other duplicates:
 
 - After `/clear` or compaction the session cursor resets, so unacked messages come back on purpose.
+- After `/clear`, `CLAUDE_CODE_SESSION_ID` still names the previous session. Channel push uses that session's cursor while the hooks use the new one. A message can then be shown by channel push and again by a hook.
 - Two Claude sessions on the same folder have the same identity but separate session cursors. Each gets the message.
 - Hooks configured twice (the plugin and `--mode entries` both installed) run in parallel against the same cursor lock; the second to finish finds nothing new. Install one mode.
 
@@ -685,7 +707,7 @@ The installer leaves `.agora-bak-<ms>` backups next to each file it changed (3 k
 
 - **JSON key order.** The installer reads each JSON file it changes, edits it, and writes it back with object keys sorted. `serde_json` is built without `preserve_order` in this workspace; enabling it would change feature unification for crates next to the signing code, so it was deferred. A key order you chose by hand is lost on the first write. The file is backed up before each change (section 3, safe writes), so the original is recoverable.
 - **Race on `~/.claude.json`.** The installer reads, modifies and replaces `~/.claude.json` without coordinating with Claude Code. If a running Claude Code writes that file between the read and the replace, one of the two writes is lost. The legacy installer has the same race. Closing Claude Code before an install that changes `~/.claude.json` (`--scope user --mode entries`) avoids it.
-- **Duplicate delivery.** A message can reach the model once through channel push and once through a hook rung. The channel push runs in the MCP server and keeps its own record; the hooks use the per-session cursor. The server's environment has `CLAUDE_CODE_SESSION_ID` (VERIFIED), so it could share the session cursor. That is a follow-up and is not implemented.
+- **Duplicate delivery.** Channel push and the hook rungs share the per-session cursor, which prevents most duplicates. Duplicates remain possible in two cases: a push whose cursor advance is skipped because a hook holds the lock, and channel push after `/clear` (the environment variable still names the old session). Neither loses a message. See [Per-session state](#per-session-state).
 - **`rewake` long poll ends after 59 minutes.** It then exits 0, and nothing re-arms it until the next Stop. In a session that stays idle past that point, the `async_rewake_hook` rung stops being armed (its window is 120 s). The mod and the other rungs still apply.
 - **Mod polling cost.** While the session is idle, the mod starts a new `agora hook poll` process every 5 s (`POLL_MS`). Each run reads the state file and queries the daemon. There is no backoff.
 - **`channels_flag` is inferred.** Claude Code 2.1.293 does not list `--channels` or `--dangerously-load-development-channels` in `--help`, although both flags exist. `--probe` therefore sets `channels_flag` from the version (2.1.287 or later) as well as from the help text. The value is a version-based inference, not a test of the flag.

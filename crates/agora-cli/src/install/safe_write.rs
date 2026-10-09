@@ -4,6 +4,7 @@
 use crate::CliError;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fs::{self, File, Metadata};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -19,7 +20,7 @@ pub const KEEP_BACKUPS: usize = 3;
 const JSON_NEW_MODE: u32 = 0o600;
 /// Longest rendered value in a `structural_diff` line; a longer one is cut and ends with "…".
 const DIFF_VALUE_CHARS: usize = 120;
-const BACKUP_TAG: &str = ".agora-bak-";
+pub(crate) const BACKUP_TAG: &str = ".agora-bak-";
 const TEMP_TAG: &str = ".agora-tmp-";
 
 /// What a write did.
@@ -178,7 +179,7 @@ fn render_value(v: &Value) -> String {
 }
 
 /// `lstat`: `None` when the path does not exist. Never follows a symlink.
-fn lstat(path: &Path) -> io::Result<Option<Metadata>> {
+pub(crate) fn lstat(path: &Path) -> io::Result<Option<Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(meta) => Ok(Some(meta)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -186,15 +187,59 @@ fn lstat(path: &Path) -> io::Result<Option<Metadata>> {
     }
 }
 
-/// `Err` when `path` is a symlink. Runs before every write decision, dry runs included.
-fn refuse_symlink(path: &Path) -> Result<(), CliError> {
+/// `Err` when `path` is a symlink, or when a symlinked ancestor sends it outside the project. Runs
+/// before every write decision, dry runs included.
+pub(crate) fn refuse_symlink(path: &Path) -> Result<(), CliError> {
     if lstat(path)?.is_some_and(|m| m.file_type().is_symlink()) {
         return Err(CliError::Usage(format!(
             "refusing to write through symlink {}",
             path.display()
         )));
     }
-    Ok(())
+    refuse_escape_from_project(path)
+}
+
+/// The project is the current directory (`install::mod` canonicalizes it for project scope). A write
+/// inside it must not leave it through a symlinked ancestor such as `.cursor -> ~/elsewhere`: the
+/// deepest existing ancestor of `path` is canonicalized, the missing tail appended, and the result
+/// must start with the canonical project directory. Paths outside the project are not checked, and
+/// neither is a process run from the home directory or above it (user scope has no project there).
+fn refuse_escape_from_project(path: &Path) -> Result<(), CliError> {
+    let cwd = std::env::current_dir()?;
+    let project = fs::canonicalize(&cwd)?;
+    if std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .and_then(|h| fs::canonicalize(h).ok())
+        .is_some_and(|home| home.starts_with(&project))
+    {
+        return Ok(());
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    if !absolute.starts_with(&cwd) && !absolute.starts_with(&project) {
+        return Ok(());
+    }
+    let outside = || CliError::Usage(format!("{} resolves outside the project", path.display()));
+    let mut existing = absolute.as_path();
+    let mut missing: Vec<&OsStr> = Vec::new();
+    while lstat(existing)?.is_none() {
+        let Some(name) = existing.file_name() else {
+            break;
+        };
+        missing.push(name);
+        existing = existing.parent().unwrap_or(Path::new("/"));
+    }
+    // A dangling symlink cannot be resolved, so it counts as outside.
+    let base = fs::canonicalize(existing).map_err(|_| outside())?;
+    let resolved = missing.iter().rev().fold(base, |acc, name| acc.join(name));
+    if resolved.starts_with(&project) {
+        Ok(())
+    } else {
+        Err(outside())
+    }
 }
 
 /// True when `path` is a regular file holding exactly `bytes`. Never reads through a symlink.
@@ -243,7 +288,12 @@ fn now_ms() -> u128 {
 }
 
 /// Copy the existing file to a fresh `<name>.agora-bak-<ms>` (same mode), then prune old backups.
-fn backup_existing(path: &Path, dir: &Path, name: &str, mode: u32) -> io::Result<PathBuf> {
+pub(crate) fn backup_existing(
+    path: &Path,
+    dir: &Path,
+    name: &str,
+    mode: u32,
+) -> io::Result<PathBuf> {
     let backup = free_backup_name(dir, name, now_ms())?;
     if let Err(e) = copy_with_mode(path, &backup, mode) {
         let _ = fs::remove_file(&backup);

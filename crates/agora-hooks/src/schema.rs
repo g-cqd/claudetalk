@@ -33,6 +33,13 @@ pub struct HookInput {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub agent_type: Option<String>,
+    /// Detected producer of the payload, set by the dialect parsers (`dialect::*::parse`):
+    /// `"codex"`, `"copilot-cli"`, `"vscode"`, `"agy"` or `"cursor"`. Claude payloads leave it
+    /// `None`. The entry points ignore it; `dialect::to_output` uses it to pick the native output
+    /// shape (the shared Copilot hooks file is run by both Copilot CLI and VS Code).
+    /// Never read from stdin: a payload cannot choose its own output shape.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// `HookInput::hook_event_name` as an enum; anything unknown is `Other`.

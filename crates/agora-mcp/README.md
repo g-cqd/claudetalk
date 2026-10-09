@@ -270,6 +270,43 @@ A message that has used every rung is marked exhausted at once.
 Only stdio peers have pull rungs. An HTTP peer's ladder is `wait_tool`, whatever the files say.
 `delivery_status` (section 8) shows the ladder, the armed rungs and the heartbeats.
 
+**Other harnesses.** The server maps `clientInfo.name` to a harness. The match is on the lowercased
+name, tested in this order: `claude`, `codex`, `cursor`, `visual studio code` / `vscode` / `vs code`,
+`copilot`, `opencode`, `antigravity` / `gemini`, and the exact name `agy`. `cursor` is tested before the
+VS Code names because Cursor sends `cursor-vscode`.
+
+| `clientInfo.name` | Harness | Evidence |
+|---|---|---|
+| `codex-mcp-client` | Codex | VERIFIED (Codex 0.157.1) |
+| `github-copilot-developer` | Copilot CLI | VERIFIED (Copilot CLI 0.0.369, mock API) |
+| `Visual Studio Code` | VS Code (Copilot Chat) | VERIFIED (VS Code 1.141.0, read from the installed bundle) |
+| `antigravity-client` | Antigravity (`agy`) | DOCS-ONLY |
+| `opencode` | opencode | DOCS-ONLY |
+| `cursor-vscode` | Cursor | DOCS-ONLY |
+
+Each harness has its own ladder. The candidate rungs are listed strongest first. `wait_tool` is the
+last rung of every ladder.
+
+| Harness | Candidate rungs |
+|---|---|
+| Claude Code | `channel_push`, `mod_submit`, `async_rewake_hook`, `stop_continue`, `hook_inject`, `wait_tool` |
+| Codex, Copilot CLI, opencode, Antigravity | `owned_session_api`, `stop_continue`, `hook_inject`, `wait_tool` |
+| VS Code, Cursor | `stop_continue`, `hook_inject`, `wait_tool` |
+| Unknown client | `wait_tool` |
+
+Which candidate rungs are in the ladder:
+
+- `stop_continue` and `hook_inject` are in a non-Claude ladder when `$AGORA_HOME/capabilities.json`
+  records that hook for the harness, or when a heartbeat for the rung is less than 7 days old. Codex
+  writes hooks that it skips until they are trusted, so a recorded Codex hook counts only while
+  `hooks_trusted` is not `false`. A heartbeat still puts the rung in the ladder, because it shows the
+  hook ran.
+- `owned_session_api` is in the ladder only while a bridge heartbeat is armed (a 90 s window). The bridge
+  beats every 30 s while the agent it launched (`agora run-agent`) is alive. An install record does not
+  count for this rung.
+- MCP notifications never reach the model outside Claude Code. The server sends channel notifications
+  only to Claude Code, so on the other clients delivery relies on `inbox_wait` and on the rungs above.
+
 Permission relay (`claude/channel/permission`) is not declared; see `docs/CLAUDE-CODE.md` for why.
 
 ## 6. Prompt-injection posture
@@ -342,7 +379,61 @@ mod for you (a plugin by default, or `--mode entries` for plain settings entries
 The entry the installer writes in entries mode includes `"env":{"MCP_PROTOCOL_NEGOTIATION":"legacy"}`;
 that reaches the server only and does not make Claude Code negotiate legacy (section 5). To get
 channel push, set the variable where you start `claude`.
-For other clients, `agora install` is planned for M6; until then write the entries by hand as above.
+For the other clients, `agora install --client <c>` writes the MCP entry, the hooks and the instruction
+block for one client. `<c>` is `codex`, `copilot-cli`, `copilot-vscode`, `agy`, `opencode` or `cursor`. A
+comma list, or `all`, installs several. `agora uninstall --client <c>` removes them. `docs/HARNESSES.md`
+lists what each client supports and how far each part is verified.
+
+The examples below show the MCP entry the installer writes, for user scope. `<exe>` and `<home>` stand for
+the absolute paths of the agora binary and of the Agora home on the machine where the installer runs.
+Project scope writes the same entry to the project's file; `docs/HARNESSES.md` lists those paths.
+
+- **Codex** (VERIFIED-LOCAL, Codex 0.157.1). Table `[mcp_servers.agora]` in `$CODEX_HOME/config.toml`
+  (default `~/.codex/config.toml`). There is no `env`: Codex filters the server's environment, and the
+  folder comes from the session's working directory.
+
+  ```toml
+  [mcp_servers.agora]
+  command = "<exe>"
+  args = ["--home", "<home>", "mcp"]
+  ```
+
+- **Copilot CLI** (VERIFIED-LOCAL with a mock API, Copilot CLI 0.0.369). `mcpServers.agora` in
+  `$COPILOT_HOME/mcp-config.json` (default `~/.copilot/mcp-config.json`). `tools` is required. There is no
+  `env`.
+
+  ```json
+  {"mcpServers":{"agora":{"type":"local","command":"<exe>","args":["--home","<home>","mcp"],"tools":["*"]}}}
+  ```
+
+- **VS Code** (VERIFIED-LOCAL, read from the installed bundle, VS Code 1.141.0). `servers.agora` in the
+  user profile `mcp.json` (macOS `~/Library/Application Support/Code/User/mcp.json`). `AGORA_FOLDER` is set
+  to the workspace folder, so the identity is the workspace.
+
+  ```json
+  {"servers":{"agora":{"type":"stdio","command":"<exe>","args":["--home","<home>","mcp"],"env":{"AGORA_FOLDER":"${workspaceFolder}"}}}}
+  ```
+
+- **Antigravity (`agy`)** (DOCS-ONLY). `mcpServers.agora` in `~/.gemini/config/mcp_config.json`.
+
+  ```json
+  {"mcpServers":{"agora":{"command":"<exe>","args":["--home","<home>","mcp"]}}}
+  ```
+
+- **opencode** (DOCS-ONLY). `mcp.agora` in `$XDG_CONFIG_HOME/opencode/opencode.json` (default
+  `~/.config/opencode/opencode.json`). If only `opencode.jsonc` exists, the installer does not edit it and
+  prints the entry for you to add by hand.
+
+  ```json
+  {"mcp":{"agora":{"type":"local","command":["<exe>","--home","<home>","mcp"],"enabled":true}}}
+  ```
+
+- **Cursor** (DOCS-ONLY). `mcpServers.agora` in `~/.cursor/mcp.json`, or `.cursor/mcp.json` in the project.
+  `AGORA_FOLDER` is set to `${workspaceFolder}`, as for VS Code.
+
+  ```json
+  {"mcpServers":{"agora":{"type":"stdio","command":"<exe>","args":["--home","<home>","mcp"],"env":{"AGORA_FOLDER":"${workspaceFolder}"}}}}
+  ```
 
 If the token file has no tokens, every HTTP request gets 401, and the server prints a warning at
 startup that says so.

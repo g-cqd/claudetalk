@@ -1,0 +1,9 @@
+{
+  "_source": "https://docs.github.com/en/copilot/reference/hooks-reference (Copilot CLI >= 1.0.72), DOCS-DERIVED",
+  "sessionId": "7d3e1f0a-2b4c-4d5e-9f60-1a2b3c4d5e6f",
+  "timestamp": 1791486762002,
+  "cwd": "/Users/me/proj",
+  "transcriptPath": "/Users/me/.copilot/session-state/7d3e1f0a-2b4c-4d5e-9f60-1a2b3c4d5e6f/events.jsonl",
+  "stopReason": "end_turn",
+  "stop_hook_active": true
+}

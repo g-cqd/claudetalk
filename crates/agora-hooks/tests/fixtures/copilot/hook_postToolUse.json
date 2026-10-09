@@ -1,0 +1,10 @@
+{
+  "timestamp": 1791486751318,
+  "cwd": "/private/tmp/agora-m6/probe-copilot2/proj",
+  "toolName": "logger-ping",
+  "toolArgs": {},
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "pong"
+  }
+}

@@ -4,11 +4,11 @@
 //! A `ChannelPush` escalation is recorded only when a push was actually sent (`on_pushed`); when
 //! its rung comes due with nothing sent, the tracker advances past it silently. Every other fired
 //! rung is passive (`executed: false`): the tracker never delivers, the hooks and the mod do.
-//! M4 pull rungs (`ModSubmit`, `AsyncRewakeHook`, `StopContinue`, `HookInject`) are recorded with
-//! `armed` set from the session's heartbeats. An armed rung waits its patience for an ack; an
-//! unarmed one has no fresh heartbeat, so it is recorded and the next rung is tried in the same
-//! tick. `WaitTool` is recorded armed and waits its patience; `OwnedSessionApi` is recorded
-//! unarmed and passed over at once.
+//! M4 pull rungs (`ModSubmit`, `AsyncRewakeHook`, `StopContinue`, `HookInject`) and the M6
+//! `OwnedSessionApi` rung are recorded with `armed` set from the session's heartbeats. An armed
+//! rung waits its patience for an ack; an unarmed one has no fresh heartbeat, so it is recorded
+//! and the next rung is tried in the same tick. `WaitTool` is recorded armed and waits its
+//! patience.
 
 use crate::clients::ladder_json;
 use agora_deliver::{Action, Attempt, Mechanism, next_action, patience_ms};
@@ -27,7 +27,8 @@ pub struct Escalation {
     /// `true` only for a `channel_push` recorded by `on_pushed` (a push was sent).
     pub executed: bool,
     /// The rung's heartbeat was fresh when it fired (`wait_tool` and `channel_push` are always
-    /// armed; `owned_session_api` never is), so the tracker waited its patience for an ack.
+    /// armed; `owned_session_api` is armed while its bridge beats), so the tracker waited its
+    /// patience for an ack.
     pub armed: bool,
 }
 
@@ -162,11 +163,9 @@ impl Tracker {
     /// - `Fire(ChannelPush)`: rungs_tried + 1, last_ms = now, nothing recorded; stop for the entry.
     /// - `Fire(WaitTool)`: record `{executed: false, armed: true}`; rungs_tried + 1, last_ms = now;
     ///   stop for the entry.
-    /// - `Fire(OwnedSessionApi)`: record `{executed: false, armed: false}`; rungs_tried + 1, then
-    ///   passed over (below).
-    /// - `Fire(m)` for a pull rung: record `{executed: false, armed: armed.contains(m)}`;
-    ///   rungs_tried + 1. Armed: last_ms = now and stop for the entry (the rung's patience is
-    ///   spent waiting for an ack). Unarmed: passed over (below).
+    /// - `Fire(m)` for a pull rung or `OwnedSessionApi`: record `{executed: false,
+    ///   armed: armed.contains(m)}`; rungs_tried + 1. Armed: last_ms = now and stop for the entry
+    ///   (the rung's patience is spent waiting for an ack). Unarmed: passed over (below).
     ///
     /// Passed over: last_ms = now - patience_ms(m), so the next rung is due at this same `now`
     /// and the loop continues in the same tick.
@@ -196,8 +195,7 @@ impl Tracker {
                 let (waits, recorded) = match m {
                     Mechanism::ChannelPush => (true, None),
                     Mechanism::WaitTool => (true, Some(true)),
-                    Mechanism::OwnedSessionApi => (false, Some(false)),
-                    // The four pull rungs.
+                    // The pull rungs and the owned session: armed iff heartbeat-armed.
                     _ => {
                         let is_armed = armed.contains(&m);
                         (is_armed, Some(is_armed))
@@ -890,15 +888,31 @@ mod tests {
     }
 
     #[test]
-    fn owned_session_api_is_recorded_unarmed_and_passed_over() {
+    fn unarmed_owned_session_api_is_passed_over() {
         let mut t = Tracker::new(vec![Mechanism::OwnedSessionApi, Mechanism::WaitTool], false);
         t.on_seen("general", 1);
-        // Even when listed as armed, the owned session never waits: WaitTool is due at once.
-        let fired = t.tick_with(0, &armed_set(&[Mechanism::OwnedSessionApi]));
+        // No fresh bridge heartbeat: the owned session is recorded unarmed, WaitTool is due at once.
+        let fired = t.tick_with(0, &BTreeSet::new());
         assert_eq!(
             summary(&fired),
             [("owned_session_api", false), ("wait_tool", true)]
         );
+    }
+
+    #[test]
+    fn armed_owned_session_api_waits_its_patience_before_wait_tool() {
+        let mut t = Tracker::new(vec![Mechanism::OwnedSessionApi, Mechanism::WaitTool], false);
+        t.on_seen("general", 1);
+        let armed = armed_set(&[Mechanism::OwnedSessionApi]);
+        // Armed: the owned session fires with armed:true and holds for its 15 s patience.
+        let fired = t.tick_with(0, &armed);
+        assert_eq!(summary(&fired), [("owned_session_api", true)]);
+        assert!(fired[0].armed);
+        assert!(t.tick_with(14_999, &armed).is_empty());
+        // At +15 s (it wakes idle) the chain escalates to WaitTool, which ends it.
+        let fired = t.tick_with(15_000, &armed);
+        assert_eq!(summary(&fired), [("wait_tool", true)]);
+        assert_eq!(t.status_json()["armed"], json!(["owned_session_api"]));
     }
 
     #[test]

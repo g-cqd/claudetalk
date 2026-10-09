@@ -1,0 +1,20 @@
+{
+ "session_id": "01a11cd9-600c-7530-96b7-db4f0fc53a73",
+ "turn_id": "01a11cd9-604f-7722-92bb-23c5840660ec",
+ "transcript_path": "/private/tmp/agora-m6/probe-codex/home/sessions/2026/10/08/rollout-2026-10-08T20-49-30-01a11cd9-600c-7530-96b7-db4f0fc53a73.jsonl",
+ "cwd": "/private/tmp/agora-m6/probe-codex/proj",
+ "hook_event_name": "PostToolUse",
+ "model": "gpt-5.6-luna",
+ "permission_mode": "bypassPermissions",
+ "tool_name": "mcp__logger__ping",
+ "tool_input": {},
+ "tool_response": {
+  "content": [
+   {
+    "type": "text",
+    "text": "pong-1"
+   }
+  ]
+ },
+ "tool_use_id": "exec-0ca95b80-91c2-45d1-9377-2e7cd96acf1f"
+}

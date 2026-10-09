@@ -279,6 +279,8 @@ pub struct WorkSettingsArgs {
     pub reconcile_interval: Option<String>,
     /// Default lease time in seconds.
     pub lease_ttl: Option<String>,
+    /// Seconds a claimed task may stay unrun before it returns to the queue (default 1800).
+    pub claim_ttl: Option<String>,
     /// Lowest role allowed to run or accept commands: worker|supervisor|controller|owner
     pub run_role: Option<String>,
     /// Maximum jobs waiting to start per identity

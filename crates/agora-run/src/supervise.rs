@@ -9,10 +9,11 @@
 //! CPU time and peak RSS come from getrusage (see `rusage`), and status.json is recorded. Any failure before that is
 //! recorded as "could not supervise" in status.json.
 
+mod cwd;
 mod rusage;
 
 use std::fs::File;
-use std::io::{self, ErrorKind, Write};
+use std::io::{self, Write};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -23,7 +24,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use agora_sched::exit::{exit_status, spawn_error_status};
 use agora_sched::textfmt::brief;
-use rustix::fs::{Access, FileType, Mode, OFlags, access, fstat, open};
+use rustix::fs::{FileType, Mode, OFlags, fstat, open};
 use rustix::io::Errno;
 use rustix::process::setsid;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
@@ -34,6 +35,8 @@ use crate::locate::locate;
 use crate::machine::{Machine, RealMachine};
 use crate::proc::{Sampler, Sig, signal_group, start_time_s};
 use crate::qos;
+
+use cwd::cwd_problem;
 use rusage::children;
 
 /// How often a running child is polled for its exit and its log is checked against the cap.
@@ -394,35 +397,6 @@ fn refused(errno: i32) -> Outcome {
     Outcome::Refused {
         status: spawn_error_status(errno),
         error: io::Error::from_raw_os_error(errno).to_string(),
-    }
-}
-
-/// Why the job cannot start in `cwd`, as the note and the log line word it. A missing directory is gone; one that
-/// exists but cannot be entered (no search permission, or not a directory) is refused. A `cwd` that is not its own
-/// canonical path (a symlink, say, that was re-pointed after the job was accepted) is refused too, so the job never
-/// runs in a directory other than the one it was recorded with. None when it can be entered.
-fn cwd_problem(cwd: &str) -> Option<String> {
-    match std::fs::metadata(cwd) {
-        Ok(meta) if meta.is_dir() => {}
-        Ok(_) => return Some(format!("cannot enter its directory {cwd}: not a directory")),
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Some(format!("its directory {cwd} is gone"));
-        }
-        Err(error) => return Some(format!("cannot enter its directory {cwd}: {error}")),
-    }
-    if let Some(errno) = access(cwd, Access::EXEC_OK).err() {
-        return Some(format!(
-            "cannot enter its directory {cwd}: {}",
-            io::Error::from(errno)
-        ));
-    }
-    match std::fs::canonicalize(cwd) {
-        Ok(real) if real.as_os_str() == cwd => None,
-        Ok(real) => Some(format!(
-            "its directory {cwd} now resolves to {}",
-            real.display()
-        )),
-        Err(error) => Some(format!("cannot enter its directory {cwd}: {error}")),
     }
 }
 

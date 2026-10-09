@@ -142,6 +142,10 @@ pub struct WorkSettings {
     pub reconcile_interval_s: f64,
     /// path/pool lease default TTL, default 900.0
     pub lease_ttl_s: f64,
+    /// agora (M6): a task that stays `claimed` without a run request for this long goes back to the
+    /// queue (reconciler rule R7); default 1800.0, finite and at least 60.0. Old rows without the field
+    /// deserialize to the default.
+    pub claim_ttl_s: f64,
     /// agora: lowest role that may run or accept commands (worker|supervisor|controller|owner); default "worker"
     pub run_role: String,
     /// agora: jobs one identity may hold claimed, requested or waiting to start, at least 1; default 64
@@ -150,6 +154,9 @@ pub struct WorkSettings {
 
 /// The roles `run_role` may name, lowest first.
 const RUN_ROLES: [&str; 4] = ["worker", "supervisor", "controller", "owner"];
+
+/// The shortest claim TTL in seconds: a shorter one makes every claim due at the next reconcile pass.
+const CLAIM_TTL_MIN_S: f64 = 60.0;
 
 impl Default for WorkSettings {
     fn default() -> Self {
@@ -176,6 +183,7 @@ impl Default for WorkSettings {
             idle_floor_pct: None,
             reconcile_interval_s: 30.0,
             lease_ttl_s: 900.0,
+            claim_ttl_s: 1800.0,
             run_role: "worker".to_owned(),
             max_waiting: 64,
         }
@@ -209,6 +217,7 @@ pub struct SettingsPatch {
     pub idle_floor: Option<String>,
     pub reconcile_interval: Option<String>,
     pub lease_ttl: Option<String>,
+    pub claim_ttl: Option<String>,
     pub run_role: Option<String>,
     pub max_waiting: Option<String>,
 }
@@ -233,6 +242,19 @@ fn is_zero_or_more(v: f64) -> bool {
 
 fn is_percent(v: f64) -> bool {
     (0.0..100.0).contains(&v)
+}
+
+/// A claim TTL: a finite number of seconds, `CLAIM_TTL_MIN_S` or more.
+fn parse_claim_ttl(text: &str) -> Result<f64, String> {
+    let value = parse::duration(text)?;
+    if value >= CLAIM_TTL_MIN_S {
+        Ok(value)
+    } else {
+        Err(format!(
+            "{} is not at least {CLAIM_TTL_MIN_S} seconds",
+            crate::pyfmt::repr_str(text)
+        ))
+    }
 }
 
 impl WorkSettings {
@@ -312,6 +334,10 @@ impl WorkSettings {
             "lease_ttl must be a finite number above zero",
         )?;
         ensure(
+            self.claim_ttl_s.is_finite() && self.claim_ttl_s >= CLAIM_TTL_MIN_S,
+            "claim_ttl must be a finite number, 60 seconds or more",
+        )?;
+        ensure(
             RUN_ROLES.contains(&self.run_role.as_str()),
             "run_role must be one of worker, supervisor, controller, owner",
         )?;
@@ -344,6 +370,7 @@ impl WorkSettings {
         set_field!(patch, next, changes, idle_floor => idle_floor_pct, parse::idle_floor);
         set_field!(patch, next, changes, reconcile_interval => reconcile_interval_s, parse::reconcile_interval);
         set_field!(patch, next, changes, lease_ttl => lease_ttl_s, parse::positive);
+        set_field!(patch, next, changes, claim_ttl => claim_ttl_s, parse_claim_ttl);
         set_field!(patch, next, changes, run_role => run_role, parse::run_role);
         set_field!(patch, next, changes, max_waiting => max_waiting, parse::max_waiting);
         *self = next;
