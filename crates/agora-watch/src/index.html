@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agora watch</title>
+<style>
+:root {
+  --bg: #0d1117; --panel: #161b22; --border: #30363d; --fg: #e6edf3;
+  --dim: #8b949e; --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 13px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+  background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+header h1 span { color: var(--dim); font-weight: 400; }
+#meta { color: var(--dim); font-family: var(--mono); font-size: 11px; }
+#meta b { color: var(--accent); font-weight: 500; }
+nav { display: flex; gap: 2px; padding: 0 14px; background: var(--panel);
+  border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+nav button { background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--dim); padding: 7px 12px; font: inherit; cursor: pointer; }
+nav button.active { color: var(--fg); border-bottom-color: var(--accent); }
+main { padding: 14px; }
+section { display: none; }
+section.active { display: block; }
+.grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; overflow: auto; }
+.card h3 { margin: 0 0 8px; font-size: 12px; color: var(--dim);
+  text-transform: uppercase; letter-spacing: .04em; }
+table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 11.5px; }
+th, td { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--border);
+  white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+th { color: var(--dim); font-weight: 500; }
+td.wrap, th.wrap { white-space: normal; }
+.kv { font-family: var(--mono); font-size: 11.5px; }
+.kv div { padding: 1px 0; }
+.kv span { color: var(--dim); }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--mono); font-size: 11.5px; }
+.pill { display: inline-block; padding: 0 7px; border-radius: 10px; font-size: 10.5px;
+  font-family: var(--mono); border: 1px solid var(--border); color: var(--dim); margin-right: 4px; }
+.pill.ok { color: var(--ok); border-color: var(--ok); }
+.pill.warn { color: var(--warn); border-color: var(--warn); }
+.pill.bad { color: var(--bad); border-color: var(--bad); }
+.pill.acc { color: var(--accent); border-color: var(--accent); }
+.controls { display: flex; gap: 8px; margin: 0 0 10px; flex-wrap: wrap; align-items: center; }
+select, input, button.act { background: var(--bg); border: 1px solid var(--border);
+  color: var(--fg); border-radius: 5px; padding: 4px 8px; font: inherit; font-size: 12px; }
+button.act { cursor: pointer; }
+button.act:hover { border-color: var(--accent); }
+.err { color: var(--bad); font-family: var(--mono); font-size: 11.5px; }
+.clickable { cursor: pointer; }
+.clickable:hover { color: var(--accent); }
+.split { display: grid; grid-template-columns: 260px 1fr; gap: 10px; }
+@media (max-width: 800px) { .split { grid-template-columns: 1fr; } }
+#daemon-state { font-family: var(--mono); font-size: 11px; }
+.flash { animation: flash 1.2s ease-out; }
+@keyframes flash { 0% { background: rgba(88,166,255,.25); } 100% { background: transparent; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>agora watch <span id="home"></span></h1>
+  <div id="meta"></div>
+  <div style="flex:1"></div>
+  <span id="daemon-state"></span>
+  <label style="color:var(--dim);font-size:11.5px">refresh
+    <select id="interval">
+      <option value="1000">1s</option>
+      <option value="2000" selected>2s</option>
+      <option value="5000">5s</option>
+      <option value="10000">10s</option>
+    </select>
+  </label>
+  <button class="act" id="pause">pause</button>
+</header>
+<nav id="tabs"></nav>
+<main id="main"></main>
+<script>
+"use strict";
+const TABS = [
+  ["overview", "Overview"], ["channels", "Channels"], ["board", "Board"],
+  ["work", "Work"], ["sched", "Scheduler"], ["delivery", "Delivery"], ["logs", "Logs"],
+];
+let active = "overview";
+let paused = false;
+let timer = null;
+
+// ---------- helpers ----------
+const $ = (sel, el = document) => el.querySelector(sel);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+async function api(path) {
+  const r = await fetch(path);
+  const j = await r.json().catch(() => ({ error: "bad json" }));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+function card(title, body, cls = "") {
+  return `<div class="card ${cls}"><h3>${title}</h3>${body}</div>`;
+}
+function table(headers, rows, opts = {}) {
+  const th = headers.map(h => `<th class="${h.wrap ? "wrap" : ""}">${esc(h.label)}</th>`).join("");
+  const tr = rows.map(r => `<tr>${r.map((c, i) =>
+    `<td class="${headers[i].wrap ? "wrap" : ""}">${c}</td>`).join("")}</tr>`).join("");
+  return `<table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>`;
+}
+const pill = (text, cls) => `<span class="pill ${cls}">${esc(text)}</span>`;
+function kv(pairs) {
+  return `<div class="kv">` + pairs.map(([k, v]) =>
+    `<div><span>${esc(k)}: </span>${v === undefined || v === null ? "" : esc(v)}</div>`).join("") + `</div>`;
+}
+function pre(j) { return `<pre>${esc(JSON.stringify(j, null, 1))}</pre>`; }
+function secs(ms) {
+  if (ms === undefined || ms === null || ms < 0) return "?";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m" + (s % 60) + "s";
+  if (s < 86400) return Math.floor(s / 3600) + "h" + Math.floor((s % 3600) / 60) + "m";
+  return Math.floor(s / 86400) + "d" + Math.floor((s % 86400) / 3600) + "h";
+}
+const errBox = e => `<div class="err">${esc(String(e.message || e))}</div>`;
+function statePill(s) {
+  const cls = { done: "ok", running: "acc", failed: "bad", claimed: "warn",
+    queued: "", cancelled: "bad", doing: "acc", review: "warn", ready: "" }[s] || "";
+  return pill(s, cls);
+}
+
+// ---------- overview ----------
+async function renderOverview() {
+  const j = await api("/api/overview");
+  const w = j.whoami || {};
+  const meta = $("#meta");
+  meta.innerHTML = `<b>${esc(w.pseudonym || w.name || "?")}</b> ${esc(w.role || "")} · ${esc((w.pubkey || "").slice(0, 16))}…`;
+  $("#home").textContent = (j.files && j.files.home) ? "· " + j.files.home : "";
+  const files = j.files || {};
+  $("#daemon-state").innerHTML = files.daemon_up ? pill("daemon up", "ok") : pill("daemon down", "bad");
+  const work = j.work || {};
+  const counts = work.counts || {};
+  const cards = (j.cards && j.cards.cards) || [];
+  const tasks = (j.tasks && j.tasks.tasks) || [];
+  const byState = {};
+  for (const c of cards) byState[c.state] = (byState[c.state] || 0) + 1;
+  const notices = (j.notices && j.notices.notices) || [];
+  const html =
+    card("identity", kv([
+      ["pseudonym", w.pseudonym], ["role", w.role], ["pubkey", w.pubkey],
+      ["registered", w.registered], ["owner exists", w.owner_exists],
+      ["label", (w.label || (j.whoami && j.whoami.label))],
+    ])) +
+    card("machine / work", pre(work.machine || work) +
+      `<div style="margin-top:6px">` +
+      ["queued", "ready", "claimed", "running", "done", "failed", "cancelled"]
+        .map(s => counts[s] ? pill(`${s} ${counts[s]}`, s) : "").join("") +
+      `</div>`) +
+    card("tasks", table([{ label: "id" }, { label: "state" }, { label: "scope" },
+      { label: "argv", wrap: true }], tasks.slice(0, 25).map(t =>
+        [esc(t.id), statePill(t.state), esc(t.scope || ""),
+         esc((t.argv || []).join(" "))]))) +
+    card("cards", Object.entries(byState).map(([s, n]) => pill(`${s} ${n}`, s)).join(" ") ||
+      `<span class="err">no cards</span>`) +
+    card("notices", notices.length ? table([{ label: "when" }, { label: "topic", wrap: true },
+      { label: "detail", wrap: true }], notices.slice(0, 10).map(n =>
+        [esc(new Date((n.ts_ms || n.at_ms || 0)).toLocaleTimeString()),
+         esc(n.topic || ""), esc(n.detail || "")])) : "none") +
+    card("store", kv([
+      ["db", files.db_bytes ? (files.db_bytes / 1048576).toFixed(1) + " MiB" : "0"],
+      ["blobs", files.blob_count], ["jobs", files.job_count],
+      ["job logs", files.job_log_count], ["daemon", files.daemon_up ? "up" : "down"],
+    ])) +
+    card("watchdog", pre(j.watchdog && (j.watchdog.report || j.watchdog))) +
+    card("metrics", pre(j.metrics && (j.metrics.report || j.metrics)));
+  $("#overview").innerHTML = html;
+}
+
+// ---------- channels ----------
+let channel = null;
+let chanCursor = {};
+async function renderChannels() {
+  const inbox = await api("/api/inbox?limit=100").catch(e => ({ error: String(e) }));
+  const chans = await api("/api/channels");
+  const list = chans.channels || [];
+  const rows = list.map(c => {
+    const id = c.id || c.channel;
+    return [`<span class="clickable" data-chan="${esc(id)}">${esc(id)}</span>`,
+      esc(c.kind || ""), esc(c.name || ""), pill(`${c.seq ?? ""}`, c.seq ? "acc" : "")];
+  });
+  let side = table([{ label: "channel" }, { label: "kind" }, { label: "name" }, { label: "seq" }], rows);
+  if (inbox && !inbox.error) {
+    const msgs = inbox.messages || [];
+    side += `<h3 style="margin-top:10px">inbox (${msgs.length})</h3>` +
+      (msgs.length ? table([{ label: "seq" }, { label: "from" }, { label: "channel" },
+        { label: "text", wrap: true }],
+        msgs.map(m => [esc(m.seq), esc(m.from || m.from_pseudonym), esc(m.channel),
+          esc((m.text || "").slice(0, 120))])) : "empty");
+  } else if (inbox && inbox.error) {
+    side += `<div class="err">inbox: ${esc(inbox.error)}</div>`;
+  }
+  let msgs = "<p style=color:var(--dim)>select a channel</p>";
+  if (channel) {
+    const after = chanCursor[channel] ?? 0;
+    const j = await api(`/api/channels/${encodeURIComponent(channel)}/messages?limit=50&after=${after}`).catch(e => ({ error: String(e) }));
+    if (j.error) msgs = errBox(j.error);
+    else {
+      const list2 = j.messages || [];
+      if (list2.length) chanCursor[channel] = list2[list2.length - 1].seq;
+      msgs = table([{ label: "seq" }, { label: "from" }, { label: "text", wrap: true }],
+        list2.map(m => [esc(m.seq), esc(m.from || m.from_pseudonym),
+          esc(m.text || "")]));
+      const info = await api(`/api/channels/${encodeURIComponent(channel)}/info`).catch(() => null);
+      if (info) msgs = card("info", pre(info.channel || info)) + msgs;
+    }
+  }
+  $("#channels").innerHTML =
+    `<div class="split"><div class="card"><h3>channels</h3>${side}</div>` +
+    `<div class="card"><h3>${esc(channel || "messages")}</h3>${msgs}</div></div>`;
+  $("#channels").querySelectorAll("[data-chan]").forEach(el =>
+    el.onclick = () => { channel = el.dataset.chan; chanCursor[channel] = 0; renderChannels(); });
+}
+
+// ---------- board ----------
+async function renderBoard() {
+  const state = $("#board-state") ? $("#board-state").value : "";
+  const cards = await api("/api/board/cards?limit=500" + (state ? `&state=${state}` : ""));
+  const list = (cards.cards) || [];
+  const groups = {};
+  for (const c of list) (groups[c.state] = groups[c.state] || []).push(c);
+  const board = Object.entries(groups).map(([s, cs]) =>
+    card(`${s} (${cs.length})`, table(
+      [{ label: "id" }, { label: "title", wrap: true }, { label: "holder" }, { label: "lane" }],
+      cs.map(c => [esc(c.id), esc(c.title || ""), esc(c.holder || c.holder_pk || ""),
+        esc(c.lane || "")])))).join("") || "no cards";
+  const sprintId = $("#sprint-id") ? $("#sprint-id").value : "";
+  let sprint = "";
+  if (sprintId) {
+    const s = await api(`/api/board/sprint?sprint=${encodeURIComponent(sprintId)}`).catch(e => ({ error: String(e) }));
+    sprint = card(`sprint ${esc(sprintId)}`, s.error ? errBox(s.error) : pre(s.summary || s));
+  }
+  const q = $("#note-q") ? $("#note-q").value : "";
+  const notes = q ? await api(`/api/board/notes?q=${encodeURIComponent(q)}`).catch(e => ({ error: String(e) })) : null;
+  const notesCard = card("notes", `<div class="controls"><input id="note-q" placeholder="search notes" value="${esc(q)}" style="flex:1"><button class="act" id="note-go">search</button></div>` +
+    (notes ? (notes.error ? errBox(notes.error) :
+      table([{ label: "id" }, { label: "title", wrap: true }],
+        ((notes.notes) || []).map(n => [esc(n.id), esc(n.title || "")]))) : ""));
+  $("#board").innerHTML =
+    `<div class="controls">state <select id="board-state">
+      <option value="">all</option>
+      ${["ready","claimed","doing","review","done"].map(s =>
+        `<option ${s === state ? "selected" : ""}>${s}</option>`).join("")}
+    </select>
+    sprint <input id="sprint-id" placeholder="sprint id" value="${esc(sprintId)}">
+    <button class="act" id="board-go">apply</button></div>` +
+    `<div class="grid">` + board + sprint + notesCard + `</div>`;
+  const rebind = () => { renderBoard(); };
+  $("#board-go").onclick = rebind;
+  $("#note-go").onclick = rebind;
+  $("#board-state").onchange = rebind;
+  $("#sprint-id").onkeydown = e => { if (e.key === "Enter") rebind(); };
+  $("#note-q").onkeydown = e => { if (e.key === "Enter") rebind(); };
+}
+
+// ---------- work ----------
+let taskSel = null;
+async function renderWork() {
+  const states = $("#work-states") ? $("#work-states").value : "";
+  const scope = $("#work-scope") ? $("#work-scope").value.trim() : "";
+  const [status, tasks, scopes] = await Promise.all([
+    api("/api/work/status").catch(e => ({ error: String(e) })),
+    api("/api/work/tasks?limit=300" + (states ? `&states=${states}` : "") + (scope ? `&scope=${encodeURIComponent(scope)}` : "")).catch(e => ({ error: String(e) })),
+    api("/api/work/scopes").catch(e => ({ error: String(e) })),
+  ]);
+  let detail = "";
+  if (taskSel) {
+    const t = await api(`/api/work/tasks/${encodeURIComponent(taskSel)}`).catch(e => ({ error: String(e) }));
+    detail = card(`task ${esc(taskSel)}`, t.error ? errBox(t.error) :
+      pre(t.task || t) + `<h3 style="margin-top:8px">text</h3><pre>${esc(t.text || "")}</pre>`);
+  }
+  const log = await api("/api/work/log?limit=30").catch(e => ({ error: String(e) }));
+  const settings = await api("/api/work/settings").catch(e => ({ error: String(e) }));
+  $("#work").innerHTML =
+    `<div class="controls">states <select id="work-states">
+      <option value="">all</option>
+      ${["queued","claimed","running","done","failed","cancelled"].map(s =>
+        `<option ${states === s ? "selected" : ""}>${s}</option>`).join("")}
+    </select>
+    scope <input id="work-scope" placeholder="scope" value="${esc(scope)}">
+    <button class="act" id="work-go">apply</button></div>
+    <div class="grid">` +
+    card("status", pre(status.machine ? status : status)) +
+    card("tasks (" + (((tasks.tasks) || []).length) + ")",
+      tasks.error ? errBox(tasks.error) :
+      table([{ label: "id" }, { label: "state" }, { label: "scope" }, { label: "argv", wrap: true }],
+        ((tasks.tasks) || []).map(t => [
+          `<span class="clickable" data-task="${esc(t.id)}">${esc(t.id)}</span>`,
+          statePill(t.state), esc(t.scope || ""), esc((t.argv || []).join(" "))]))) +
+    card("scopes", scopes.error ? errBox(scopes.error) :
+      table([{ label: "scope" }, { label: "tasks" }],
+        ((scopes.scopes) || []).map(s => [esc(s.scope || s.id || ""),
+          esc(String(s.count ?? s.tasks ?? ""))]))) +
+    card("recent events", log.error ? errBox(log.error) :
+      table([{ label: "when" }, { label: "task" }, { label: "kind" }, { label: "detail", wrap: true }],
+        ((log.events) || []).map(e => [esc(new Date(e.at_ms || e.ts_ms || 0).toLocaleTimeString()),
+          esc(e.task || ""), esc(e.kind || e.event || ""), esc(e.detail || "")]))) +
+    card("settings", settings.error ? errBox(settings.error) : pre(settings.settings || settings)) +
+    detail + `</div>`;
+  $("#work-go").onclick = () => { taskSel = null; renderWork(); };
+  $("#work-states").onchange = () => { taskSel = null; renderWork(); };
+  $("#work").querySelectorAll("[data-task]").forEach(el =>
+    el.onclick = () => { taskSel = el.dataset.task; renderWork(); });
+}
+
+// ---------- scheduler ----------
+async function renderSched() {
+  const [timers, pools, leases, policies, watchdog, notices] = await Promise.all([
+    api("/api/sched/timers").catch(e => ({ error: String(e) })),
+    api("/api/sched/pools").catch(e => ({ error: String(e) })),
+    api("/api/sched/leases?all=1").catch(e => ({ error: String(e) })),
+    api("/api/sched/policies").catch(e => ({ error: String(e) })),
+    api("/api/sched/watchdog").catch(e => ({ error: String(e) })),
+    api("/api/sched/notices?limit=30").catch(e => ({ error: String(e) })),
+  ]);
+  $("#sched").innerHTML = `<div class="grid">` +
+    card("timers", timers.error ? errBox(timers.error) :
+      table([{ label: "id" }, { label: "when" }, { label: "owner" }],
+        ((timers.timers) || []).map(t => [esc(t.id || ""),
+          esc(t.at || t.fire_at || ""), esc(t.owner || "")]))) +
+    card("pools", pools.error ? errBox(pools.error) : pre(pools.pools || pools)) +
+    card("leases", leases.error ? errBox(leases.error) :
+      table([{ label: "id" }, { label: "kind" }, { label: "holder" }, { label: "until" }],
+        ((leases.leases) || []).map(l => [esc(l.id || ""), esc(l.kind || ""),
+          esc(l.holder || ""), esc(l.until || l.expires_at || "")]))) +
+    card("policies", policies.error ? errBox(policies.error) : pre(policies.policies || policies)) +
+    card("watchdog", watchdog.error ? errBox(watchdog.error) : pre(watchdog.report || watchdog)) +
+    card("notices", notices.error ? errBox(notices.error) :
+      table([{ label: "when" }, { label: "topic", wrap: true }, { label: "detail", wrap: true }],
+        ((notices.notices) || []).map(n => [
+          esc(new Date(n.ts_ms || n.at_ms || 0).toLocaleTimeString()),
+          esc(n.topic || ""), esc(n.detail || "")]))) +
+    `</div>`;
+}
+
+// ---------- delivery ----------
+async function renderDelivery() {
+  const [caps, beats] = await Promise.all([
+    api("/api/files/capabilities").catch(e => ({ error: String(e) })),
+    api("/api/files/heartbeats").catch(e => ({ error: String(e) })),
+  ]);
+  $("#delivery").innerHTML = `<div class="grid">` +
+    card("capabilities", caps.error ? errBox(caps.error) : pre(caps)) +
+    card("heartbeats", beats.error ? errBox(beats.error) :
+      table([{ label: "pk" }, { label: "mechanism" }, { label: "age" }],
+        ((beats.heartbeats) || []).map(b => [esc(b.pk), esc(b.mechanism),
+          b.age_s < 0 ? "?" : (b.age_s < 120 ? pill(secs(b.age_s * 1000), "ok") :
+            pill(secs(b.age_s * 1000), b.age_s < 1800 ? "warn" : "bad"))]))) +
+    `</div>`;
+}
+
+// ---------- logs ----------
+async function renderLogs() {
+  const j = await api("/api/files/daemon-log?tail=300");
+  const lines = j.lines || [];
+  $("#logs").innerHTML = card(`daemon.log (${lines.length}/${j.total_lines} lines)`,
+    `<pre>${lines.map(l => esc(l)).join("\n")}</pre>`);
+}
+
+// ---------- shell ----------
+const RENDER = {
+  overview: renderOverview, channels: renderChannels, board: renderBoard,
+  work: renderWork, sched: renderSched, delivery: renderDelivery, logs: renderLogs,
+};
+const NAV = $("#tabs");
+for (const [id, label] of TABS) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.dataset.tab = id;
+  b.onclick = () => select(id);
+  NAV.appendChild(b);
+}
+const MAIN = $("#main");
+for (const [id] of TABS) {
+  const s = document.createElement("section");
+  s.id = id;
+  MAIN.appendChild(s);
+}
+function select(id) {
+  active = id;
+  NAV.querySelectorAll("button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === id));
+  MAIN.querySelectorAll("section").forEach(s =>
+    s.classList.toggle("active", s.id === id));
+  tick();
+}
+function tick() {
+  if (paused) return;
+  RENDER[active]().catch(e => {
+    $(`#${active}`).innerHTML = errBox(e);
+  });
+}
+function arm() {
+  if (timer) clearInterval(timer);
+  timer = setInterval(tick, Number($("#interval").value));
+}
+$("#interval").onchange = arm;
+$("#pause").onclick = () => {
+  paused = !paused;
+  $("#pause").textContent = paused ? "resume" : "pause";
+  if (!paused) tick();
+};
+arm();
+select("overview");
+</script>
+</body>
+</html>
