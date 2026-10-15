@@ -107,6 +107,20 @@ pub async fn handle(sh: &Shared, conn: &Conn, req: Req) -> Result<Reply, ErrorBo
                 .await
                 .map_err(daemon_error)
         }
+        Req::AllChannels => {
+            let me = conn.pubkey;
+            sh.reader
+                .exec(move |s| {
+                    let channels: Vec<ChannelView> = s
+                        .all_channels(&me)?
+                        .iter()
+                        .map(ChannelView::from_info)
+                        .collect();
+                    Ok(Reply::Channels { channels })
+                })
+                .await
+                .map_err(daemon_error)
+        }
         Req::ChannelInfo { channel } => {
             let me = conn.pubkey;
             sh.reader

@@ -74,6 +74,17 @@ pub enum Req {
     /// Hex keys that are online (hold a subscribed connection) and share at least one
     /// channel with the caller, plus the caller itself if online. Never anyone else.
     Online,
+    /// Supervisor+: every channel, member or not (oversight read for the stalker).
+    AllChannels,
+    /// Supervisor+: messages of any channel, member or not, seq > after, oldest
+    /// first. Encrypted bodies stay ciphertext unless the caller holds the key.
+    AllMessages {
+        channel: String,
+        after: i64,
+        limit: i64,
+    },
+    /// Supervisor+: every status row.
+    AllStatuses,
     /// The caller's status rows (own + channel peers'), with the daemon's
     /// online flags. See [`Reply::Statuses`].
     Statuses,

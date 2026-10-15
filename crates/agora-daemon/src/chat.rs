@@ -79,6 +79,20 @@ pub async fn handle(sh: &Shared, conn: &Conn, req: Req) -> Result<Reply, ErrorBo
             let messages = rows.iter().map(MessageView::from_row).collect();
             Ok(Reply::Messages { messages })
         }
+        Req::AllMessages {
+            channel,
+            after,
+            limit,
+        } => {
+            let rows = sh
+                .reader
+                .exec(move |s| s.read_channel_any(&pk, &channel, after, limit))
+                .await
+                .map_err(daemon_error)?;
+            tracing::debug!(op = "all_read", count = rows.len(), "messages read (all)");
+            let messages = rows.iter().map(MessageView::from_row).collect();
+            Ok(Reply::Messages { messages })
+        }
         Req::Inbox { limit } => {
             let rows = sh
                 .reader

@@ -395,6 +395,24 @@ pub async fn channel_list(ctx: &Ctx) -> Result<Out, ClientError> {
     })
 }
 
+/// Supervisor or above: every channel, member or not (oversight read; the
+/// stalker's all-channels view). Refused for a worker with `Forbidden`.
+pub async fn all_channels(ctx: &Ctx) -> Result<Out, ClientError> {
+    let mut client = Client::connect(ctx).await?;
+    let Reply::Channels { channels } = client.call(Req::AllChannels).await? else {
+        return Err(ClientError::UnexpectedReply);
+    };
+    let text = channels
+        .iter()
+        .map(channel_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Out {
+        json: json!({"channels": to_json(&channels)?, "scope": "all"}),
+        text,
+    })
+}
+
 pub async fn channel_info(ctx: &Ctx, p: ChannelInfoParams) -> Result<Out, ClientError> {
     let ChannelInfoParams { channel } = p;
     let mut client = Client::connect(ctx).await?;

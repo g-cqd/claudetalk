@@ -59,3 +59,11 @@ pub enum TokenCmd {
     /// Revoke a token by id.
     Revoke { id: String },
 }
+
+/// Options of `agora stalker` (BETA): the all-seeing read-only watcher web app.
+#[derive(Args, Debug)]
+pub struct StalkerArgs {
+    /// Address to serve the web app on (loopback by default).
+    #[arg(long, value_name = "ADDR", default_value = "127.0.0.1:7360")]
+    pub addr: SocketAddr,
+}

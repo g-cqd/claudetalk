@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>agora watch</title>
+<title>agora stalker</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230d1117'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%2358a6ff'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%230d1117'/%3E%3C/svg%3E">
 <style>
 :root {
@@ -52,7 +52,7 @@ main { padding: 14px; max-width: 1500px; margin: 0 auto; }
 section { display: none; }
 section.active { display: block; animation: fadein .18s ease-out; }
 @keyframes fadein { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; } }
-.grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px 12px; overflow: auto; transition: border-color .15s; }
 .card h3 { margin: 0 0 8px; font-size: 11.5px; color: var(--dim);
@@ -66,6 +66,9 @@ th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: 
 tbody tr { transition: background .12s; }
 tbody tr:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 td.wrap, th.wrap { white-space: normal; }
+/* Kanban: one fixed-width column per card state, side-scrollable. */
+.board-cols { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(330px, 1fr);
+  gap: 10px; overflow-x: auto; padding-bottom: 4px; }
 .kv { font-family: var(--mono); font-size: 11.5px; }
 .kv div { padding: 1.5px 0; }
 .kv span { color: var(--dim); }
@@ -85,7 +88,7 @@ details.raw summary:hover { color: var(--accent); }
 .err { color: var(--bad); font-family: var(--mono); font-size: 11.5px; }
 .clickable { cursor: pointer; color: var(--accent); }
 .clickable:hover { text-decoration: underline; }
-.split { display: grid; grid-template-columns: 300px 1fr; gap: 10px; }
+.split { display: grid; grid-template-columns: minmax(360px, 460px) 1fr; gap: 10px; }
 @media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
 #banner { display: none; padding: 6px 14px; background: color-mix(in srgb, var(--bad) 18%, var(--bg));
   color: var(--bad); font-family: var(--mono); font-size: 11.5px;
@@ -93,6 +96,8 @@ details.raw summary:hover { color: var(--accent); }
 #banner.on { display: block; animation: fadein .2s; }
 #toasts { position: fixed; right: 14px; bottom: 14px; display: flex; flex-direction: column;
   gap: 8px; z-index: 50; max-width: 380px; }
+/* Thread replies: indented under their root message. */
+.thread-row td:last-child { padding-left: 24px; color: var(--dim); }
 .toast { background: var(--panel2); border: 1px solid var(--accent-dim); border-left: 3px solid var(--accent);
   color: var(--fg); border-radius: 8px; padding: 8px 12px; font-size: 12px;
   font-family: var(--mono); box-shadow: 0 6px 24px rgba(0,0,0,.45);
@@ -136,7 +141,7 @@ tr.flash-row td { animation: rowflash 1.6s ease-out; }
 <body>
 <div id="banner">connection lost — retrying with backoff</div>
 <header>
-  <h1>agora watch <small id="home"></small></h1>
+  <h1>agora stalker <small id="home"></small></h1>
   <div id="meta"></div>
   <div class="spacer"></div>
   <div id="conn"></div>
@@ -240,6 +245,12 @@ function relText(ts) {
   if (d < 5000) return "now";
   return secs(d) + " ago";
 }
+function abs(ts) {
+  if (!ts) return "?";
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, "0");
+  return `<span data-ts="${ts}" title="${esc(d.toLocaleString())}">${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}</span>`;
+}
 function secs(ms) {
   const s = Math.round(ms / 1000);
   if (s < 60) return s + "s";
@@ -257,6 +268,30 @@ function meter(label, valueText, frac, cls) {
   return `<div class="meter ${cls}"><div class="m-label"><span>${esc(label)}</span><b>${esc(valueText)}</b></div>` +
     `<div class="m-track"><div class="m-fill" style="width:${Math.min(100, Math.max(0, frac * 100)).toFixed(1)}%"></div></div></div>`;
 }
+
+/* Replace innerHTML without losing scroll: the poll loop re-renders every
+   zone, and a naive replacement recreates the .scroll divs, which resets
+   scrollTop to 0 and made the tables jump on every append. Zones are matched
+   by their first row key (a re-anchored table is a new view by design);
+   `stick` keeps a view pinned to the bottom while it was at the bottom. */
+function setHtml(el, html, stick = false) {
+  if (el.innerHTML === html) return;
+  const wasAtBottom = el.classList.contains("scroll") &&
+    el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  const tops = new Map();
+  for (const s of el.querySelectorAll(".scroll")) {
+    const key = s.querySelector("tbody tr")?.dataset.key || s.querySelector("th")?.textContent || "";
+    if (key) tops.set(key, s.scrollTop);
+  }
+  const own = el.scrollTop;
+  el.innerHTML = html;
+  el.scrollTop = own;
+  for (const s of el.querySelectorAll(".scroll")) {
+    const key = s.querySelector("tbody tr")?.dataset.key || s.querySelector("th")?.textContent || "";
+    if (key && tops.has(key)) s.scrollTop = tops.get(key);
+  }
+  if (stick && wasAtBottom) el.scrollTop = el.scrollHeight;
+}
 function toast(meta, text) {
   const el = document.createElement("div");
   el.className = "toast";
@@ -269,6 +304,7 @@ function toast(meta, text) {
 /* ---------------- overview ---------------- */
 async function renderOverview() {
   const j = await api("/api/overview");
+  const statuses = await api("/api/statuses").catch(() => null);
   const inbox = await api("/api/inbox?limit=100").catch(() => null);
   const w = j.whoami || {};
   $("#meta").innerHTML = `<b>${esc(w.pseudonym || "?")}</b> ${esc(w.role || "")} · ${esc((w.pubkey || "").slice(0, 12))}…`;
@@ -288,6 +324,11 @@ async function renderOverview() {
   }
   sessionStorage.setItem("inboxSeen", JSON.stringify([...store.inboxSeen].slice(-400)));
   setUnread(inboxMsgs.length);
+
+  const statusList = (statuses && statuses.statuses) || [];
+  const scopeNote = statuses && statuses.scope === "own"
+    ? `<span class="pill warn">statuses: own view (below supervisor)</span>`
+    : `<span class="pill ok">statuses: everyone (supervisor)</span>`;
 
   const cards = (j.cards && j.cards.cards) || [];
   const byState = {};
@@ -317,7 +358,7 @@ async function renderOverview() {
   const running = rep ? (rep.running || []) : [];
   const waiting = rep ? (rep.waiting || []) : [];
 
-  $("#overview").innerHTML = `<div class="grid">` +
+  setHtml($("#overview"), `<div class="grid">` +
     card("identity", kv([
       ["pseudonym", w.pseudonym], ["role", w.role], ["registered", w.registered],
       ["owner exists", w.owner_exists], ["pubkey", w.pubkey],
@@ -336,13 +377,24 @@ async function renderOverview() {
       waiting.map(t => ({ cells: [esc(t.id), esc(t.title || ""), esc(t.note || t.hold || "")], _key: t.id })))
       : `<span style="color:var(--dim)">nothing waiting</span>`, waiting.length) +
     card(`tasks`, table(
-      [{ label: "id" }, { label: "state" }, { label: "title", wrap: true }],
+      [{ label: "id" }, { label: "state" }, { label: "kind" }, { label: "tier" },
+       { label: "title", wrap: true }, { label: "agent" }, { label: "wt" }, { label: "exit" }],
       rows("ov-tasks", tasks, t => t.id, [
         t => `<span class="clickable" data-task="${esc(t.id)}">${esc(t.id)}</span>`,
-        t => statePill(t.state), t => esc(t.title || ""),
+        t => statePill(t.state), t => esc(t.kind || ""), t => esc(t.tier || ""),
+        t => esc(t.title || ""), t => esc(t.agent_name || t.agent || ""),
+        t => esc(t.weight ?? ""), t => esc(t.status ?? ""),
       ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))), tasks.length) +
     card(`cards`, Object.entries(byState).map(([s, n]) => pill(`${s} ${n}`, s)).join(" ") ||
       `<span style="color:var(--dim)">no cards</span>`, cards.length) +
+    card(`statuses`, scopeNote + (statusList.length ? table(
+      [{ label: "who" }, { label: "harness" }, { label: "state" }, { label: "on" },
+       { label: "when" }, { label: "folder" }, { label: "matter", wrap: true }],
+      statusList.map(s => ({ _key: s.pk + ":" + s.harness, cells: [
+        { v: esc(s.pseudonym), h: 0 }, { v: esc(s.harness || ""), h: 1 }, { v: esc(s.state), h: 2 },
+        { v: s.online ? pill("online", "ok") : "offline", h: 3 }, { v: abs(s.ts), h: 4 },
+        { v: esc(s.folder || ""), h: 5 }, { v: esc(s.matter || ""), h: 6 }] })))
+      : `<span style="color:var(--dim)">no statuses</span>`), statusList.length) +
     card(`inbox`, inboxMsgs.length ? table(
       [{ label: "seq" }, { label: "from" }, { label: "channel" }, { label: "text", wrap: true }],
       inboxMsgs.map(x => ({ _key: x.id, cells: [
@@ -364,7 +416,7 @@ async function renderOverview() {
       raw(j.metrics || {})) +
     card("watchdog", pre((j.watchdog && (j.watchdog.report || j.watchdog)) || {}) +
       raw(j.watchdog || {})) +
-    `</div>`;
+    `</div>`);
 }
 
 /* unread badge on tabs + title */
@@ -385,8 +437,24 @@ try { Object.assign(chanSeen, JSON.parse(localStorage.getItem("chanSeen") || "{}
 
 async function renderChannels() {
   const chans = await api("/api/channels");
+  const statuses = await api("/api/statuses?limit=200").catch(() => null);
   const inbox = await api("/api/inbox?limit=100").catch(() => ({ messages: [] }));
   const list = chans.channels || [];
+  $("#chan-scope").innerHTML = chans.scope === "own"
+    ? `<span class="pill warn">own view — this identity is below supervisor; grant it supervisor to see everyone</span>`
+    : `<span class="pill ok">all channels, all identities (supervisor)</span>`;
+
+  const statusList = (statuses && statuses.statuses) || [];
+  setHtml($("#status-list"), statusList.length ? table(
+    [{ label: "who" }, { label: "harness" }, { label: "state" }, { label: "on" },
+     { label: "when" }, { label: "folder" }, { label: "matter", wrap: true }],
+    statusList.map(s => ({ _key: s.pk + ":" + s.harness, cells: [
+      { v: esc(s.pseudonym), h: 0 }, { v: esc(s.harness || ""), h: 1 },
+      { v: esc(s.state), h: 2 }, { v: s.online ? pill("online", "ok") : "offline", h: 3 },
+      { v: abs(s.ts), h: 4 }, { v: esc(s.folder || ""), h: 5 },
+      { v: esc(s.matter || ""), h: 6 }] })))
+    : `<span style="color:var(--dim)">no statuses</span>`);
+
   const inboxMsgs = inbox.messages || [];
   const inboxByChan = {};
   for (const x of inboxMsgs) inboxByChan[x.channel] = (inboxByChan[x.channel] || 0) + 1;
@@ -397,19 +465,24 @@ async function renderChannels() {
     return { _key: id, cells: [
       { v: `<span class="clickable ${unread ? "unread" : ""}" data-chan="${esc(id)}">${esc(id)}</span>`, h: 0 },
       { v: esc(c.kind || ""), h: 1 },
-      { v: c.encrypted ? pill("e2e", "ok") : "", h: 2 },
-      { v: unread ? pill(unread + " new", "acc") : "", h: 3 }] };
+      { v: esc(c.name || ""), h: 2 },
+      { v: c.encrypted ? pill("e2e", "ok") : "", h: 3 },
+      { v: esc(c.epoch ?? 0), h: 4 },
+      { v: c.rotation_pending ? pill("rot", "warn") : "", h: 5 },
+      { v: esc(c.my_role || "-"), h: 6 },
+      { v: unread ? pill(unread + " new", "acc") : "", h: 7 }] };
   });
   seenKeys.set("chan-list", new Set(list.map(c => c.id)));
 
-  $("#chan-list").innerHTML = table(
-    [{ label: "channel" }, { label: "kind" }, { label: "enc" }, { label: "inbox" }], chanRows);
-  $("#inbox-list").innerHTML = inboxMsgs.length ? table(
+  setHtml($("#chan-list"), table(
+    [{ label: "channel" }, { label: "kind" }, { label: "name" }, { label: "enc" },
+     { label: "ep" }, { label: "rot" }, { label: "role" }, { label: "inbox" }], chanRows));
+  setHtml($("#inbox-list"), inboxMsgs.length ? table(
     [{ label: "seq" }, { label: "from" }, { label: "channel" }, { label: "text", wrap: true }],
     inboxMsgs.map(x => ({ _key: x.id, cells: [
       { v: esc(x.seq), h: 0 }, { v: esc(x.pseudonym || ""), h: 1 },
       { v: esc(x.channel || ""), h: 2 }, { v: esc((x.text || "").slice(0, 120)), h: 3 }] })))
-    : `<span style="color:var(--dim)">inbox empty</span>`;
+    : `<span style="color:var(--dim)">inbox empty</span>`);
 
   if (channel) {
     $("#chan-title").textContent = channel;
@@ -428,21 +501,58 @@ async function renderChannels() {
       const last = buf.length ? buf[buf.length - 1].seq : after;
       if (last > after) chanSeen[channel] = last;
       localStorage.setItem("chanSeen", JSON.stringify(chanSeen));
-      $("#chan-msgs").innerHTML = buf.length ? table(
-        [{ label: "seq" }, { label: "when" }, { label: "from" }, { label: "text", wrap: true }],
-        buf.map(x => ({ _key: x.seq, _cls: x.seq > after ? "flash-row" : "", cells: [
-          { v: esc(x.seq), h: 0 }, { v: rel(x.ts), h: 1 },
-          { v: esc(x.pseudonym || x.sender?.slice(0, 8) || "") + (x.encrypted ? " " + pill("e2e", "ok") : "")
-            + (x.verified ? "" : " " + pill("unverified", "bad")), h: 2 },
-          { v: esc((x.thread_of ? "↳ " : "") + (x.text || "")), h: 3 }] })))
-        : `<span style="color:var(--dim)">no messages</span>`;
+      setHtml($("#chan-msgs"), buf.length ? table(
+        [{ label: "seq" }, { label: "time" }, { label: "ago" }, { label: "from" },
+         { label: "thread" }, { label: "text", wrap: true }],
+        threadRows(buf, after))
+        : `<span style="color:var(--dim)">no messages</span>`, true);
     }
     const info = await api(`/api/channels/${encodeURIComponent(channel)}/info`).catch(() => null);
     $("#chan-info").innerHTML = info
       ? card("channel info", kv([
           ["members", (info.members || []).length], ["encrypted", (info.channel || info).encrypted],
-        ]) + raw(info)) : "";
+          ["kind", (info.channel || info).kind || ""], ["epoch", (info.channel || info).epoch ?? 0],
+        ]) + (((info.members || []).length) ? table(
+          [{ label: "role" }, { label: "who" }, { label: "key" }],
+          info.members.map(m => ({ _key: m.pk, cells: [
+            { v: esc(m.role), h: 0 }, { v: esc(m.pseudonym), h: 1 },
+            { v: esc(String(m.pk || "").slice(0, 16)) + "…", h: 2 }] }))) : "") + raw(info)) : "";
   }
+}
+
+/* Messages as threads: each root in seq order, its replies indented under it,
+   replies whose root is out of the buffer grouped at the end. */
+function threadRows(buf, after) {
+  const byRoot = {};
+  const roots = [];
+  const have = new Set(buf.map(x => x.id));
+  for (const x of buf) {
+    if (x.thread_of) (byRoot[x.thread_of] = byRoot[x.thread_of] || []).push(x);
+    else roots.push(x);
+  }
+  const orphanRoots = Object.keys(byRoot).filter(id => !have.has(id));
+  const ordered = [];
+  const push = x => ordered.push(x);
+  for (const r of roots) {
+    push(r);
+    for (const q of byRoot[r.id] || []) push(q);
+  }
+  for (const id of orphanRoots) for (const q of byRoot[id]) push(q);
+  return ordered.map(x => {
+    const isReply = !!x.thread_of;
+    const rootCount = !isReply && byRoot[x.id] ? byRoot[x.id].length : 0;
+    const text = x.encrypted && x.text == null ? "(encrypted)" : (x.text || "");
+    const threadCell = isReply
+      ? `↳ ${esc(String(x.thread_of).slice(0, 10))}`
+      : (rootCount ? pill(rootCount + (rootCount === 1 ? " reply" : " replies"), "acc") : "");
+    return { _key: x.seq, _cls: (x.seq > after ? "flash-row" : "") + (isReply ? " thread-row" : ""), cells: [
+      { v: esc(x.seq), h: 0 }, { v: abs(x.ts), h: 1 }, { v: rel(x.ts), h: 2 },
+      { v: esc(x.pseudonym || x.sender?.slice(0, 8) || "") + (x.encrypted ? " " + pill("e2e", "ok") : "")
+        + (x.verified ? "" : " " + pill("unverified", "bad"))
+        + ((x.attachments || []).length ? " " + pill((x.attachments.length) + "f", "") : ""), h: 3 },
+      { v: threadCell, h: 4 },
+      { v: esc(text), h: 5 }] };
+  });
 }
 
 /* ---------------- board ---------------- */
@@ -455,11 +565,13 @@ async function renderBoard() {
   const groups = {};
   for (const c of list) (groups[c.state] = groups[c.state] || []).push(c);
   const board = Object.entries(groups).map(([s, cs]) =>
-    card(`${esc(s)}`, table(
-      [{ label: "id" }, { label: "title", wrap: true }, { label: "lane" }, { label: "holder" }],
+    card(`${statePill(s)} ${esc(s)}`, table(
+      [{ label: "id" }, { label: "title", wrap: true }, { label: "lane" },
+       { label: "holder" }, { label: "updated" }],
       rows(`board-${s}`, cs, c => c.id, [
         c => esc(c.id), c => esc(c.title || ""), c => esc(c.lane || ""),
-        c => esc(c.holder || c.holder_pk || c.agent_name || ""),
+        c => esc(String(c.holder || c.holder_pk || c.agent_name || "").slice(0, 8)),
+        c => rel(c.updated),
       ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))), cs.length)).join("") ||
     `<div class="card"><span style="color:var(--dim)">no cards${state ? " in this state" : ""}</span></div>`;
 
@@ -476,7 +588,8 @@ async function renderBoard() {
       ((n.notes) || []).map(x => ({ _key: x.id, cells: [
         { v: esc(x.id), h: 0 }, { v: esc(x.title || ""), h: 1 }] }))) || "no matches", (n.notes || []).length);
   }
-  $("#board-dyn").innerHTML = `<div class="grid">${board}${sprint}${notes}</div>`;
+  setHtml($("#board-dyn"),
+    `<div class="board-cols">${board}</div><div class="grid">${sprint}${notes}</div>`);
 }
 
 /* ---------------- work ---------------- */
@@ -523,19 +636,25 @@ async function renderWork() {
       ]) + raw(rec));
   }
 
-  $("#work-dyn").innerHTML = `<div class="grid">` +
+  setHtml($("#work-dyn"), `<div class="grid">` +
     card("status", status.error ? errBox(status.error) : machine +
       kv([["jobs", m ? m.jobs : "?"], ["running scopes", (rep.scopes || []).length],
         ["quiet", m && m.quiet ? "open" : "none"], ["paused", m && m.paused ? "yes" : "no"]]) +
       Object.entries(counts).filter(([, n]) => n).map(([s, n]) => pill(`${s} ${n}`, s)).join("")) +
     card(`tasks`, tasks.error ? errBox(tasks.error) :
-      table([{ label: "id" }, { label: "state" }, { label: "title", wrap: true },
-        { label: "age" }, { label: "command", wrap: true }],
+      table([{ label: "id" }, { label: "state" }, { label: "kind" }, { label: "tier" },
+        { label: "title", wrap: true }, { label: "agent" }, { label: "wt" },
+        { label: "age" }, { label: "exit" }, { label: "command", wrap: true }],
         rows("work-tasks", list, t => t.id + ":" + t.state, [
           t => `<span class="clickable" data-task="${esc(t.id)}">${esc(t.id)}</span>`,
           t => statePill(t.state),
+          t => esc(t.kind || ""),
+          t => esc(t.tier || ""),
           t => esc(t.title || ""),
+          t => esc(t.agent_name || t.agent || ""),
+          t => esc(t.weight ?? ""),
           t => rel(t.queued_ms),
+          t => esc(t.status ?? ""),
           t => esc((t.command || []).join(" ")),
         ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))), list.length) +
     card(`scopes`, scopes.error ? errBox(scopes.error) : pre(scopes.scopes || scopes) + raw(scopes)) +
@@ -548,7 +667,7 @@ async function renderWork() {
           e => esc(e.actor_name || e.actor || ""), e => esc(e.detail || ""),
         ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))), events.length) +
     card("settings", settings.error ? errBox(settings.error) : pre(settings.settings || settings) + raw(settings)) +
-    detail + `</div>`;
+    detail + `</div>`);
 }
 
 /* ---------------- scheduler ---------------- */
@@ -561,7 +680,7 @@ async function renderSched() {
     api("/api/sched/watchdog").catch(e => ({ error: String(e) })),
     api("/api/sched/notices?limit=40").catch(e => ({ error: String(e) })),
   ]);
-  $("#sched").innerHTML = `<div class="grid">` +
+  setHtml($("#sched"), `<div class="grid">` +
     card("timers", timers.error ? errBox(timers.error) :
       table([{ label: "id" }, { label: "owner" }, { label: "raw", wrap: true }],
         rows("sched-timers", timers.timers || [], t => t.id || t.seq || JSON.stringify(t), [
@@ -588,7 +707,7 @@ async function renderSched() {
           n => esc(n.subject || ""), n => esc(n.text || ""),
         ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))) || "none",
       (notices.notices || []).length) +
-    `</div>`;
+    `</div>`);
 }
 
 /* ---------------- delivery ---------------- */
@@ -598,7 +717,7 @@ async function renderDelivery() {
     api("/api/files/heartbeats").catch(e => ({ error: String(e) })),
   ]);
   const now = beats.now_ms || Date.now();
-  $("#delivery").innerHTML = `<div class="grid">` +
+  setHtml($("#delivery"), `<div class="grid">` +
     card("capabilities", caps.error ? errBox(caps.error) : pre(caps)) +
     card("heartbeats", beats.error ? errBox(beats.error) :
       table([{ label: "pk" }, { label: "mechanism" }, { label: "age" }],
@@ -609,7 +728,7 @@ async function renderDelivery() {
             pill(secs(b.age_s * 1000), b.age_s < 1800 ? "warn" : "bad")),
         ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))) || "none",
       (beats.heartbeats || []).length) +
-    `</div>`;
+    `</div>`);
 }
 
 /* ---------------- logs ---------------- */
@@ -647,7 +766,9 @@ const MAIN = $("#main");
 const SHELLS = {
   channels: `<div class="split">
     <div style="display:grid;gap:10px">
+      <div id="chan-scope"></div>
       <div class="card"><h3>channels</h3><div id="chan-list"></div></div>
+      <div class="card"><h3>statuses</h3><div id="status-list"></div></div>
       <div class="card"><h3>inbox</h3><div id="inbox-list"></div></div>
     </div>
     <div class="card"><h3 id="chan-title">messages</h3><div id="chan-info"></div><div id="chan-msgs"><p style="color:var(--dim)">select a channel on the left</p></div></div>

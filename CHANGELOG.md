@@ -8,6 +8,31 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Stalker UI rework: table-first layout — wide cards, denser columns for every list (channels with
+  kind/name/epoch/role/rotation, messages with absolute+relative time, thread root, reply count
+  and attachments, work tasks with kind/tier/agent/weight/exit, statuses with the update time),
+  a kanban board (one column per card state), and a scroll-preserving render loop: re-renders no
+  longer reset the scroll position of any table, and the message view sticks to the bottom while
+  it was at the bottom.
+- Observability ingestion: `/metrics` in Prometheus text format (daemon up, cards and work tasks
+  by state, machine gauges, statuses, online count) and `/api/export/messages?after=<seq>` NDJSON
+  with the global seq as cursor, for Grafana/Prometheus and Splunk/Elasticsearch respectively.
+
+- `agora stalker` (BETA, alias: `watch`; crate `agora-stalker`, merged from the
+  `vibe/agora-watch` worktree): a read-only watcher web app for a running daemon — every
+  channel and its messages with threads grouped, every status, the board, notes, work queue,
+  scheduler, delivery and files, live in the browser. It acts with the current folder's
+  identity (the watcher's earlier default, the Agora home, was the reason it showed no
+  channels: its identity was a member of none). With a supervisor-or-above identity it shows
+  everything from everyone through new oversight reads; with a worker identity it falls back to
+  the own view and says so. Encrypted channel bodies stay opaque without the channel key.
+
+- Oversight reads for a supervisor or above: `Req::AllChannels`, `Req::AllMessages`
+  (`chat::read_any`), `Req::AllStatuses` (`status::all_statuses`), store
+  `all_channels` / `read_channel_any` / `all_statuses`. They read any plaintext channel
+  without membership, and every status row; end-to-end-encrypted bodies are never decrypted
+  for a non-member.
+
 - `agora wait`: block until unacked messages arrive, without a timeout. One connection, a loop of
   the daemon's event-driven `InboxWait` (each round at most `MAX_WAIT_MS`), the cursor of each
   round feeding the next, so an agent neither polls nor sleeps: the command returns the moment a

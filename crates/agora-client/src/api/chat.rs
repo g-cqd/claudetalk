@@ -176,6 +176,29 @@ pub async fn read(ctx: &Ctx, a: ReadParams) -> Result<Out, ClientError> {
     })
 }
 
+/// Supervisor or above: messages of any channel, member or not (the stalker's
+/// oversight read). Encrypted channels the caller has no key for render with a
+/// null `text`; the daemon returns the stored ciphertext, and only a member
+/// (or a caller holding the wrapped key) can open it.
+pub async fn read_any(ctx: &Ctx, a: ReadParams) -> Result<Out, ClientError> {
+    let mut client = Client::connect(ctx).await?;
+    let Reply::Messages { messages } = client
+        .call(Req::AllMessages {
+            channel: a.channel,
+            after: a.after,
+            limit: a.limit,
+        })
+        .await?
+    else {
+        return Err(ClientError::UnexpectedReply);
+    };
+    let (rendered, text) = render(&mut client, ctx, messages).await?;
+    Ok(Out {
+        json: json!({"messages": rendered, "scope": "all"}),
+        text,
+    })
+}
+
 /// `inbox`. Without `--wait`, `--after` still selects messages past the cursor: `Inbox`
 /// has no cursor field, so that case uses `InboxWait` with `timeout_ms: 0`, which answers
 /// at once instead of waiting.

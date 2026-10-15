@@ -21,6 +21,7 @@ mod cmd_mcp;
 mod cmd_org;
 mod cmd_run_agent;
 mod cmd_sched;
+mod cmd_stalker;
 mod cmd_work;
 mod cmd_work_run;
 mod install;
@@ -72,6 +73,10 @@ pub enum Cmd {
     /// MCP server for agent harnesses: stdio by default, `--http ADDR` for HTTP,
     /// `token` to manage the HTTP bearer tokens.
     Mcp(McpArgs),
+    /// Serve the all-seeing read-only watcher web app (BETA; alias: `agora watch`).
+    /// With a supervisor-or-above identity it shows everything from everyone.
+    #[command(alias = "watch")]
+    Stalker(StalkerArgs),
     /// Stop the running daemon (no-op when none runs; never spawns one).
     Stop,
     /// Create this folder's identity and register it (--owner: bootstrap the owner).
@@ -227,13 +232,14 @@ async fn dispatch(ctx: &Ctx, cmd: Cmd) -> Result<Out, CliError> {
     match cmd {
         Cmd::Daemon(_)
         | Cmd::Mcp(_)
+        | Cmd::Stalker(_)
         | Cmd::Hook(_)
         | Cmd::Install(_)
         | Cmd::Uninstall(_)
         | Cmd::RunAgent(_)
         | Cmd::Work(_)
         | Cmd::Supervise { .. } => Err(CliError::Usage(
-            "daemon, mcp, hook, install, uninstall, run-agent, work and _supervise are handled before dispatch"
+            "daemon, mcp, stalker, hook, install, uninstall, run-agent, work and _supervise are handled before dispatch"
                 .into(),
         )),
         Cmd::Stop => cmd_org::stop(ctx).await,
@@ -370,6 +376,7 @@ fn main() -> ExitCode {
             "--http cannot be combined with `mcp token`".into(),
         )),
         Cmd::Mcp(a) => return finish_server("mcp", cmd_mcp::run(home, a)),
+        Cmd::Stalker(a) => return finish_server("stalker", cmd_stalker::run(home, a)),
         Cmd::Hook(a) => return cmd_hook::run(home, a),
         Cmd::RunAgent(a) => return cmd_run_agent::run(home, a),
         Cmd::Work(a) => return cmd_work::run(home, json, a),

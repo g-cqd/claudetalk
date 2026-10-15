@@ -97,6 +97,20 @@ pub async fn statuses(ctx: &Ctx) -> Result<Out, ClientError> {
     })
 }
 
+/// Supervisor or above: every status row, most recent first, with the online
+/// flags (the stalker's oversight read). Refused for a worker.
+pub async fn all_statuses(ctx: &Ctx) -> Result<Out, ClientError> {
+    let mut client = Client::connect(ctx).await?;
+    let Reply::Statuses { statuses } = client.call(Req::AllStatuses).await? else {
+        return Err(ClientError::UnexpectedReply);
+    };
+    let text = status_text(&statuses);
+    Ok(Out {
+        json: serde_json::json!({ "statuses": statuses, "scope": "all" }),
+        text,
+    })
+}
+
 /// One line per row: `pseudonym  harness  state  online  folder  matter`.
 /// Every field is other agents' text except the online flag, so the caller
 /// must treat the whole line as untrusted data.

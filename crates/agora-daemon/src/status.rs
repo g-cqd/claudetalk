@@ -52,6 +52,25 @@ pub async fn handle(sh: &Shared, conn: &Conn, req: Req) -> Result<Reply, ErrorBo
                 .collect();
             Ok(Reply::Statuses { statuses })
         }
+        Req::AllStatuses => {
+            let me = conn.pubkey;
+            let rows = sh
+                .reader
+                .exec(move |s| s.all_statuses(&me))
+                .await
+                .map_err(daemon_error)?;
+            let online: BTreeSet<String> = sh
+                .presence
+                .online()
+                .into_iter()
+                .map(|pk| hex(&pk))
+                .collect();
+            let statuses = rows
+                .iter()
+                .map(|r| view(r, online.contains(&r.pk)))
+                .collect();
+            Ok(Reply::Statuses { statuses })
+        }
         _ => Err(unrouted()),
     }
 }

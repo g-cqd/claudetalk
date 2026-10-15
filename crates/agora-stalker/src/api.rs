@@ -4,7 +4,7 @@
 //! web app shows exactly what the CLI's `--json` prints.
 
 use crate::files;
-use agora_client::api::{board, chat, org, sched, work};
+use agora_client::api::{board, chat, org, sched, status, work};
 use agora_client::error::ClientError;
 use agora_client::{Ctx, Out};
 use agora_sched::model::{LeaseKind, TaskFilter, TaskState};
@@ -137,8 +137,40 @@ async fn overview(State(ctx): State<Arc<Ctx>>) -> Response {
     .into_response()
 }
 
+/// The oversight read of `verb`, falling back to the own-view `fallback` for a
+/// `Forbidden` (an identity below supervisor). The result carries `scope`:
+/// `"all"` or `"own"`, so the page can say which one it is showing.
+async fn all_or_own(
+    verb: impl std::future::Future<Output = Result<Out, ClientError>>,
+    fallback: impl std::future::Future<Output = Result<Out, ClientError>>,
+) -> Result<Out, ClientError> {
+    match verb.await {
+        Ok(mut out) => {
+            if let Value::Object(map) = &mut out.json {
+                map.insert("scope".into(), Value::String("all".into()));
+            }
+            Ok(out)
+        }
+        Err(ClientError::Remote(ref e)) if is_forbidden(e) => {
+            let mut out = fallback.await?;
+            if let Value::Object(map) = &mut out.json {
+                map.insert("scope".into(), Value::String("own".into()));
+            }
+            Ok(out)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// The daemon answers a role refusal with `Forbidden: ...`.
+fn is_forbidden(e: &agora_proto::ErrorBody) -> bool {
+    matches!(e.code, agora_proto::ErrorCode::Forbidden)
+}
+
 async fn channels(State(ctx): State<Arc<Ctx>>) -> Response {
-    wrap(org::channel_list(&ctx).await)
+    let verb = org::all_channels(&ctx);
+    let fallback = org::channel_list(&ctx);
+    wrap(all_or_own(verb, fallback).await)
 }
 
 async fn channel_info(State(ctx): State<Arc<Ctx>>, Path(id): Path<String>) -> Response {
@@ -147,17 +179,21 @@ async fn channel_info(State(ctx): State<Arc<Ctx>>, Path(id): Path<String>) -> Re
 
 async fn messages(State(ctx): State<Arc<Ctx>>, Path(id): Path<String>, uri: Uri) -> Response {
     let q = parse_query(&uri);
-    wrap(
-        chat::read(
-            &ctx,
-            chat::ReadParams {
-                channel: id,
-                after: q_i64(&q, "after", 0),
-                limit: q_i64(&q, "limit", 50).min(500),
-            },
-        )
-        .await,
-    )
+    let p = chat::ReadParams {
+        channel: id,
+        after: q_i64(&q, "after", 0),
+        limit: q_i64(&q, "limit", 50).min(500),
+    };
+    let verb = chat::read_any(&ctx, p.clone());
+    let fallback = chat::read(&ctx, p);
+    wrap(all_or_own(verb, fallback).await)
+}
+
+/// Every status with a supervisor identity, else the own view.
+async fn statuses(State(ctx): State<Arc<Ctx>>) -> Response {
+    let verb = status::all_statuses(&ctx);
+    let fallback = status::statuses(&ctx);
+    wrap(all_or_own(verb, fallback).await)
 }
 
 async fn inbox(State(ctx): State<Arc<Ctx>>, uri: Uri) -> Response {
@@ -354,15 +390,214 @@ async fn index() -> Response {
         .into_response()
 }
 
+/// `/metrics`: Prometheus text format (version 0.0.4), built from the same
+/// read verbs the page uses, so Grafana/Prometheus can scrape Agora. A read
+/// that fails skips its series instead of failing the scrape; the daemon-down
+/// case still answers, with `agora_up 0`.
+async fn prometheus(State(ctx): State<Arc<Ctx>>) -> Response {
+    let mut out = String::new();
+    let stats = files::stats(&ctx.paths);
+    let up = stats
+        .get("daemon_up")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    out.push_str("# TYPE agora_up gauge\nagora_up ");
+    out.push_str(if up { "1\n" } else { "0\n" });
+
+    let card_states = board::card_list(
+        &ctx,
+        board::CardListParams {
+            state: None,
+            lane: None,
+            limit: 500,
+        },
+    )
+    .await;
+    out.push_str("# TYPE agora_cards gauge\n");
+    match card_states {
+        Ok(o) => {
+            let mut counts: std::collections::BTreeMap<String, i64> = Default::default();
+            if let Some(cards) = o.json.get("cards").and_then(Value::as_array) {
+                for c in cards {
+                    if let Some(state) = c.get("state").and_then(Value::as_str) {
+                        *counts.entry(state.to_string()).or_default() += 1;
+                    }
+                }
+            }
+            for (state, n) in counts {
+                out.push_str(&format!(
+                    "agora_cards{{state=\"{}\"}} {n}\n",
+                    escape_label(&state)
+                ));
+            }
+        }
+        Err(_) => out.push_str("# agora_cards unavailable\n"),
+    }
+
+    if let Ok(w) = work::status(&ctx, None).await {
+        let report = w.json.get("report");
+        out.push_str("# TYPE agora_work_tasks gauge\n");
+        if let Some(counts) = report
+            .and_then(|r| r.get("counts"))
+            .and_then(Value::as_object)
+        {
+            for (state, n) in counts {
+                if let Some(n) = n.as_i64() {
+                    out.push_str(&format!(
+                        "agora_work_tasks{{state=\"{}\"}} {n}\n",
+                        escape_label(state)
+                    ));
+                }
+            }
+        }
+        if let Some(m) = report.and_then(|r| r.get("machine")) {
+            for (name, key, mul) in [
+                ("agora_machine_memory_used_kib", "memory_used_kib", 1.0),
+                ("agora_machine_memory_budget_kib", "memory_budget_kib", 1.0),
+                ("agora_machine_load", "load", 1.0),
+                ("agora_machine_idle_pct", "idle", 1.0),
+                ("agora_machine_jobs", "jobs", 1.0),
+            ] {
+                if let Some(v) = m.get(key).and_then(Value::as_f64) {
+                    out.push_str(&format!("# TYPE {name} gauge\n{name} {}\n", v * mul));
+                }
+            }
+        }
+    }
+
+    let status_read = all_or_own(status::all_statuses(&ctx), status::statuses(&ctx)).await;
+    out.push_str("# TYPE agora_statuses gauge\n");
+    match status_read {
+        Ok(o) => {
+            let mut counts: std::collections::BTreeMap<String, i64> = Default::default();
+            let mut online = 0i64;
+            if let Some(rows) = o.json.get("statuses").and_then(Value::as_array) {
+                for s in rows {
+                    if let Some(state) = s.get("state").and_then(Value::as_str) {
+                        *counts.entry(state.to_string()).or_default() += 1;
+                    }
+                    if s.get("online").and_then(Value::as_bool).unwrap_or(false) {
+                        online += 1;
+                    }
+                }
+            }
+            for (state, n) in counts {
+                out.push_str(&format!(
+                    "agora_statuses{{state=\"{}\"}} {n}\n",
+                    escape_label(&state)
+                ));
+            }
+            out.push_str(&format!(
+                "# TYPE agora_online gauge\nagora_online {online}\n"
+            ));
+        }
+        Err(_) => out.push_str("# agora_statuses unavailable\n"),
+    }
+
+    match all_or_own(org::all_channels(&ctx), org::channel_list(&ctx)).await {
+        Ok(o) => {
+            let n = o
+                .json
+                .get("channels")
+                .and_then(Value::as_array)
+                .map(|a| a.len())
+                .unwrap_or(0);
+            out.push_str(&format!(
+                "# TYPE agora_channels gauge\nagora_channels {n}\n"
+            ));
+        }
+        Err(_) => out.push_str("# agora_channels unavailable\n"),
+    }
+
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        out,
+    )
+        .into_response()
+}
+
+/// A Prometheus label value: backslash, quote and newline escaped.
+fn escape_label(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+/// `/api/export/messages?after=N`: every message with global seq > N, merged
+/// across all channels in seq order, one JSON object per line (NDJSON). The
+/// ingestion feed for Splunk/Elasticsearch: pull with the last seq as the next
+/// `after`. Supervisor identity: all channels; worker: its own. Encrypted
+/// bodies the identity cannot open export as `null` text.
+async fn export_messages(State(ctx): State<Arc<Ctx>>, uri: Uri) -> Response {
+    const MAX_LINES: usize = 1000;
+    let q = parse_query(&uri);
+    let after = q_i64(&q, "after", 0);
+    let chans = match all_or_own(org::all_channels(&ctx), org::channel_list(&ctx)).await {
+        Ok(o) => o,
+        Err(e) => return err(e),
+    };
+    let mut merged: Vec<Value> = Vec::new();
+    if let Some(channels) = chans.json.get("channels").and_then(Value::as_array) {
+        for c in channels {
+            let id = match c.get("id").and_then(Value::as_str) {
+                Some(id) => id.to_string(),
+                None => continue,
+            };
+            let read = chat::read_any(
+                &ctx,
+                chat::ReadParams {
+                    channel: id.clone(),
+                    after,
+                    limit: 500,
+                },
+            )
+            .await;
+            let Ok(o) = read else { continue };
+            if let Some(msgs) = o.json.get("messages").and_then(Value::as_array) {
+                for m in msgs {
+                    if let Value::Object(mut row) = m.clone() {
+                        row.insert("channel".into(), Value::String(id.clone()));
+                        merged.push(Value::Object(row));
+                    }
+                }
+            }
+        }
+    }
+    merged.retain(|m| m.get("seq").and_then(Value::as_i64).unwrap_or(0) > after);
+    merged.sort_by_key(|m| m.get("seq").and_then(Value::as_i64).unwrap_or(0));
+    merged.dedup_by_key(|m| m.get("seq").and_then(Value::as_i64).unwrap_or(0));
+    merged.truncate(MAX_LINES);
+    let body = merged
+        .iter()
+        .map(|m| m.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = if body.is_empty() { body } else { body + "\n" };
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/x-ndjson; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response()
+}
+
 /// The whole router. Every route is a GET; nothing writes.
 pub fn router(ctx: Arc<Ctx>) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/metrics", get(prometheus))
+        .route("/api/export/messages", get(export_messages))
         .route("/api/whoami", get(whoami))
         .route("/api/overview", get(overview))
         .route("/api/channels", get(channels))
         .route("/api/channels/{id}/info", get(channel_info))
         .route("/api/channels/{id}/messages", get(messages))
+        .route("/api/statuses", get(statuses))
         .route("/api/inbox", get(inbox))
         .route("/api/board/cards", get(cards))
         .route("/api/board/sprint", get(sprint))

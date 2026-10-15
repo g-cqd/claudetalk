@@ -20,13 +20,15 @@ pub async fn handle(sh: &Shared, conn: &Conn, req: Req) -> Result<Reply, ErrorBo
             "subscribe is handled by the connection",
         )),
         Req::Online => crate::push::online(sh, conn).await,
-        r @ (Req::StatusSet { .. } | Req::StatusClear { .. } | Req::Statuses) => {
+        r
+        @ (Req::StatusSet { .. } | Req::StatusClear { .. } | Req::Statuses | Req::AllStatuses) => {
             crate::status::handle(sh, conn, r).await
         }
         r @ (Req::PutBlob { .. }
         | Req::GetBlob { .. }
         | Req::Post { .. }
         | Req::Read { .. }
+        | Req::AllMessages { .. }
         | Req::Inbox { .. }
         | Req::Ack { .. }
         | Req::React { .. }
@@ -101,6 +103,7 @@ pub async fn handle(sh: &Shared, conn: &Conn, req: Req) -> Result<Reply, ErrorBo
         | Req::ChannelRole { .. }
         | Req::ChannelRotate { .. }
         | Req::ChannelList
+        | Req::AllChannels
         | Req::ChannelInfo { .. }
         | Req::ChannelKey { .. }
         | Req::RoleGrant { .. }

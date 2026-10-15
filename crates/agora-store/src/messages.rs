@@ -398,6 +398,32 @@ impl Store {
         Ok(out)
     }
 
+    /// Supervisor or above: messages of any channel, member or not. Encrypted
+    /// bodies are returned as stored (ciphertext); the caller decrypts only when
+    /// it holds the channel key. Same ordering and page cap as `read_channel`.
+    pub fn read_channel_any(
+        &self,
+        reader: &Pub,
+        channel: &str,
+        cursor: i64,
+        limit: i64,
+    ) -> Result<Vec<MessageRow>, StoreError> {
+        let role = active_role(&self.conn, reader)?;
+        need(role, Role::Supervisor)?;
+        let mut st = self.conn.prepare_cached(
+            "SELECT seq,id,sender,body,encrypted,epoch,channel,thread_of,ts,sig FROM messages
+             WHERE channel=? AND seq>? ORDER BY seq LIMIT ?",
+        )?;
+        let rows = st.query_map(params![channel, cursor, limit.clamp(0, MAX_PAGE)], |r| {
+            message_row(r, 0)
+        })?;
+        let mut out: Vec<MessageRow> = rows.collect::<Result<_, _>>()?;
+        for row in &mut out {
+            row.attachments = attachments_of(&self.conn, &row.id)?;
+        }
+        Ok(out)
+    }
+
     /// Unacked messages across reader's channels, oldest first, excluding reader's own.
     pub fn inbox(&self, reader: &Pub, limit: i64) -> Result<Vec<(String, MessageRow)>, StoreError> {
         // Every stored seq is at least 1, so `seq > 0` leaves the inbox unchanged.

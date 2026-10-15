@@ -24,6 +24,7 @@ dependencies = [
  "agora-mcp",
  "agora-run",
  "agora-sched",
+ "agora-stalker",
  "assert_cmd",
  "clap",
  "serde",
@@ -206,6 +207,21 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+]
+
+[[package]]
+name = "agora-stalker"
+version = "0.2.0"
+dependencies = [
+ "agora-client",
+ "agora-daemon",
+ "agora-proto",
+ "agora-sched",
+ "axum",
+ "clap",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

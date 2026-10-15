@@ -151,15 +151,38 @@ impl Store {
     /// caller must be active.
     pub fn statuses(&self, reader: &Pub) -> Result<Vec<StatusRow>, StoreError> {
         self.role_of(reader)?;
-        let mut st = self.conn.prepare_cached(
+        self.status_rows(
             "SELECT s.pk, s.harness, s.state, s.folder, s.matter, s.ts FROM statuses s
              WHERE s.pk=?1 OR EXISTS (
                  SELECT 1 FROM channel_members a
                  JOIN channel_members b ON b.channel=a.channel
                  WHERE a.pubkey=s.pk AND b.pubkey=?1)
              ORDER BY s.ts DESC, s.pk, s.harness",
-        )?;
-        let rows = st.query_map([reader.as_slice()], |r| {
+            params![reader.as_slice()],
+        )
+    }
+
+    /// Supervisor or above: every status row, most recent first. This is the
+    /// oversight read the stalker uses; a worker still gets `statuses` only.
+    pub fn all_statuses(&self, reader: &Pub) -> Result<Vec<StatusRow>, StoreError> {
+        let role = self.role_of(reader)?;
+        need(role, Role::Supervisor)?;
+        self.status_rows(
+            "SELECT s.pk, s.harness, s.state, s.folder, s.matter, s.ts FROM statuses s
+             ORDER BY s.ts DESC, s.pk, s.harness",
+            [],
+        )
+    }
+
+    /// Rows of one status query: `?1`-free SQL plus its params, mapped to
+    /// [`StatusRow`] with the pseudonym of each key.
+    fn status_rows<P: rusqlite::Params>(
+        &self,
+        sql: &str,
+        params: P,
+    ) -> Result<Vec<StatusRow>, StoreError> {
+        let mut st = self.conn.prepare_cached(sql)?;
+        let rows = st.query_map(params, |r| {
             let pk: Vec<u8> = r.get(0)?;
             Ok((
                 pk,
@@ -435,5 +458,30 @@ mod tests {
         let s = store();
         let stranger = Identity::from_seed([9; 32]);
         assert!(s.statuses(&stranger.public()).is_err());
+    }
+
+    #[test]
+    fn all_statuses_reads_every_row_for_a_supervisor_and_refuses_a_worker() {
+        let mut s = store();
+        let owner = Identity::from_seed([1; 32]);
+        let w = worker(&mut s, 5);
+        s.set_status(
+            NOW,
+            &set_op(&w, r#"{"state":"busy","harness":"codex"}"#, "n1"),
+        )
+        .unwrap();
+        // The worker sees only its own rows.
+        let own = s.statuses(&w.public()).unwrap();
+        assert_eq!(own.len(), 1);
+        // The owner (above supervisor) sees every row.
+        let all = s.all_statuses(&owner.public()).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].state, "busy");
+        assert_eq!(all[0].harness, "codex");
+        // A worker is refused the oversight read.
+        assert!(s.all_statuses(&w.public()).is_err());
+        // So is a stranger.
+        let stranger = Identity::from_seed([9; 32]);
+        assert!(s.all_statuses(&stranger.public()).is_err());
     }
 }

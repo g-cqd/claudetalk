@@ -429,6 +429,15 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Supervisor or above: every channel, member or not, in id order.
+    pub fn all_channels(&self, reader: &Pub) -> Result<Vec<ChannelInfo>, StoreError> {
+        let role = active_role(&self.conn, reader)?;
+        need(role, Role::Supervisor)?;
+        let mut stmt = self.conn.prepare(&format!("{INFO_SELECT} ORDER BY c.id"))?;
+        let rows = stmt.query_map([reader.as_slice()], info_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Info plus members (pubkey, role) sorted by pubkey. Reader must be active.
     /// Members see their channel. A Supervisor+ that is not a member sees it with
     /// my_role None (NotFound if the channel is missing). Anyone else gets

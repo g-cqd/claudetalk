@@ -1,5 +1,5 @@
 [package]
-name = "agora-watch"
+name = "agora-stalker"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,7 @@ publish = false
 agora-client = { path = "../agora-client" }
 agora-daemon = { path = "../agora-daemon" }
 agora-sched = { path = "../agora-sched" }
+agora-proto = { path = "../agora-proto" }
 axum.workspace = true
 tokio.workspace = true
 serde_json.workspace = true

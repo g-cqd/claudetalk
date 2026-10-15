@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 agora-daemon = { path = "../agora-daemon" }
+agora-stalker = { path = "../agora-stalker" }
 agora-client = { path = "../agora-client" }
 agora-sched = { path = "../agora-sched" }
 agora-run = { path = "../agora-run" }
