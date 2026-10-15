@@ -50,7 +50,7 @@ toml_edit = "=0.25.16"
 # dev only
 proptest = "1"
 # agora-mcp tests (dev-dependency) and agora-bridge's optional `opencode` feature
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 
 # panic = "unwind" (default): the daemon isolates a panicking request (catch_unwind / JoinError) instead of dying.
 [profile.release]
