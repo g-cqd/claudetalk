@@ -1,0 +1,18 @@
+[package]
+name = "agora-watch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+agora-client = { path = "../agora-client" }
+agora-daemon = { path = "../agora-daemon" }
+agora-sched = { path = "../agora-sched" }
+axum.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

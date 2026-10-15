@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agora watch</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230d1117'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%2358a6ff'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%230d1117'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #30363d;
+  --fg: #e6edf3; --dim: #8b949e; --accent: #58a6ff; --accent-dim: #1f6feb;
+  --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { scrollbar-color: var(--border) var(--bg); }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 13px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased; }
+header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center;
+  gap: 10px; padding: 8px 14px; background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+header h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .01em; }
+header h1 small { color: var(--dim); font-weight: 400; font-family: var(--mono); font-size: 11px; }
+#meta { color: var(--dim); font-family: var(--mono); font-size: 11px; }
+#meta b { color: var(--accent); font-weight: 500; }
+#conn { font-family: var(--mono); font-size: 11px; display: flex; align-items: center; gap: 6px; }
+header .spacer { flex: 1 }
+label.inline { color: var(--dim); font-size: 11.5px; display: flex; align-items: center; gap: 5px; }
+select, input[type=text], input:not([type]) { background: var(--bg); border: 1px solid var(--border);
+  color: var(--fg); border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12px;
+  transition: border-color .15s; }
+select:hover, input:hover { border-color: var(--dim); }
+select:focus-visible, input:focus-visible, button:focus-visible, .clickable:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; }
+button.act { background: var(--panel2); border: 1px solid var(--border); color: var(--fg);
+  border-radius: 6px; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer;
+  transition: border-color .15s, background .15s, transform .06s; }
+button.act:hover { border-color: var(--accent); background: var(--border); }
+button.act:active { transform: scale(.97); }
+nav { display: flex; gap: 2px; padding: 0 10px; background: var(--panel);
+  border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: thin; }
+nav button { position: relative; background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--dim); padding: 7px 13px; font: inherit; cursor: pointer; white-space: nowrap;
+  transition: color .15s, border-color .15s; }
+nav button:hover { color: var(--fg); }
+nav button.active { color: var(--fg); border-bottom-color: var(--accent); }
+nav button .badge { position: absolute; top: 3px; right: 3px; min-width: 15px; height: 15px;
+  border-radius: 8px; background: var(--accent); color: #0d1117; font-size: 10px;
+  font-family: var(--mono); line-height: 15px; padding: 0 3px; font-weight: 600; }
+main { padding: 14px; max-width: 1500px; margin: 0 auto; }
+section { display: none; }
+section.active { display: block; animation: fadein .18s ease-out; }
+@keyframes fadein { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; } }
+.grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; overflow: auto; transition: border-color .15s; }
+.card h3 { margin: 0 0 8px; font-size: 11.5px; color: var(--dim);
+  text-transform: uppercase; letter-spacing: .05em; display: flex; gap: 8px; align-items: baseline; }
+.card h3 .count { color: var(--fg); font-family: var(--mono); font-size: 11px; }
+.scroll { overflow: auto; max-height: 480px; scrollbar-width: thin; }
+table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 11.5px; }
+th, td { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--border);
+  white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+tbody tr { transition: background .12s; }
+tbody tr:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+td.wrap, th.wrap { white-space: normal; }
+.kv { font-family: var(--mono); font-size: 11.5px; }
+.kv div { padding: 1.5px 0; }
+.kv span { color: var(--dim); }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--mono); font-size: 11.5px; }
+details.raw { margin-top: 6px; }
+details.raw summary { color: var(--dim); font-size: 11px; cursor: pointer; user-select: none; }
+details.raw summary:hover { color: var(--accent); }
+.pill { display: inline-block; padding: 0 7px; border-radius: 10px; font-size: 10.5px;
+  font-family: var(--mono); border: 1px solid var(--border); color: var(--dim);
+  margin-right: 4px; white-space: nowrap; }
+.pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+.pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
+.pill.acc { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.controls { display: flex; gap: 8px; margin: 0 0 10px; flex-wrap: wrap; align-items: center; }
+.err { color: var(--bad); font-family: var(--mono); font-size: 11.5px; }
+.clickable { cursor: pointer; color: var(--accent); }
+.clickable:hover { text-decoration: underline; }
+.split { display: grid; grid-template-columns: 300px 1fr; gap: 10px; }
+@media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
+#banner { display: none; padding: 6px 14px; background: color-mix(in srgb, var(--bad) 18%, var(--bg));
+  color: var(--bad); font-family: var(--mono); font-size: 11.5px;
+  border-bottom: 1px solid var(--bad); }
+#banner.on { display: block; animation: fadein .2s; }
+#toasts { position: fixed; right: 14px; bottom: 14px; display: flex; flex-direction: column;
+  gap: 8px; z-index: 50; max-width: 380px; }
+.toast { background: var(--panel2); border: 1px solid var(--accent-dim); border-left: 3px solid var(--accent);
+  color: var(--fg); border-radius: 8px; padding: 8px 12px; font-size: 12px;
+  font-family: var(--mono); box-shadow: 0 6px 24px rgba(0,0,0,.45);
+  animation: toastin .22s ease-out; }
+.toast .t-meta { color: var(--dim); font-size: 10.5px; margin-bottom: 2px; }
+@keyframes toastin { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; } }
+tr.flash-row td { animation: rowflash 1.6s ease-out; }
+@keyframes rowflash { 0% { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+  100% { background: transparent; } }
+.meter { margin: 4px 0; }
+.meter .m-label { display: flex; justify-content: space-between; font-family: var(--mono);
+  font-size: 10.5px; color: var(--dim); margin-bottom: 2px; }
+.meter .m-label b { color: var(--fg); font-weight: 500; }
+.meter .m-track { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.meter .m-fill { height: 100%; border-radius: 3px; background: var(--accent);
+  transition: width .5s ease; }
+.meter.ok .m-fill { background: var(--ok); }
+.meter.warn .m-fill { background: var(--warn); }
+.meter.bad .m-fill { background: var(--bad); }
+.countbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: 6px 0;
+  background: var(--border); }
+.countbar span { height: 100%; transition: width .5s ease; }
+#log-view { max-height: 70vh; overflow: auto; scrollbar-width: thin; }
+.logline-error { color: var(--bad); }
+.logline-warn { color: var(--warn); }
+.logline-info { color: var(--dim); }
+.unread { font-weight: 700; }
+.thread1 td:first-child { box-shadow: inset 2px 0 0 var(--accent-dim); }
+.kbd { font-family: var(--mono); font-size: 10px; border: 1px solid var(--border);
+  border-radius: 4px; padding: 0 4px; color: var(--dim); }
+#updated { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+@media (max-width: 640px) {
+  main { padding: 8px; }
+  td, th { max-width: 200px; }
+}
+</style>
+</head>
+<body>
+<div id="banner">connection lost — retrying with backoff</div>
+<header>
+  <h1>agora watch <small id="home"></small></h1>
+  <div id="meta"></div>
+  <div class="spacer"></div>
+  <div id="conn"></div>
+  <label class="inline">refresh
+    <select id="interval">
+      <option value="1000">1s</option>
+      <option value="2000" selected>2s</option>
+      <option value="5000">5s</option>
+      <option value="10000">10s</option>
+    </select>
+  </label>
+  <button class="act" id="pause">pause</button>
+  <span id="updated"></span>
+</header>
+<nav id="tabs" role="tablist" aria-label="sections"></nav>
+<main id="main"></main>
+<div id="toasts" aria-live="polite"></div>
+<script>
+"use strict";
+
+/* ---------------- shell ---------------- */
+const TABS = [
+  ["overview", "Overview"], ["channels", "Channels"], ["board", "Board"],
+  ["work", "Work"], ["sched", "Scheduler"], ["delivery", "Delivery"], ["logs", "Logs"],
+];
+let active = "overview";
+let paused = false;
+let timer = null;
+let failures = 0;
+let hiddenTab = false;
+const store = { msgs: {}, inboxSeen: new Set(JSON.parse(sessionStorage.getItem("inboxSeen") || "[]")) };
+const seenKeys = new Map();
+
+const $ = (sel, el = document) => el.querySelector(sel);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ---------------- fetch with connection tracking ---------------- */
+async function api(path) {
+  let r;
+  try {
+    r = await fetch(path);
+  } catch (e) {
+    failures++; banner(true); throw e;
+  }
+  const j = await r.json().catch(() => ({ error: "bad json" }));
+  if (!r.ok) {
+    failures++; banner(true);
+    throw new Error(j.error || ("HTTP " + r.status));
+  }
+  if (failures > 0) { failures = 0; banner(false); }
+  return j;
+}
+function banner(on) {
+  $("#banner").classList.toggle("on", on && failures >= 2);
+  $("#conn").innerHTML = on && failures >= 2
+    ? `<span class="pill bad">disconnected</span>`
+    : `<span class="pill ok">connected</span>`;
+}
+const backoffMs = () => Number($("#interval").value) * Math.min(Math.pow(2, failures), 8);
+
+/* ---------------- helpers ---------------- */
+function card(title, body, count) {
+  const c = count !== undefined ? ` <span class="count">${esc(String(count))}</span>` : "";
+  return `<div class="card"><h3>${title}${c}</h3>${body}</div>`;
+}
+function table(headers, rows) {
+  const th = headers.map(h => `<th class="${h.wrap ? "wrap" : ""}">${esc(h.label)}</th>`).join("");
+  const tr = rows.map(r => `<tr${r._cls ? ` class="${r._cls}"` : ""}${r._key !== undefined ? ` data-key="${esc(r._key)}"` : ""}>` +
+    r.cells.map(c => `<td class="${headers[c.h].wrap ? "wrap" : ""}">${c.v}</td>`).join("") + `</tr>`).join("");
+  return `<div class="scroll"><table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></div>`;
+}
+/** Rows from plain arrays of [key, cells...], flashing keys not present last render. */
+function rows(zone, list, keyFn, cellFns) {
+  const old = seenKeys.get(zone) ?? new Set();
+  const out = list.map(item => {
+    const key = keyFn(item);
+    const cls = (old.has(key) ? "" : "flash-row ");
+    const cells = cellFns.map(fn => fn(item));
+    return { _key: key, _cls: cls.replace(/ $/, ""), cells: cells.map(v => ({ v, h: 0 })) };
+  });
+  seenKeys.set(zone, new Set(list.map(keyFn)));
+  return out;
+}
+const pill = (text, cls) => `<span class="pill ${cls}">${esc(text)}</span>`;
+function kv(pairs) {
+  return `<div class="kv">` + pairs.map(([k, v]) =>
+    `<div><span>${esc(k)}: </span>${v === undefined || v === null ? "" : esc(v)}</div>`).join("") + `</div>`;
+}
+function pre(j) { return `<pre>${esc(JSON.stringify(j, null, 1))}</pre>`; }
+function raw(j) {
+  return `<details class="raw"><summary>raw json</summary>${pre(j)}</details>`;
+}
+function rel(ts) {
+  if (!ts) return "?";
+  return `<span data-ts="${ts}">${esc(relText(ts))}</span>`;
+}
+function relText(ts) {
+  const d = Date.now() - ts;
+  if (d < 0) return "in " + secs(-d);
+  if (d < 5000) return "now";
+  return secs(d) + " ago";
+}
+function secs(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m" + (s % 60) + "s";
+  if (s < 86400) return Math.floor(s / 3600) + "h" + Math.floor((s % 3600) / 60) + "m";
+  return Math.floor(s / 86400) + "d" + Math.floor((s % 86400) / 3600) + "h";
+}
+const errBox = e => `<div class="err">${esc(String(e.message || e))}</div>`;
+function statePill(s) {
+  const cls = { done: "ok", running: "acc", failed: "bad", claimed: "warn",
+    queued: "", cancelled: "bad", doing: "acc", review: "warn", ready: "" }[s] || "";
+  return pill(s, cls);
+}
+function meter(label, valueText, frac, cls) {
+  return `<div class="meter ${cls}"><div class="m-label"><span>${esc(label)}</span><b>${esc(valueText)}</b></div>` +
+    `<div class="m-track"><div class="m-fill" style="width:${Math.min(100, Math.max(0, frac * 100)).toFixed(1)}%"></div></div></div>`;
+}
+function toast(meta, text) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.innerHTML = `<div class="t-meta">${esc(meta)}</div>${esc(text.slice(0, 200))}`;
+  $("#toasts").appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .4s"; }, 4200);
+  setTimeout(() => el.remove(), 4700);
+}
+
+/* ---------------- overview ---------------- */
+async function renderOverview() {
+  const j = await api("/api/overview");
+  const inbox = await api("/api/inbox?limit=100").catch(() => null);
+  const w = j.whoami || {};
+  $("#meta").innerHTML = `<b>${esc(w.pseudonym || "?")}</b> ${esc(w.role || "")} · ${esc((w.pubkey || "").slice(0, 12))}…`;
+  $("#home").textContent = j.files && j.files.home ? "· " + j.files.home : "";
+  const rep = j.work && j.work.report ? j.work.report : null;
+  const m = rep ? rep.machine : null;
+  const counts = rep ? rep.counts : {};
+  const files = j.files || {};
+  $("#conn").innerHTML = files.daemon_up ? pill("daemon up", "ok") : pill("daemon down", "bad");
+
+  const inboxMsgs = (inbox && inbox.messages) || [];
+  for (const msg of inboxMsgs) {
+    if (!store.inboxSeen.has(msg.id)) {
+      store.inboxSeen.add(msg.id);
+      toast(`inbox · ${msg.channel || ""} · ${msg.pseudonym || msg.from || ""}`, msg.text || "");
+    }
+  }
+  sessionStorage.setItem("inboxSeen", JSON.stringify([...store.inboxSeen].slice(-400)));
+  setUnread(inboxMsgs.length);
+
+  const cards = (j.cards && j.cards.cards) || [];
+  const byState = {};
+  for (const c of cards) byState[c.state] = (byState[c.state] || 0) + 1;
+  const tasks = (j.tasks && j.tasks.tasks) || [];
+  const notices = (j.notices && j.notices.notices) || [];
+
+  const machine = m ? [
+    meter("memory", `${(m.memory_used_kib / 1048576).toFixed(1)} / ${(m.memory_budget_kib / 1048576).toFixed(0)} GiB (${esc(m.memory)})`,
+      m.memory_used_kib / m.memory_budget_kib, m.memory_limit === "warning" ? "warn" : "ok"),
+    meter("cpu idle", `${m.idle.toFixed(0)}% (gate ${m.idle_min}%)`, m.idle / 100,
+      m.idle >= m.idle_min ? "ok" : "warn"),
+    meter("load", m.load.toFixed(2) + (m.load_gate ? " (gate)" : ` (limit ${m.load_limit})`),
+      m.load / (m.load_limit || 15), m.load_gate ? "bad" : "ok"),
+    meter("disk free", (m.disk_free_kib / 1073741824).toFixed(0) + " GiB",
+      1 - m.disk_free_kib / (500 * 1073741824), "ok"),
+  ].join("") : `<div class="err">work status unavailable</div>`;
+
+  const countColors = { queued: "var(--dim)", ready: "var(--dim)", claimed: "var(--warn)",
+    running: "var(--accent)", done: "var(--ok)", failed: "var(--bad)", cancelled: "var(--bad)" };
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const countbar = total ? `<div class="countbar">` + Object.entries(counts)
+    .filter(([, n]) => n > 0).map(([s, n]) =>
+      `<span style="width:${(n / total * 100).toFixed(1)}%;background:${countColors[s]}"></span>`).join("") +
+    `</div>` : `<div class="countbar"></div>`;
+
+  const running = rep ? (rep.running || []) : [];
+  const waiting = rep ? (rep.waiting || []) : [];
+
+  $("#overview").innerHTML = `<div class="grid">` +
+    card("identity", kv([
+      ["pseudonym", w.pseudonym], ["role", w.role], ["registered", w.registered],
+      ["owner exists", w.owner_exists], ["pubkey", w.pubkey],
+    ])) +
+    card("machine", machine +
+      kv([["jobs running", m ? m.jobs : "?"], ["cpu budget", m ? m.cpus : "?"],
+        ["quiet window", m && m.quiet ? "open" : "none"], ["admission", m && m.paused ? "paused" : "open"]])) +
+    card("work queue", countbar +
+      Object.entries(counts).filter(([, n]) => n).map(([s, n]) => pill(`${s} ${n}`, s)).join("") || "empty queue") +
+    card(`running`, running.length ? table(
+      [{ label: "id" }, { label: "title", wrap: true }, { label: "for" }],
+      running.map(t => ({ cells: [esc(t.id), esc(t.title || ""), { v: rel(t.started_ms), h: 0 }], _key: t.id })))
+      : `<span style="color:var(--dim)">no jobs running</span>`, running.length) +
+    card(`waiting`, waiting.length ? table(
+      [{ label: "id" }, { label: "title", wrap: true }, { label: "note", wrap: true }],
+      waiting.map(t => ({ cells: [esc(t.id), esc(t.title || ""), esc(t.note || t.hold || "")], _key: t.id })))
+      : `<span style="color:var(--dim)">nothing waiting</span>`, waiting.length) +
+    card(`tasks`, table(
+      [{ label: "id" }, { label: "state" }, { label: "title", wrap: true }],
+      rows("ov-tasks", tasks, t => t.id, [
+        t => `<span class="clickable" data-task="${esc(t.id)}">${esc(t.id)}</span>`,
+        t => statePill(t.state), t => esc(t.title || ""),
+      ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))), tasks.length) +
+    card(`cards`, Object.entries(byState).map(([s, n]) => pill(`${s} ${n}`, s)).join(" ") ||
+      `<span style="color:var(--dim)">no cards</span>`, cards.length) +
+    card(`inbox`, inboxMsgs.length ? table(
+      [{ label: "seq" }, { label: "from" }, { label: "channel" }, { label: "text", wrap: true }],
+      inboxMsgs.map(x => ({ _key: x.id, cells: [
+        { v: esc(x.seq), h: 0 }, { v: esc(x.pseudonym || ""), h: 1 },
+        { v: esc(x.channel || ""), h: 2 }, { v: esc((x.text || "").slice(0, 100)), h: 3 }] })))
+      : `<span style="color:var(--dim)">inbox empty</span>`, inboxMsgs.length) +
+    card(`notices`, notices.length ? table(
+      [{ label: "when" }, { label: "kind" }, { label: "subject", wrap: true }, { label: "text", wrap: true }],
+      notices.map(n => ({ _key: n.seq, cells: [
+        { v: rel(n.ts_ms), h: 0 }, { v: esc(n.kind), h: 1 },
+        { v: esc(n.subject || ""), h: 2 }, { v: esc(n.text || ""), h: 3 }] })))
+      : `<span style="color:var(--dim)">no notices</span>`, notices.length) +
+    card("store", kv([
+      ["db", (files.db_bytes / 1048576 || 0).toFixed(1) + " MiB"],
+      ["blobs", files.blob_count], ["jobs", files.job_count], ["job logs", files.job_log_count],
+      ["daemon", files.daemon_up ? "up" : "down"],
+    ])) +
+    card("metrics", pre((j.metrics && (j.metrics.report || j.metrics)) || {}) +
+      raw(j.metrics || {})) +
+    card("watchdog", pre((j.watchdog && (j.watchdog.report || j.watchdog)) || {}) +
+      raw(j.watchdog || {})) +
+    `</div>`;
+}
+
+/* unread badge on tabs + title */
+function setUnread(n) {
+  const chanBtn = $(`nav button[data-tab="channels"]`);
+  let b = chanBtn.querySelector(".badge");
+  if (n > 0) {
+    if (!b) { b = document.createElement("span"); b.className = "badge"; chanBtn.appendChild(b); }
+    b.textContent = n > 99 ? "99+" : n;
+  } else if (b) b.remove();
+  document.title = (n > 0 ? `(${n}) ` : "") + "agora watch";
+}
+
+/* ---------------- channels ---------------- */
+let channel = null;
+const chanSeen = {}; // localStorage cursors: channel -> last seq rendered
+try { Object.assign(chanSeen, JSON.parse(localStorage.getItem("chanSeen") || "{}")); } catch {}
+
+async function renderChannels() {
+  const chans = await api("/api/channels");
+  const inbox = await api("/api/inbox?limit=100").catch(() => ({ messages: [] }));
+  const list = chans.channels || [];
+  const inboxMsgs = inbox.messages || [];
+  const inboxByChan = {};
+  for (const x of inboxMsgs) inboxByChan[x.channel] = (inboxByChan[x.channel] || 0) + 1;
+
+  const chanRows = list.map(c => {
+    const id = c.id;
+    const unread = inboxByChan[id] || 0;
+    return { _key: id, cells: [
+      { v: `<span class="clickable ${unread ? "unread" : ""}" data-chan="${esc(id)}">${esc(id)}</span>`, h: 0 },
+      { v: esc(c.kind || ""), h: 1 },
+      { v: c.encrypted ? pill("e2e", "ok") : "", h: 2 },
+      { v: unread ? pill(unread + " new", "acc") : "", h: 3 }] };
+  });
+  seenKeys.set("chan-list", new Set(list.map(c => c.id)));
+
+  $("#chan-list").innerHTML = table(
+    [{ label: "channel" }, { label: "kind" }, { label: "enc" }, { label: "inbox" }], chanRows);
+  $("#inbox-list").innerHTML = inboxMsgs.length ? table(
+    [{ label: "seq" }, { label: "from" }, { label: "channel" }, { label: "text", wrap: true }],
+    inboxMsgs.map(x => ({ _key: x.id, cells: [
+      { v: esc(x.seq), h: 0 }, { v: esc(x.pseudonym || ""), h: 1 },
+      { v: esc(x.channel || ""), h: 2 }, { v: esc((x.text || "").slice(0, 120)), h: 3 }] })))
+    : `<span style="color:var(--dim)">inbox empty</span>`;
+
+  if (channel) {
+    $("#chan-title").textContent = channel;
+    const after = chanSeen[channel] ?? 0;
+    const j = await api(`/api/channels/${encodeURIComponent(channel)}/messages?limit=100&after=${after}`)
+      .catch(e => ({ error: String(e) }));
+    if (j.error) {
+      $("#chan-msgs").innerHTML = errBox(j.error);
+    } else {
+      const fresh = j.messages || [];
+      const buf = store.msgs[channel] ?? [];
+      for (const x of fresh) if (!buf.some(b => b.seq === x.seq)) buf.push(x);
+      buf.sort((a, b) => a.seq - b.seq);
+      if (buf.length > 300) buf.splice(0, buf.length - 300);
+      store.msgs[channel] = buf;
+      const last = buf.length ? buf[buf.length - 1].seq : after;
+      if (last > after) chanSeen[channel] = last;
+      localStorage.setItem("chanSeen", JSON.stringify(chanSeen));
+      $("#chan-msgs").innerHTML = buf.length ? table(
+        [{ label: "seq" }, { label: "when" }, { label: "from" }, { label: "text", wrap: true }],
+        buf.map(x => ({ _key: x.seq, _cls: x.seq > after ? "flash-row" : "", cells: [
+          { v: esc(x.seq), h: 0 }, { v: rel(x.ts), h: 1 },
+          { v: esc(x.pseudonym || x.sender?.slice(0, 8) || "") + (x.encrypted ? " " + pill("e2e", "ok") : "")
+            + (x.verified ? "" : " " + pill("unverified", "bad")), h: 2 },
+          { v: esc((x.thread_of ? "↳ " : "") + (x.text || "")), h: 3 }] })))
+        : `<span style="color:var(--dim)">no messages</span>`;
+    }
+    const info = await api(`/api/channels/${encodeURIComponent(channel)}/info`).catch(() => null);
+    $("#chan-info").innerHTML = info
+      ? card("channel info", kv([
+          ["members", (info.members || []).length], ["encrypted", (info.channel || info).encrypted],
+        ]) + raw(info)) : "";
+  }
+}
+
+/* ---------------- board ---------------- */
+async function renderBoard() {
+  const state = $("#board-state").value;
+  const sprintId = $("#sprint-id").value.trim();
+  const noteQ = $("#note-q").value.trim();
+  const cards = await api("/api/board/cards?limit=500" + (state ? `&state=${encodeURIComponent(state)}` : ""));
+  const list = (cards.cards) || [];
+  const groups = {};
+  for (const c of list) (groups[c.state] = groups[c.state] || []).push(c);
+  const board = Object.entries(groups).map(([s, cs]) =>
+    card(`${esc(s)}`, table(
+      [{ label: "id" }, { label: "title", wrap: true }, { label: "lane" }, { label: "holder" }],
+      rows(`board-${s}`, cs, c => c.id, [
+        c => esc(c.id), c => esc(c.title || ""), c => esc(c.lane || ""),
+        c => esc(c.holder || c.holder_pk || c.agent_name || ""),
+      ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))), cs.length)).join("") ||
+    `<div class="card"><span style="color:var(--dim)">no cards${state ? " in this state" : ""}</span></div>`;
+
+  let sprint = "";
+  if (sprintId) {
+    const s = await api(`/api/board/sprint?sprint=${encodeURIComponent(sprintId)}`).catch(e => ({ error: String(e) }));
+    sprint = card(`sprint ${esc(sprintId)}`, s.error ? errBox(s.error) : pre(s.summary || s) + raw(s));
+  }
+  let notes = "";
+  if (noteQ) {
+    const n = await api(`/api/board/notes?q=${encodeURIComponent(noteQ)}`).catch(e => ({ error: String(e) }));
+    notes = card("notes", n.error ? errBox(n.error) : table(
+      [{ label: "id" }, { label: "title", wrap: true }],
+      ((n.notes) || []).map(x => ({ _key: x.id, cells: [
+        { v: esc(x.id), h: 0 }, { v: esc(x.title || ""), h: 1 }] }))) || "no matches", (n.notes || []).length);
+  }
+  $("#board-dyn").innerHTML = `<div class="grid">${board}${sprint}${notes}</div>`;
+}
+
+/* ---------------- work ---------------- */
+let taskSel = null;
+async function renderWork() {
+  const states = $("#work-states").value;
+  const scope = $("#work-scope").value.trim();
+  const [status, tasks, scopes, evlog, settings] = await Promise.all([
+    api("/api/work/status").catch(e => ({ error: String(e) })),
+    api("/api/work/tasks?limit=300" + (states ? `&states=${states}` : "") + (scope ? `&scope=${encodeURIComponent(scope)}` : "")).catch(e => ({ error: String(e) })),
+    api("/api/work/scopes").catch(e => ({ error: String(e) })),
+    api("/api/work/log?limit=40" + (taskSel ? `&task=${encodeURIComponent(taskSel)}` : "")).catch(e => ({ error: String(e) })),
+    api("/api/work/settings").catch(e => ({ error: String(e) })),
+  ]);
+  const rep = status.report;
+  const m = rep ? rep.machine : null;
+  const counts = rep ? rep.counts : {};
+  const machine = m ? [
+    meter("memory", `${(m.memory_used_kib / 1048576).toFixed(1)} GiB (${esc(m.memory)})`,
+      m.memory_used_kib / m.memory_budget_kib, m.memory_limit === "warning" ? "warn" : "ok"),
+    meter("cpu idle", `${m.idle.toFixed(0)}%`, m.idle / 100, m.idle >= m.idle_min ? "ok" : "warn"),
+    meter("load", m.load.toFixed(2), m.load / (m.load_limit || 15), m.load_gate ? "bad" : "ok"),
+  ].join("") : "";
+  const list = (tasks.tasks) || [];
+  const events = (evlog.events) || [];
+
+  let detail = "";
+  if (taskSel) {
+    const t = await api(`/api/work/tasks/${encodeURIComponent(taskSel)}`).catch(e => ({ error: String(e) }));
+    const rec = t.task || t;
+    detail = card(`task ${esc(taskSel)}`, t.error ? errBox(t.error) :
+      kv([
+        ["title", rec.title], ["state", rec.state], ["kind", rec.kind], ["tier", rec.tier],
+        ["scope", rec.scope], ["author", rec.author_name || rec.author],
+        ["agent", rec.agent_name || rec.agent], ["weight", rec.weight], ["size", rec.size],
+        ["queued", rec.queued_ms ? relText(rec.queued_ms) : ""],
+        ["claimed", rec.claimed_ms ? relText(rec.claimed_ms) : ""],
+        ["started", rec.started_ms ? relText(rec.started_ms) : ""],
+        ["ended", rec.ended_ms ? relText(rec.ended_ms) : ""],
+        ["exit", rec.status], ["needs acceptance", rec.needs_acceptance],
+        ["command", (rec.command || []).join(" ")], ["cwd", rec.cwd],
+        ["digest", rec.digest ? rec.digest.slice(0, 16) + "…" : ""],
+        ["after", (rec.after || []).join(", ")], ["files", (rec.files || []).join(", ")],
+      ]) + raw(rec));
+  }
+
+  $("#work-dyn").innerHTML = `<div class="grid">` +
+    card("status", status.error ? errBox(status.error) : machine +
+      kv([["jobs", m ? m.jobs : "?"], ["running scopes", (rep.scopes || []).length],
+        ["quiet", m && m.quiet ? "open" : "none"], ["paused", m && m.paused ? "yes" : "no"]]) +
+      Object.entries(counts).filter(([, n]) => n).map(([s, n]) => pill(`${s} ${n}`, s)).join("")) +
+    card(`tasks`, tasks.error ? errBox(tasks.error) :
+      table([{ label: "id" }, { label: "state" }, { label: "title", wrap: true },
+        { label: "age" }, { label: "command", wrap: true }],
+        rows("work-tasks", list, t => t.id + ":" + t.state, [
+          t => `<span class="clickable" data-task="${esc(t.id)}">${esc(t.id)}</span>`,
+          t => statePill(t.state),
+          t => esc(t.title || ""),
+          t => rel(t.queued_ms),
+          t => esc((t.command || []).join(" ")),
+        ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))), list.length) +
+    card(`scopes`, scopes.error ? errBox(scopes.error) : pre(scopes.scopes || scopes) + raw(scopes)) +
+    card(`events${taskSel ? " · " + esc(taskSel) : ""}`, evlog.error ? errBox(evlog.error) :
+      table([{ label: "when" }, { label: "kind" }, { label: "task" }, { label: "actor" },
+        { label: "detail", wrap: true }],
+        rows("work-events", events, e => e.seq, [
+          e => rel(e.ts_ms), e => pill(e.kind, e.kind.includes("fail") ? "bad" :
+            e.kind.includes("done") ? "ok" : "acc"), e => esc(e.task || ""),
+          e => esc(e.actor_name || e.actor || ""), e => esc(e.detail || ""),
+        ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))), events.length) +
+    card("settings", settings.error ? errBox(settings.error) : pre(settings.settings || settings) + raw(settings)) +
+    detail + `</div>`;
+}
+
+/* ---------------- scheduler ---------------- */
+async function renderSched() {
+  const [timers, pools, leases, policies, watchdog, notices] = await Promise.all([
+    api("/api/sched/timers").catch(e => ({ error: String(e) })),
+    api("/api/sched/pools").catch(e => ({ error: String(e) })),
+    api("/api/sched/leases?all=1").catch(e => ({ error: String(e) })),
+    api("/api/sched/policies").catch(e => ({ error: String(e) })),
+    api("/api/sched/watchdog").catch(e => ({ error: String(e) })),
+    api("/api/sched/notices?limit=40").catch(e => ({ error: String(e) })),
+  ]);
+  $("#sched").innerHTML = `<div class="grid">` +
+    card("timers", timers.error ? errBox(timers.error) :
+      table([{ label: "id" }, { label: "owner" }, { label: "raw", wrap: true }],
+        rows("sched-timers", timers.timers || [], t => t.id || t.seq || JSON.stringify(t), [
+          t => esc(t.id || ""), t => esc(t.owner || ""),
+          t => esc(JSON.stringify(Object.entries(t).filter(([k]) => k !== "id" && k !== "owner"))),
+        ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))) || "none",
+      (timers.timers || []).length) +
+    card("pools", pools.error ? errBox(pools.error) : pre(pools.pools || pools) + raw(pools)) +
+    card("leases", leases.error ? errBox(leases.error) :
+      table([{ label: "id" }, { label: "kind" }, { label: "holder" }, { label: "raw", wrap: true }],
+        rows("sched-leases", leases.leases || [], l => l.id || l.seq || JSON.stringify(l), [
+          l => esc(l.id || ""), l => esc(l.kind || ""), l => esc(l.holder || l.holder_pk || ""),
+          l => esc(JSON.stringify(l)),
+        ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))) || "none",
+      (leases.leases || []).length) +
+    card("policies", policies.error ? errBox(policies.error) : pre(policies.policies || policies) + raw(policies)) +
+    card("watchdog", watchdog.error ? errBox(watchdog.error) :
+      pre(watchdog.report || watchdog) + raw(watchdog)) +
+    card("notices", notices.error ? errBox(notices.error) :
+      table([{ label: "when" }, { label: "kind" }, { label: "target" },
+        { label: "subject", wrap: true }, { label: "text", wrap: true }],
+        rows("sched-notices", notices.notices || [], n => n.seq, [
+          n => rel(n.ts_ms), n => esc(n.kind), n => esc(n.target || ""),
+          n => esc(n.subject || ""), n => esc(n.text || ""),
+        ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))) || "none",
+      (notices.notices || []).length) +
+    `</div>`;
+}
+
+/* ---------------- delivery ---------------- */
+async function renderDelivery() {
+  const [caps, beats] = await Promise.all([
+    api("/api/files/capabilities").catch(e => ({ error: String(e) })),
+    api("/api/files/heartbeats").catch(e => ({ error: String(e) })),
+  ]);
+  const now = beats.now_ms || Date.now();
+  $("#delivery").innerHTML = `<div class="grid">` +
+    card("capabilities", caps.error ? errBox(caps.error) : pre(caps)) +
+    card("heartbeats", beats.error ? errBox(beats.error) :
+      table([{ label: "pk" }, { label: "mechanism" }, { label: "age" }],
+        rows("beats", beats.heartbeats || [], b => b.pk + "/" + b.mechanism, [
+          b => esc(b.pk.slice(0, 16)) + "…",
+          b => esc(b.mechanism),
+          b => b.age_s < 0 ? "?" : (b.age_s < 120 ? pill(secs(b.age_s * 1000), "ok") :
+            pill(secs(b.age_s * 1000), b.age_s < 1800 ? "warn" : "bad")),
+        ]).map(r => ({ ...r, cells: r.cells.map((c, i) => ({ v: c.v, h: i })) }))) || "none",
+      (beats.heartbeats || []).length) +
+    `</div>`;
+}
+
+/* ---------------- logs ---------------- */
+async function renderLogs() {
+  const j = await api("/api/files/daemon-log?tail=" + $("#log-tail").value);
+  const view = $("#log-view");
+  const stick = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
+  const lines = (j.lines || []).map(l => {
+    let cls = "";
+    if (/\bERROR\b|panic|FAILED/i.test(l)) cls = "logline-error";
+    else if (/\bWARN\b/i.test(l)) cls = "logline-warn";
+    else if (/^\s*(INFO|DEBUG)/.test(l)) cls = "logline-info";
+    return `<div class="${cls}">${esc(l)}</div>`;
+  }).join("");
+  view.innerHTML = `<pre>${lines}</pre>`;
+  if (stick || $("#log-follow").checked) view.scrollTop = view.scrollHeight;
+  $("#log-meta").textContent = `showing ${lines ? (j.lines.length) : 0} of ${j.total_lines} lines`;
+}
+
+/* ---------------- shell + loop ---------------- */
+const RENDER = {
+  overview: renderOverview, channels: renderChannels, board: renderBoard,
+  work: renderWork, sched: renderSched, delivery: renderDelivery, logs: renderLogs,
+};
+const NAV = $("#tabs");
+for (const [id, label] of TABS) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.dataset.tab = id;
+  b.setAttribute("role", "tab");
+  b.onclick = () => select(id);
+  NAV.appendChild(b);
+}
+const MAIN = $("#main");
+const SHELLS = {
+  channels: `<div class="split">
+    <div style="display:grid;gap:10px">
+      <div class="card"><h3>channels</h3><div id="chan-list"></div></div>
+      <div class="card"><h3>inbox</h3><div id="inbox-list"></div></div>
+    </div>
+    <div class="card"><h3 id="chan-title">messages</h3><div id="chan-info"></div><div id="chan-msgs"><p style="color:var(--dim)">select a channel on the left</p></div></div>
+  </div>`,
+  board: `<div class="controls">
+      <label class="inline">state <select id="board-state">
+        <option value="">all</option>
+        ${["ready", "claimed", "doing", "review", "done"].map(s => `<option>${s}</option>`).join("")}
+      </select></label>
+      <label class="inline">sprint <input id="sprint-id" placeholder="sprint id" style="width:120px"></label>
+      <label class="inline">notes <input id="note-q" placeholder="search notes" style="width:160px"></label>
+    </div>
+    <div id="board-dyn"></div>`,
+  work: `<div class="controls">
+      <label class="inline">state <select id="work-states">
+        <option value="">all</option>
+        ${["queued", "claimed", "running", "done", "failed", "cancelled"].map(s => `<option>${s}</option>`).join("")}
+      </select></label>
+      <label class="inline">scope <input id="work-scope" placeholder="scope filter" style="width:160px"></label>
+      <button class="act" id="work-clear">clear task</button>
+    </div>
+    <div id="work-dyn"></div>`,
+  logs: `<div class="controls">
+      <label class="inline">tail <select id="log-tail">
+        <option>100</option><option selected>300</option><option>1000</option><option>5000</option>
+      </select></label>
+      <label class="inline"><input type="checkbox" id="log-follow" checked> follow</label>
+      <span id="log-meta" style="color:var(--dim);font-family:var(--mono);font-size:11px"></span>
+    </div>
+    <div class="card"><div id="log-view"></div></div>`,
+};
+for (const [id] of TABS) {
+  const s = document.createElement("section");
+  s.id = id;
+  s.setAttribute("role", "tabpanel");
+  s.innerHTML = SHELLS[id] || `<div id="${id}-dyn"></div>`;
+  MAIN.appendChild(s);
+}
+// static shell listeners (bound once, never rebound)
+document.addEventListener("click", e => {
+  const chan = e.target.closest("[data-chan]");
+  if (chan) {
+    channel = chan.dataset.chan;
+    store.msgs[channel] = [];
+    delete chanSeen[channel]; // fresh selection: pull history, not just the tail
+    localStorage.setItem("chanSeen", JSON.stringify(chanSeen));
+    $("#chan-msgs").innerHTML = `<p style="color:var(--dim)">loading…</p>`;
+    renderChannels().catch(console.error);
+    return;
+  }
+  const task = e.target.closest("[data-task]");
+  if (task) { taskSel = task.dataset.task; renderWork().catch(console.error); }
+});
+$("#board-state").onchange = () => renderBoard().catch(console.error);
+$("#sprint-id").onkeydown = e => { if (e.key === "Enter") renderBoard().catch(console.error); };
+$("#note-q").onkeydown = e => { if (e.key === "Enter") renderBoard().catch(console.error); };
+$("#work-states").onchange = () => renderWork().catch(console.error);
+$("#work-scope").onkeydown = e => { if (e.key === "Enter") renderWork().catch(console.error); };
+$("#work-clear").onclick = () => { taskSel = null; renderWork().catch(console.error); };
+$("#log-tail").onchange = () => renderLogs().catch(console.error);
+
+function select(id) {
+  active = id;
+  NAV.querySelectorAll("button").forEach(b => {
+    b.classList.toggle("active", b.dataset.tab === id);
+    b.setAttribute("aria-selected", b.dataset.tab === id);
+  });
+  MAIN.querySelectorAll("section").forEach(s =>
+    s.classList.toggle("active", s.id === id));
+  tick();
+}
+function tick() {
+  if (paused || hiddenTab) return;
+  const t0 = performance.now();
+  RENDER[active]().then(() => {
+    $("#updated").textContent = `updated ${new Date().toLocaleTimeString()} · ${(performance.now() - t0).toFixed(0)}ms`;
+  }).catch(e => {
+    if (active !== "logs" && active !== "channels") {
+      const el = $(`#${active}`) && $(`#${active}-dyn`) ? $(`#${active}-dyn`) : null;
+      if (el) el.innerHTML = errBox(e);
+    }
+  });
+}
+function arm() {
+  if (timer) clearInterval(timer);
+  timer = setInterval(tick, Number($("#interval").value));
+}
+$("#interval").onchange = arm;
+$("#pause").onclick = () => {
+  paused = !paused;
+  $("#pause").textContent = paused ? "resume" : "pause";
+  $("#updated").textContent = paused ? "paused" : "";
+  if (!paused) tick();
+};
+document.addEventListener("visibilitychange", () => {
+  hiddenTab = document.hidden;
+  if (!hiddenTab && !paused) tick();
+});
+document.addEventListener("keydown", e => {
+  if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  const n = Number(e.key);
+  if (n >= 1 && n <= TABS.length) select(TABS[n - 1][0]);
+  else if (e.key === "p") $("#pause").click();
+  else if (e.key === "r") tick();
+});
+setInterval(() => {
+  document.querySelectorAll("[data-ts]").forEach(el => {
+    el.textContent = relText(Number(el.dataset.ts));
+  });
+}, 5000);
+arm();
+select("overview");
+</script>
+</body>
+</html>

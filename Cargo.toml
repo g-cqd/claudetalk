@@ -14,6 +14,7 @@ members = [
     "crates/agora-sched",
     "crates/agora-run",
     "crates/agora-bridge",
+    "crates/agora-watch",
 ]
 
 [workspace.package]
