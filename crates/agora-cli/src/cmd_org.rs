@@ -1,10 +1,11 @@
 //! init, whoami, stop, channel *, role grant, revoke: clap args -> `agora_client::api::org` -> Out.
 
-use crate::{ChannelCmd, CliError, Ctx, InitArgs, Out, RevokeArgs, RoleCmd};
+use crate::{ChannelCmd, CliError, Ctx, InitArgs, Out, RevokeArgs, RoleCmd, StatusCmd};
 use agora_client::api::org::{
     self as api, ChannelAddParams, ChannelCreateParams, ChannelInfoParams, ChannelRemoveParams,
     ChannelRoleParams, ChannelRotateParams, InitParams, RevokeParams, RoleGrantParams,
 };
+use agora_client::api::status::{self as status_api, StatusClearParams, StatusSetParams};
 use agora_client::identity::current_folder;
 use agora_client::ops::sanitize;
 use serde_json::json;
@@ -105,4 +106,43 @@ pub async fn role(ctx: &Ctx, c: RoleCmd) -> Result<Out, CliError> {
 
 pub async fn revoke(ctx: &Ctx, a: RevokeArgs) -> Result<Out, CliError> {
     api::revoke(ctx, RevokeParams { pk: a.pk }).await
+}
+
+/// `agora status set|clear|list`. The CLI fills `harness` with "cli" and
+/// `folder` with the current folder when the caller does not set them, so the
+/// status names where the command ran.
+pub async fn status(ctx: &Ctx, c: StatusCmd) -> Result<Out, CliError> {
+    match c {
+        StatusCmd::Set {
+            state,
+            harness,
+            folder,
+            matter,
+        } => {
+            let folder = match folder {
+                Some(f) => f,
+                None => current_folder()?.to_string_lossy().into_owned(),
+            };
+            status_api::status_set(
+                ctx,
+                StatusSetParams {
+                    state,
+                    harness: Some(harness.unwrap_or_else(|| "cli".into())),
+                    folder: Some(folder),
+                    matter,
+                },
+            )
+            .await
+        }
+        StatusCmd::Clear { harness } => {
+            status_api::status_clear(
+                ctx,
+                StatusClearParams {
+                    harness: Some(harness.unwrap_or_else(|| "cli".into())),
+                },
+            )
+            .await
+        }
+        StatusCmd::List => status_api::statuses(ctx).await,
+    }
 }

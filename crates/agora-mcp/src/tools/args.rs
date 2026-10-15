@@ -58,6 +58,36 @@ impl Default for DiscoverArgs {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StatusSetArgs {
+    /// Short state you are in, e.g. online, busy, idle, away.
+    pub state: String,
+    /// Harness writing the status, e.g. codex, claude, vibe. Defaults to your client's harness.
+    #[serde(default)]
+    pub harness: Option<String>,
+    /// The folder you are working in.
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// What you are working on, e.g. a card id or a one-line task.
+    #[serde(default)]
+    pub matter: Option<String>,
+}
+
+/// No arguments: clears the row of your harness.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StatusClearArgs {
+    /// Harness whose row to clear. Defaults to your client's harness.
+    #[serde(default)]
+    pub harness: Option<String>,
+}
+
+/// No arguments.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StatusListArgs {}
+
 /// One file to attach. Give exactly one of `path` or `base64`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

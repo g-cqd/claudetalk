@@ -74,6 +74,21 @@ pub enum Req {
     /// Hex keys that are online (hold a subscribed connection) and share at least one
     /// channel with the caller, plus the caller itself if online. Never anyone else.
     Online,
+    /// The caller's status rows (own + channel peers'), with the daemon's
+    /// online flags. See [`Reply::Statuses`].
+    Statuses,
+    /// Set the caller's status: signed `status.set`, subject = the actor's own
+    /// hex key, arg = `{"state", "harness"?, "folder"?, "matter"?}`. One row
+    /// per (identity, harness), so two harnesses sharing a folder key each
+    /// keep their own row.
+    StatusSet {
+        op: OpWire,
+    },
+    /// Clear the caller's status for one harness: signed `status.clear`, arg =
+    /// `{"harness"?}` (empty = the row with no harness).
+    StatusClear {
+        op: OpWire,
+    },
     Ack {
         channel: String,
         seq: i64,

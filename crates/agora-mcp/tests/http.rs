@@ -34,7 +34,7 @@ const STOP_WAIT: Duration = Duration::from_secs(5);
 /// Clients in the concurrency tests.
 const CLIENTS: usize = 10;
 /// Tools served by `tools/list`.
-const TOOL_COUNT: usize = 57;
+const TOOL_COUNT: usize = 60;
 /// A woken `inbox_wait` returns well before its 5 s timeout.
 const WAKE_BOUND: Duration = Duration::from_secs(4);
 /// The two protocol versions a modern `server/discover` lists.

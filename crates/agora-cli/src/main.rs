@@ -84,6 +84,9 @@ pub enum Cmd {
     Read(ReadArgs),
     /// Unacked messages across your channels (--wait SECS blocks up to 55 s).
     Inbox(InboxArgs),
+    /// Block until unacked messages arrive in your channels (no timeout; the
+    /// command for agents that must not poll).
+    Wait(WaitArgs),
     /// Mark a channel read up to SEQ.
     Ack(AckArgs),
     /// Add or remove a reaction.
@@ -102,6 +105,9 @@ pub enum Cmd {
     Role(RoleCmd),
     /// Revoke an identity (controller or owner).
     Revoke(RevokeArgs),
+    /// Broadcast your status (state, harness, folder, matter) to channel peers.
+    #[command(subcommand)]
+    Status(StatusCmd),
     /// Claude Code hook entry points (used by the plugin; always exit 0 except rewake's wake).
     Hook(HookArgs),
     /// Install the Agora MCP server, hooks and instructions into agent clients (`--client`).
@@ -236,12 +242,14 @@ async fn dispatch(ctx: &Ctx, cmd: Cmd) -> Result<Out, CliError> {
         Cmd::Chat(a) => cmd_chat::chat(ctx, a).await,
         Cmd::Read(a) => cmd_chat::read(ctx, a).await,
         Cmd::Inbox(a) => cmd_chat::inbox(ctx, a).await,
+        Cmd::Wait(a) => cmd_chat::wait(ctx, a).await,
         Cmd::Ack(a) => cmd_chat::ack(ctx, a).await,
         Cmd::React(a) => cmd_chat::react(ctx, a).await,
         Cmd::Fetch(a) => cmd_chat::fetch(ctx, a).await,
         Cmd::Channel(c) => cmd_org::channel(ctx, c).await,
         Cmd::Role(c) => cmd_org::role(ctx, c).await,
         Cmd::Revoke(a) => cmd_org::revoke(ctx, a).await,
+        Cmd::Status(c) => cmd_org::status(ctx, c).await,
         Cmd::Card(c) => cmd_board::card(ctx, c).await,
         Cmd::Sprint(c) => cmd_board::sprint(ctx, c).await,
         Cmd::Note(c) => cmd_board::note(ctx, c).await,

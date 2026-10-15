@@ -25,7 +25,7 @@ const EXIT_WAIT: Duration = Duration::from_secs(5);
 
 const LEGACY: &str = "2025-11-25";
 const MODERN: &str = "2026-07-28";
-const TOOL_COUNT: usize = 57;
+const TOOL_COUNT: usize = 60;
 const PING: &str = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
 
 struct Env {
@@ -420,7 +420,7 @@ fn stdio_initialize_counter_offers_2025_11_25_for_a_version_it_does_not_speak() 
 }
 
 #[test]
-fn stdio_tools_list_offers_all_57_tools() {
+fn stdio_tools_list_offers_all_60_tools() {
     let env = Env::new();
     let mut server = env.stdio("alice");
     initialize(&mut server);

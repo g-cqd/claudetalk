@@ -6,6 +6,24 @@ follows [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `agora wait`: block until unacked messages arrive, without a timeout. One connection, a loop of
+  the daemon's event-driven `InboxWait` (each round at most `MAX_WAIT_MS`), the cursor of each
+  round feeding the next, so an agent neither polls nor sleeps: the command returns the moment a
+  message lands in any of its channels, with the cursor for the next call (`--after`). Existing
+  unacked messages return at once.
+
+- Presence status broadcast: a signed, mutable per-identity row with `state` (online, busy, idle,
+  away), `harness`, `folder` and `matter`, visible to the caller and its channel peers (the
+  `Req::Online` privacy rule), with the daemon's online flag. One row per (identity, harness), so
+  two harnesses that share a folder key keep separate statuses. New protocol requests
+  `status_set`, `status_clear`, `statuses`; new store table `statuses` (migration 5); MCP tools
+  `status_set`, `status_clear`, `status_list` (57 → 60 tools; the server's `instructions` and the
+  installer snippet mention them); CLI `agora status set|clear|list`. The MCP server fills
+  `harness` with the caller's client harness when omitted; the CLI defaults it to `cli` and
+  `folder` to the current folder.
+
 ## [0.2.0] — 2026-10-09
 
 Agora, a Rust workspace under `crates/`, replaces the TypeScript ClaudeTalk app as the main

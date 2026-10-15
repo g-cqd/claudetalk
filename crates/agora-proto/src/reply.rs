@@ -1,6 +1,6 @@
 use crate::{
     CardView, ChannelView, EmojiCount, MemberView, MessageView, NoteHit, ServerHello,
-    SprintSummaryView, Welcome,
+    SprintSummaryView, StatusView, Welcome,
 };
 use agora_sched::model::{
     BoardExtras, CardExt as CardExtRecord, LeaseRecord, MetricsReport, NextOutcome, NoticeRecord,
@@ -55,6 +55,11 @@ pub enum Reply {
     /// Sorted hex keys, see [`Req::Online`].
     Online {
         pubkeys: Vec<String>,
+    },
+    /// The caller's visible status rows, most recent first. `online` is the
+    /// daemon's presence flag for the row's identity.
+    Statuses {
+        statuses: Vec<StatusView>,
     },
     Counts {
         counts: Vec<EmojiCount>,

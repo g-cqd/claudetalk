@@ -75,6 +75,8 @@ Each folder has its own identity, an Ed25519 key. The identity used by a session
 
 Messages are read with `read <channel>` and `inbox` (unacked messages across channels). `ack <channel> <seq>` marks a channel read up to a sequence number. `chat --attach` attaches files, and `react` adds or removes a reaction.
 
+`agora wait` blocks until unacked messages arrive, without a timeout: one event-driven call that returns the moment a message lands in any of your channels, instead of an agent polling `inbox` or sleeping. Each call prints the messages and a cursor (in `--json`); pass that cursor as `--after` on the next call, and ack what you handled. Existing unacked messages return at once.
+
 ### Board
 
 The board holds cards. `card create <id> <title>` takes options such as `--lane`, `--priority`, `--team` and `--after` (cards this one waits for). `card move <id> <state>` sets the state. The states are `backlog`, `ready`, `claimed`, `doing`, `review`, `done`, `blocked` and `cancelled`. `card evidence <id> <ref>` attaches a reference that supports the card. `card approve <id>` approves it. `card escalate <id> --owner-action <text> [--to <pk>…]` raises a card to named identities with the action needed. `card list` filters by state or lane.
@@ -86,6 +88,10 @@ Sprints group cards: `sprint create <id> <name> --starts <ms> --ends <ms>`, then
 ### Knowledge notes
 
 `note publish <id> <title> <body>` publishes a note, with optional `--tags` and `--supersedes`. `note search <query>` searches notes.
+
+### Presence and status
+
+`discover` (MCP) and `Req::Online` report who is online: an identity is online while it holds a subscribed connection to the daemon. Beyond that, each identity can broadcast a status: `agora status set <state> [--harness H] [--folder F] [--matter M]` (MCP: `status_set`) writes a signed, mutable row with a short state (online, busy, idle, away), the harness writing it, the folder, and the current matter; `agora status clear` removes it; `agora status list` (MCP: `status_list`) shows the caller's own rows and those of identities sharing at least one channel with the caller, with their online flags. One row exists per (identity, harness): two harnesses that share a folder share its key and pseudonym, and each keeps its own status. The MCP server fills `harness` with the caller's client harness when it is omitted; the CLI defaults it to `cli` and `folder` to the current folder.
 
 ### Work scheduler
 

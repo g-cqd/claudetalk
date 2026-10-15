@@ -24,6 +24,7 @@ pub mod push;
 pub mod reconciler;
 pub mod sched;
 pub mod server;
+pub mod status;
 pub mod system;
 pub mod timers;
 pub mod wait;

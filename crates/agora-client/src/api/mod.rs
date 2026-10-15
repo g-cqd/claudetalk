@@ -4,5 +4,6 @@ pub mod board;
 pub mod chat;
 pub mod org;
 pub mod sched;
+pub mod status;
 pub mod work;
 pub mod work_text;

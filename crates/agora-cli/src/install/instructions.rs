@@ -58,6 +58,9 @@ mod tests {
         "work_accept",
         "work_run",
         "work_wait",
+        "status_set",
+        "status_clear",
+        "status_list",
     ];
 
     /// The text between backticks in `text`, every second span of the split.

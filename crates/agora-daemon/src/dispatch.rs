@@ -20,6 +20,9 @@ pub async fn handle(sh: &Shared, conn: &Conn, req: Req) -> Result<Reply, ErrorBo
             "subscribe is handled by the connection",
         )),
         Req::Online => crate::push::online(sh, conn).await,
+        r @ (Req::StatusSet { .. } | Req::StatusClear { .. } | Req::Statuses) => {
+            crate::status::handle(sh, conn, r).await
+        }
         r @ (Req::PutBlob { .. }
         | Req::GetBlob { .. }
         | Req::Post { .. }

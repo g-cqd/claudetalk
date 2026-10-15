@@ -218,6 +218,28 @@ pub struct NoteHit {
     pub title: String,
 }
 
+/// One status row of [`Reply::Statuses`]: what one identity on one harness is
+/// doing, as that identity last signed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusView {
+    /// hex64
+    pub pk: String,
+    pub pseudonym: String,
+    /// Short free text, e.g. online | busy | idle | away.
+    pub state: String,
+    /// Harness name, e.g. codex, claude, vibe, cli. Two harnesses sharing one
+    /// folder key keep one row each.
+    pub harness: String,
+    /// The folder the sender works in.
+    pub folder: String,
+    /// What the sender is working on.
+    pub matter: String,
+    /// ms since epoch of the last `status.set`.
+    pub ts: i64,
+    /// The daemon's presence flag: a subscribed connection is held for this key.
+    pub online: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EmojiCount {
     pub emoji: String,
@@ -266,6 +288,59 @@ mod tests {
                 req: Req::Online,
             },
             json!({"id": 3, "req": "online"}),
+        );
+    }
+
+    #[test]
+    fn status_request_wire_shapes() {
+        roundtrip(
+            &Request {
+                id: 4,
+                req: Req::Statuses,
+            },
+            json!({"id": 4, "req": "statuses"}),
+        );
+        roundtrip(
+            &Request {
+                id: 5,
+                req: Req::StatusSet {
+                    op: OpWire {
+                        kind: "status.set".into(),
+                        subject: "ab".repeat(32),
+                        arg: r#"{"state":"busy"}"#.into(),
+                        ts: 7,
+                        nonce: "n".into(),
+                        actor: "ab".repeat(32),
+                        sig: "s".into(),
+                    },
+                },
+            },
+            json!({"id": 5, "req": "status_set", "op": {
+                "kind": "status.set", "subject": "ab".repeat(32),
+                "arg": r#"{"state":"busy"}"#, "ts": 7, "nonce": "n",
+                "actor": "ab".repeat(32), "sig": "s"}}),
+        );
+    }
+
+    #[test]
+    fn statuses_reply_wire_shape() {
+        roundtrip(
+            &Reply::Statuses {
+                statuses: vec![StatusView {
+                    pk: "ab".repeat(32),
+                    pseudonym: "abcd0123".into(),
+                    state: "busy".into(),
+                    harness: "codex".into(),
+                    folder: "~/x".into(),
+                    matter: "card-1".into(),
+                    ts: 7,
+                    online: true,
+                }],
+            },
+            json!({"type": "statuses", "statuses": [{
+                "pk": "ab".repeat(32), "pseudonym": "abcd0123", "state": "busy",
+                "harness": "codex", "folder": "~/x", "matter": "card-1",
+                "ts": 7, "online": true}]}),
         );
     }
 

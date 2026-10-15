@@ -37,6 +37,16 @@ pub struct InboxArgs {
     pub limit: i64,
 }
 
+/// `wait`: block until unacked messages arrive, without a timeout.
+#[derive(Args, Debug)]
+pub struct WaitArgs {
+    /// Only messages with seq greater than this (cursor from a previous call).
+    #[arg(long, default_value_t = 0)]
+    pub after: i64,
+    #[arg(long, default_value_t = 20)]
+    pub limit: i64,
+}
+
 #[derive(Args, Debug)]
 pub struct AckArgs {
     pub channel: String,

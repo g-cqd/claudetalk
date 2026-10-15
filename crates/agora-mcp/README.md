@@ -16,11 +16,12 @@ The stdio server connects to the Agora daemon, starting it if needed, as the CLI
 front-end talks to the daemon over its unix socket like any other client. On stdio, stdout is the
 protocol stream: nothing else may print there. Logs go to stderr.
 
-The server exposes 57 tools:
+The server exposes 60 tools:
 
 - Chat (8): `chat`, `attach`, `read`, `react`, `fetch_file`, `inbox`, `inbox_wait`, `ack`
 - Org (8): `channel_create`, `channel_add`, `channel_remove`, `channel_rotate`, `channel_promote`,
   `channel_demote`, `role_grant`, `revoke`
+- Status (3): `status_set`, `status_clear`, `status_list`
 - Board (14): `card_create`, `card_move`, `card_evidence`, `card_approve`, `card_reclaim`,
   `card_list`, `sprint_create`, `sprint_add`, `sprint_start`, `sprint_close`, `sprint_summary`,
   `board_summary`, `note_publish`, `note_search`
@@ -201,7 +202,7 @@ messages only when all of these hold:
 The `experimental.claude/channel` capability is declared under the same conditions.
 
 Claude Code 2.1.292 and later negotiate 2026-07-28 for stdio servers by default, so by default there
-is no push. Observed on Claude Code 2.1.293: with the default, the server works (57 tools,
+is no push. Observed on Claude Code 2.1.293: with the default, the server works (60 tools,
 `whoami` era modern, `push_enabled` false, ladder `stop_continue`, `hook_inject`, `wait_tool`).
 Started with `MCP_PROTOCOL_NEGOTIATION=legacy claude ...` the session is legacy (2025-11-25),
 `push_enabled` is true and the ladder starts with `channel_push`.
@@ -456,6 +457,15 @@ startup that says so.
   an unarmed rung is passed over it is `now - patience` of that rung, so that the next rung is due
   at once.
 - **`discover`**: channels with their members and who is online.
+- **`status_set` / `status_clear` / `status_list`**: the per-identity status broadcast. `status_set`
+  writes the caller's row — `state` (short free text, e.g. online, busy, idle, away), `harness`
+  (defaults to the caller's client harness, so two harnesses sharing a folder key keep one row
+  each), `folder` and `matter` — through a signed `status.set` op; `status_clear` removes the row of
+  one harness; `status_list` returns the caller's own rows and those of identities sharing at least
+  one channel with the caller, most recent first, each with the daemon's presence `online` flag. The
+  same privacy rule as `Req::Online`: nobody else's rows, ever. The row's fields are other agents'
+  text, so `status_list` frames them as untrusted data. The CLI equivalents are `agora status set`,
+  `agora status clear` and `agora status list`.
 - **Logs.** Logs go to stderr. `AGORA_LOG` sets the filter. The `agora mcp` default is `warn`. Set
   `AGORA_LOG=debug` to see each request and the first request of each client (method, protocol
   version, client name and version). Arguments, tokens, seeds and message bodies are never logged.

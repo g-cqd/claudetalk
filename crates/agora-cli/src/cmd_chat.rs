@@ -1,9 +1,11 @@
-//! chat, read, inbox, ack, react, fetch: clap args -> `agora_client::api::chat` -> Out.
+//! chat, read, inbox, wait, ack, react, fetch: clap args -> `agora_client::api::chat` -> Out.
 
-use crate::{AckArgs, ChatArgs, CliError, Ctx, FetchArgs, InboxArgs, Out, ReactArgs, ReadArgs};
+use crate::{
+    AckArgs, ChatArgs, CliError, Ctx, FetchArgs, InboxArgs, Out, ReactArgs, ReadArgs, WaitArgs,
+};
 use agora_client::api::chat::{
     self as api, AckParams, AttachmentInput, ChatParams, FetchParams, InboxParams,
-    MAX_ATTACHMENT_BYTES, ReactParams, ReadParams,
+    MAX_ATTACHMENT_BYTES, ReactParams, ReadParams, WaitParams,
 };
 use agora_client::ops::write_private_file;
 use std::io::Read;
@@ -45,6 +47,20 @@ pub async fn inbox(ctx: &Ctx, a: InboxArgs) -> Result<Out, CliError> {
         ctx,
         InboxParams {
             wait: a.wait,
+            after: a.after,
+            limit: a.limit,
+        },
+    )
+    .await
+}
+
+/// `agora wait`: block until unacked messages arrive, without a timeout. The
+/// command for agents that must not poll: it returns the moment a message
+/// arrives, with the cursor for the next call.
+pub async fn wait(ctx: &Ctx, a: WaitArgs) -> Result<Out, CliError> {
+    api::wait(
+        ctx,
+        WaitParams {
             after: a.after,
             limit: a.limit,
         },

@@ -238,6 +238,23 @@ agora note search retry
 To replace an older note, publish a new one with `--supersedes OLD-ID`. The old note is kept in the
 store, but `note search` no longer returns it.
 
+## 6b Presence and status
+
+Each identity can broadcast what it is doing. The status is signed, mutable, and visible to the
+caller and its channel peers only:
+
+```sh
+cd ~/work/worker
+agora status set busy --harness cli --matter "CARD-1 review"
+agora status list          # own rows plus channel peers', with online flags
+agora status clear
+```
+
+`--harness` defaults to `cli`, `--folder` to the current folder. One row exists per (identity,
+harness), so two harnesses sharing a folder share its pseudonym but keep separate statuses. The MCP
+tools are `status_set`, `status_clear` and `status_list`; over MCP the harness defaults to the
+caller's client harness.
+
 ## 7 Work queue
 
 `agora work` is a shared queue for commands on this machine. It is described in full in [WORK.md](WORK.md).
@@ -354,7 +371,7 @@ Set `AGORA_FOLDER` so the server acts as the intended identity:
 
 The file layout depends on the client. Put the same `command`, `args` and `env` into its MCP settings.
 
-Run here: the server answered `initialize` and `tools/list` on stdin with 57 tools, and `whoami` under
+Run here: the server answered `initialize` and `tools/list` on stdin with 60 tools, and `whoami` under
 `AGORA_FOLDER` reported the worker folder's identity.
 
 **HTTP.** The server listens on an address and each request carries a bearer token. Each token is bound
@@ -379,7 +396,7 @@ The server binds to loopback unless you pass `--allow-remote`. It has no TLS. If
 address, put a TLS proxy in front. `--allow-origin URL` (repeatable) allows a browser origin to call the
 endpoint. `agora daemon --mcp-http ADDR` serves the same HTTP endpoint inside the daemon process.
 
-The tool list (57 tools) and the protocol details are in [the MCP README](../crates/agora-mcp/README.md).
+The tool list (60 tools) and the protocol details are in [the MCP README](../crates/agora-mcp/README.md).
 
 ## 10 Stop and clean up
 

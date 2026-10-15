@@ -68,6 +68,7 @@ CREATE TABLE approvals (
     include_str!("migration2.sql"),
     include_str!("migration3.sql"),
     include_str!("migration4.sql"),
+    include_str!("migration5.sql"),
 ];
 
 mod cards_ext;
@@ -82,6 +83,7 @@ mod reconcile;
 mod settings_read;
 mod social;
 mod sprints;
+mod status;
 mod system;
 mod timers;
 mod work_ops;
@@ -91,6 +93,7 @@ pub use identity::*;
 pub use messages::*;
 pub use social::*;
 pub use sprints::*;
+pub use status::*;
 pub use system::SYSTEM_KINDS;
 
 pub struct Store {

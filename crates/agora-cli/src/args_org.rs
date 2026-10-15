@@ -69,3 +69,29 @@ pub enum RoleCmd {
 pub struct RevokeArgs {
     pub pk: String,
 }
+
+#[derive(Subcommand, Debug)]
+pub enum StatusCmd {
+    /// Set your status: what you are doing, on which harness, in which folder.
+    Set {
+        /// Short state, e.g. online, busy, idle, away.
+        state: String,
+        /// The harness writing the status (default: cli).
+        #[arg(long)]
+        harness: Option<String>,
+        /// The folder you work in (default: the current folder).
+        #[arg(long)]
+        folder: Option<String>,
+        /// What you are working on.
+        #[arg(long)]
+        matter: Option<String>,
+    },
+    /// Clear your status (default harness: cli).
+    Clear {
+        /// The harness whose row to clear (default: cli).
+        #[arg(long)]
+        harness: Option<String>,
+    },
+    /// The statuses of yourself and your channel peers.
+    List,
+}

@@ -55,6 +55,13 @@ pub struct InboxParams {
 }
 
 #[derive(Debug, Clone)]
+pub struct WaitParams {
+    /// Only messages with seq greater than this (cursor from a previous call).
+    pub after: i64,
+    pub limit: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct AckParams {
     pub channel: String,
     pub seq: i64,
@@ -211,6 +218,41 @@ pub async fn inbox_with(
         json: json!({"messages": rendered, "cursor": cursor, "timed_out": timed_out}),
         text,
     })
+}
+
+/// `wait`: block until unacked messages arrive, without a timeout. One
+/// connection, a loop of `InboxWait` (each round at most [`MAX_WAIT_MS`]),
+/// the cursor of each round feeding the next, so the caller neither polls nor
+/// sleeps: the command returns the moment a message arrives, and carries the
+/// cursor of the last message for the next call. Existing unacked messages
+/// (seq > `after`) return at once.
+pub async fn wait(ctx: &Ctx, a: WaitParams) -> Result<Out, ClientError> {
+    let mut client = Client::connect(ctx).await?;
+    let mut after = a.after;
+    loop {
+        let Reply::Inbox {
+            messages,
+            cursor,
+            timed_out,
+        } = client
+            .call(Req::InboxWait {
+                after,
+                timeout_ms: MAX_WAIT_MS,
+                limit: a.limit,
+            })
+            .await?
+        else {
+            return Err(ClientError::UnexpectedReply);
+        };
+        if !messages.is_empty() {
+            let (rendered, text) = render(&mut client, ctx, messages).await?;
+            return Ok(Out {
+                json: json!({"messages": rendered, "cursor": cursor, "timed_out": timed_out}),
+                text,
+            });
+        }
+        after = cursor;
+    }
 }
 
 pub async fn ack(ctx: &Ctx, a: AckParams) -> Result<Out, ClientError> {

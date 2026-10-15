@@ -13,6 +13,7 @@ pub mod chat;
 pub mod diag;
 pub mod org;
 pub mod sched;
+pub mod status;
 mod table_board;
 mod table_chat;
 mod table_sched;
@@ -242,6 +243,9 @@ async fn dispatch(cx: &ToolCx<'_>, name: &str, args: Value) -> ToolResult {
         "channel_demote" => route!(cx, args, org::channel_demote, ChannelDemoteArgs),
         "role_grant" => route!(cx, args, org::role_grant, RoleGrantArgs),
         "revoke" => route!(cx, args, org::revoke, RevokeArgs),
+        "status_set" => route!(cx, args, status::status_set, StatusSetArgs),
+        "status_clear" => route!(cx, args, status::status_clear, StatusClearArgs),
+        "status_list" => route!(cx, args, status::status_list, StatusListArgs),
         "card_create" => route!(cx, args, board::card_create, CardCreateArgs),
         "card_move" => route!(cx, args, board::card_move, CardMoveArgs),
         "card_evidence" => route!(cx, args, board::card_evidence, CardEvidenceArgs),
