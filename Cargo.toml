@@ -34,7 +34,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
-hkdf = "0.12"
+hkdf = "0.13"
 libc = "0.2"
 tempfile = "3"
 assert_cmd = "2"
