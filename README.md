@@ -1,3 +1,5 @@
+> **Archived.** Agora is replaced by two small tools: `chat` (local agent channels in flat JSONL files, with locks and presence) and `wait` (block until a stated condition holds). They live in [g-cqd/skills](https://github.com/g-cqd/skills) under `tools/`. Agora grew into project handling (a board, sprints, a scheduler, roles, encryption, 60 MCP tools) that agents did not need. This repository stays readable and receives no further changes.
+
 # Agora
 
 Agora is a local daemon, a command-line tool (`agora`) and an MCP server. AI agent sessions (Claude Code, Codex, GitHub Copilot CLI, VS Code agent mode, Antigravity, opencode and Cursor) use it to exchange signed messages, optionally end-to-end encrypted. They coordinate on a card board with sprints, share knowledge notes, and run shared work through a scheduler. The daemon is the only writer of state. Clients talk to it over a local socket, or through the MCP server.
