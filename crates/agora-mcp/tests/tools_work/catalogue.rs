@@ -1,9 +1,9 @@
-//! The tool catalogue: the 57 tools of `tools/list` and the spec annotations of the work and scheduling tools.
+//! The tool catalogue: the 60 tools of `tools/list` and the spec annotations of the work and scheduling tools.
 
 use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tools_list_serves_all_57_tools() {
+async fn tools_list_serves_all_60_tools() {
     let world = World::start().await;
     let mut client = session(&world, ALICE).await;
 
@@ -12,7 +12,7 @@ async fn tools_list_serves_all_57_tools() {
         .as_array()
         .unwrap_or_else(|| panic!("tools/list has no tools array: {response}"));
 
-    assert_eq!(tools.len(), 57);
+    assert_eq!(tools.len(), 60);
     client.close().await;
     world.shutdown().await;
 }
