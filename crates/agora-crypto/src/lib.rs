@@ -188,7 +188,7 @@ pub fn verify(public: &[u8; 32], msg: &[u8], sig: &[u8]) -> Result<(), CryptoErr
 fn aead_seal(key: &[u8; 32], aad: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let nonce = random::<NONCE_LEN>()?;
     let ct = XChaCha20Poly1305::new(key.into())
-        .encrypt(XNonce::from_slice(&nonce), Payload { msg: plain, aad })
+        .encrypt(&XNonce::from(nonce), Payload { msg: plain, aad })
         .map_err(|_| CryptoError::Decrypt)?;
     let mut out = nonce.to_vec();
     out.extend(ct);
@@ -200,8 +200,10 @@ fn aead_open(key: &[u8; 32], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>, CryptoE
         return Err(CryptoError::Malformed);
     }
     let (nonce, ct) = blob.split_at(NONCE_LEN);
+    // The length check above guarantees `nonce` is exactly NONCE_LEN bytes, so this cannot fail.
+    let nonce = XNonce::try_from(nonce).map_err(|_| CryptoError::Malformed)?;
     XChaCha20Poly1305::new(key.into())
-        .decrypt(XNonce::from_slice(nonce), Payload { msg: ct, aad })
+        .decrypt(&nonce, Payload { msg: ct, aad })
         .map_err(|_| CryptoError::Decrypt)
 }
 
