@@ -47,7 +47,7 @@ jobs:
             name: agora-linux-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -129,7 +129,7 @@ jobs:
       # Assumption: download-artifact v7 is the release line that pairs with
       # upload-artifact v7 (same major, both on Node 24). The v7 tag exists.
       - name: Download archives
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: agora-*
           path: dist
